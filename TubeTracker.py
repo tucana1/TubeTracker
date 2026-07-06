@@ -180,7 +180,7 @@ class Point:
 			self.frame = None
 
 class ROI:
-	def __init__(self, x_l, y_t, x_r, y_b, color = (255, 0, 0), ID = '', frame = 0, img = None, detection_method = "auto", group = '', is_germinated = False, is_bursted = False, is_tip = False, filled_in = False, is_used = False):
+	def __init__(self, x_l, y_t, x_r, y_b, color = (255, 0, 0), ID = '', frame = 0, img = None, detection_method = "auto", group = '', is_germinated = False, is_bursted = False, is_tip = False, filled_in = False, is_used = False, is_burst_candidate = False):
 		self.gv1 = Point(x = x_l, y = y_t)
 		self.gv2 = Point(x = x_r, y = y_b)
 		self.gv3 = Point(x = int((x_r+x_l)/2), y = int((y_b+y_t)/2))
@@ -201,6 +201,7 @@ class ROI:
 		self.group = str(group)
 		self.is_germinated = is_germinated
 		self.is_bursted = is_bursted
+		self.is_burst_candidate = is_burst_candidate
 		self.is_tip = is_tip
 		self.is_filled_in = filled_in
 		self.ma_ax_int_p1 = None
@@ -271,6 +272,8 @@ class ROI:
 			else:
 				return (255,0,255)
 		else:
+			if self.is_burst_candidate and not self.is_bursted:
+				return (0,165,255)
 			if self.is_germinated:
 				if self.is_bursted:
 					if paint:
@@ -503,6 +506,11 @@ class Track:
 	def __init__(self, boxes, color = (0,0,0), ID = '', fill_holes = False):
 		self.burst_frame = -1
 		self.burst_method = "manual"
+		self.is_burst_candidate = False
+		self.burst_candidate_frame = -1
+		self.burst_candidate_confidence = 0.0
+		self.burst_candidate_reason = ""
+		self.burst_candidate_track_id = ""
 		self.color = color
 		self.detection_method = "auto"
 		self.germination_method = "auto"
@@ -734,6 +742,7 @@ class Track:
 			self.burst_frame = frame
 			self.is_bursted = True
 			self.burst_method = method
+			self.clear_burst_candidate()
 			for r in self.gv1:
 				if r.gv6 >= frame:
 					r.is_bursted = True
@@ -746,6 +755,33 @@ class Track:
 					self.is_germinated == False
 					for r in self.gv1:
 						r.is_germinated = False
+
+	def set_burst_candidate(self, frame, confidence, reason, track_id = ""):
+		if frame <= self.last_frame() and not self.is_bursted:
+			self.is_burst_candidate = True
+			self.burst_candidate_frame = frame
+			self.burst_candidate_confidence = confidence
+			self.burst_candidate_reason = reason
+			self.burst_candidate_track_id = str(track_id)
+			for r in self.gv1:
+				if r.gv6 >= frame:
+					r.is_burst_candidate = True
+				else:
+					r.is_burst_candidate = False
+
+	def clear_burst_candidate(self):
+		self.is_burst_candidate = False
+		self.burst_candidate_frame = -1
+		self.burst_candidate_confidence = 0.0
+		self.burst_candidate_reason = ""
+		self.burst_candidate_track_id = ""
+		for r in self.gv1:
+			r.is_burst_candidate = False
+
+	def accept_burst_candidate(self):
+		if self.is_burst_candidate:
+			frame = self.burst_candidate_frame
+			self.update_burst(frame = frame, method = "auto_tip_burst")
 
 class Tracker:
 	def __init__(self, screen_size = (1000,800)):
@@ -807,6 +843,10 @@ class Tracker:
 		self.flaten_gap = 4
 		self.aceptance_ratio = 0.5
 		self.ger_confirm_frames = 8
+		self.burst_candidates = []
+		self.burst_score_threshold = 0.5
+		self.burst_end_margin = 3
+		self.burst_area_spike_ratio = 1.6
 
 	def detections_generator(self, data_dir = ""):
 		if not os.path.isfile(os.path.expanduser(data_dir)):
@@ -1242,6 +1282,15 @@ class Tracker:
 				rows.append([frame, frame*self.time_p_frame, g, g/len(ger_frames), b, b/len(burst_frames)])
 			with open(name, 'w', newline='') as f:
 				csv.writer(f).writerows(rows)
+			if len(self.burst_candidates) == 0:
+				self.find_burst_candidates()
+			if len(self.burst_candidates) > 0:
+				name = save_dir + "burst.candidates.csv"
+				rows = [["grain_id", "frame", "time ("+self.time_unit+")", "confidence", "method", "associated_track_id", "evidence"]]
+				for c in self.burst_candidates:
+					rows.append([c["grain_id"], c["frame"], c["time"], c["confidence"], c["method"], c["track_id"], c["reason"]])
+				with open(name, 'w', newline='') as f:
+					csv.writer(f).writerows(rows)
 
 	def segment_inputs(self, for_ger = True, false_color = True):
 		if self.file_names is None:
@@ -1480,6 +1529,104 @@ class Tracker:
 										n_unger -= 1
 								elif p_val < grain.ger_p_value:
 									grain.ger_p_value = p_val
+
+	def associate_grain_to_track(self, grain):
+		if len(self.valid_tracks) == 0:
+			return None
+		ref_frame = grain.ger_frame if grain.ger_frame >= 0 else grain.first_frame()
+		grain_roi = grain.roi_closest_to(ref_frame)
+		best = None
+		best_score = None
+		max_dist = 4*(self.max_grain_radius + self.min_grain_radius)
+		for track in self.valid_tracks:
+			t0 = track.gv1[0]
+			overlaps = False
+			for i in range(min(3, track.gv2)):
+				if grain_roi.f1(track.gv1[i]) > 0 or track.gv1[i].f1(grain_roi) > 0:
+					overlaps = True
+					break
+			d = grain.f6(grain_roi, t0)
+			score = d - 1000000 if overlaps else d
+			if best_score is None or score < best_score:
+				best_score = score
+				best = track
+		if best is not None:
+			if grain.f6(grain_roi, best.gv1[0]) > max_dist:
+				return None
+		return best
+
+	def local_foreground(self, center, frame, half):
+		if frame < 0 or frame >= self.all_detections.img_list_length:
+			return (0, 0)
+		img = self.all_detections.get_noiseless_frame(frame = frame, bnr = True, gray = True)
+		if img is None:
+			return (0, 0)
+		h, w = img.shape
+		x0 = max(0, int(center.x - half))
+		x1 = min(w, int(center.x + half))
+		y0 = max(0, int(center.y - half))
+		y1 = min(h, int(center.y + half))
+		if x1 <= x0 or y1 <= y0:
+			return (0, 0)
+		crop = img[y0:y1, x0:x1]
+		area = int(np.count_nonzero(crop))
+		cnts, _ = cv.findContours(crop, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+		return (area, len(cnts))
+
+	def score_burst(self, grain, track, last_valid_frame):
+		if track is None or track.gv2 < 2:
+			return None
+		end_frame = track.last_frame()
+		tip_end = track.roi_closest_to(end_frame)
+		center = tip_end.gv3
+		half = int(2*max(tip_end.w, tip_end.h))
+		half = max(half, self.min_tip_side*2)
+		score = 0.0
+		reasons = []
+		terminates = end_frame < (last_valid_frame - self.burst_end_margin)
+		if terminates:
+			score += 0.3
+			reasons.append("track_ends_early")
+		before_frame = max(track.first_frame(), end_frame - self.burst_end_margin)
+		after_frame = min(last_valid_frame, end_frame + self.burst_end_margin)
+		before_area, before_cnts = self.local_foreground(center, before_frame, half)
+		after_area, after_cnts = self.local_foreground(center, after_frame, half)
+		if before_area > 0 and after_area/before_area >= self.burst_area_spike_ratio:
+			score += 0.4
+			reasons.append("local_area_spike")
+		early = track.gv1[0]
+		if early.side_ratio - tip_end.side_ratio > 0.25 and tip_end.side_ratio < 0.35:
+			score += 0.2
+			reasons.append("tip_rounding")
+		if after_cnts > before_cnts and after_cnts >= 2:
+			score += 0.2
+			reasons.append("fragmentation")
+		if score > 1.0:
+			score = 1.0
+		if len(reasons) == 0:
+			return None
+		return {"grain_id": grain.id, "frame": end_frame, "time": end_frame*self.time_p_frame, "confidence": round(score, 3), "method": "auto_tip_burst", "track_id": track.id, "reason": "+".join(reasons)}
+
+	def find_burst_candidates(self):
+		self.burst_candidates = []
+		if len(self.valid_grains) == 0 or self.all_detections == []:
+			return self.burst_candidates
+		last_valid_frame = self.all_detections.img_list_length - 1
+		for grain in self.valid_grains:
+			if not grain.is_bursted:
+				grain.clear_burst_candidate()
+		for grain in self.valid_grains:
+			if grain.is_bursted or not grain.is_germinated:
+				continue
+			track = self.associate_grain_to_track(grain)
+			cand = self.score_burst(grain, track, last_valid_frame)
+			if cand is not None and cand["confidence"] >= self.burst_score_threshold:
+				cf = min(cand["frame"], grain.last_frame())
+				cand["frame"] = cf
+				cand["time"] = cf*self.time_p_frame
+				grain.set_burst_candidate(frame = cf, confidence = cand["confidence"], reason = cand["reason"], track_id = cand["track_id"])
+				self.burst_candidates.append(cand)
+		return self.burst_candidates
 
 class Tracker_GUI(wx.Frame):
 	def __init__(self,title = title):
@@ -2735,6 +2882,9 @@ class Tracker_GUI(wx.Frame):
 				else:
 					print("Tracking Germination via Area Change")
 					self.tracker.track_germination_via_area()
+					if len(self.tracker.valid_tracks) > 0:
+						cands = self.tracker.find_burst_candidates()
+						wx.MessageBox(str(len(cands)) + " burst candidate(s) found (shown in orange under 'grain status'). These are suggestions only: no burst is marked automatically. To confirm one, use 'add burst frame' on the candidate grain; they are also exported to burst.candidates.csv on save.", "Burst candidates", wx.OK | wx.ICON_INFORMATION, self)
 			self.update_screen()
 		self.reset_focus()
 
