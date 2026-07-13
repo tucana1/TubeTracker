@@ -6,7 +6,16 @@ cd "$(dirname "$0")"
 if [ ! -x ".venv/bin/python" ]; then
   python3 -m venv .venv
   .venv/bin/python -m pip install --upgrade pip setuptools wheel
+fi
+
+requirements_hash="$(shasum -a 256 requirements.txt pyproject.toml | shasum -a 256 | awk '{print $1}')"
+installed_hash=""
+if [ -f ".venv/.requirements.sha256" ]; then
+  installed_hash="$(<.venv/.requirements.sha256)"
+fi
+if [ "$requirements_hash" != "$installed_hash" ]; then
   .venv/bin/python -m pip install -r requirements.txt
+  printf '%s\n' "$requirements_hash" > .venv/.requirements.sha256
 fi
 
 .venv/bin/python TubeTracker.py

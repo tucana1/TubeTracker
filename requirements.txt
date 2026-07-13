@@ -1,4 +1,2 @@
-wxPython==4.2.1
-opencv-contrib-python==4.10.0.84
-pandas==2.1.4
-motpy==0.0.10
+# Runtime dependencies are defined once in pyproject.toml.
+-e .

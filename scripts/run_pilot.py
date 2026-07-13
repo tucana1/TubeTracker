@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 from datetime import datetime, timezone
+from importlib.metadata import version
 from pathlib import Path
 
 import cv2 as cv
@@ -16,7 +17,7 @@ import cv2 as cv
 REPO_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO_ROOT))
 
-import TubeTracker as tt  # noqa: E402
+import tubetracker as tt  # noqa: E402
 
 
 def parse_args():
@@ -96,6 +97,23 @@ def git_state():
         "branch": run("branch", "--show-current"),
         "dirty": bool(run("status", "--porcelain")),
     }
+
+
+def software_state():
+    """Report exact runtime and repository versions for reproducibility."""
+    state = git_state()
+    state.update(
+        {
+            "python": sys.version.split()[0],
+            "opencv": cv.__version__,
+            "opencv_distribution": version("opencv-contrib-python"),
+            "laptrack": version("laptrack"),
+            "numpy": version("numpy"),
+            "pandas": version("pandas"),
+            "tracking_engine": "laptrack",
+        }
+    )
+    return state
 
 
 def load_video(path, screen_size, max_frames, rotate):
@@ -223,7 +241,7 @@ def write_track_summary(path, tracker, args, sample_id, frame_count):
         writer = csv.writer(handle)
         writer.writerow(header)
         for track in tracker.valid_tracks:
-            track.f3(
+            track.calculate_metrics(
                 coef=tracker.img_rp,
                 disp=args.pixel_size,
                 disp_u=args.distance_unit,
@@ -292,7 +310,7 @@ def main():
         "input_video": str(video),
         "sample_id": sample_id,
         "parameters": vars(args).copy(),
-        "software": git_state(),
+        "software": software_state(),
     }
     manifest["parameters"]["video"] = str(video)
     manifest["parameters"]["output_dir"] = str(output_dir)
@@ -422,6 +440,7 @@ def main():
             ),
             "tip_detection_count": tip_count,
             "track_count": len(tracker.valid_tracks),
+            "tracking_engine": tracker.tracking_engine,
             "burst_candidate_count": len(tracker.burst_candidates),
             "review_required": {
                 "not_germinated": sum(

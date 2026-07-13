@@ -1,24 +1,71 @@
 """Regression tests for core tracking edge cases and exported measurements."""
 
-import tempfile
 import unittest
-from pathlib import Path
 
 import numpy as np
 
-import TubeTracker as tt
+import tubetracker as tt
 
 
 class CoreEdgeCaseTests(unittest.TestCase):
     """Verify graceful behavior for sparse inputs and reviewed event state."""
 
-    def test_empty_detection_file_yields_no_frames(self):
-        """An empty detection CSV should produce an empty generator."""
+    def test_empty_detection_sequence_yields_no_tracks(self):
+        """An empty detection sequence should produce no linked tracks."""
         tracker = tt.Tracker()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "detections.csv"
-            path.touch()
-            self.assertEqual(list(tracker.detections_generator(str(path))), [])
+        self.assertEqual(tracker.link_detections([[], []], max_distance=5), [])
+
+    def test_laptrack_closes_short_detection_gap(self):
+        """A nearby detection after a short gap should retain its identity."""
+        tracker = tt.Tracker()
+        detections = [
+            [tt.ROI(0, 0, 10, 10, frame=0, is_tip=True)],
+            [tt.ROI(2, 0, 12, 10, frame=1, is_tip=True)],
+            [],
+            [tt.ROI(4, 0, 14, 10, frame=3, is_tip=True)],
+        ]
+
+        tracks = tracker.link_detections(
+            detections,
+            max_distance=5,
+            gap_frames=2,
+            gap_distance=5,
+        )
+
+        self.assertEqual(len(tracks), 1)
+        self.assertEqual([roi.gv6 for roi in tracks[0]], [0, 1, 3])
+
+    def test_laptrack_keeps_distant_tips_separate(self):
+        """Spatially distinct detections should not be merged into one track."""
+        tracker = tt.Tracker()
+        detections = [
+            [
+                tt.ROI(0, 0, 10, 10, frame=0, is_tip=True),
+                tt.ROI(90, 0, 100, 10, frame=0, is_tip=True),
+            ],
+            [
+                tt.ROI(2, 0, 12, 10, frame=1, is_tip=True),
+                tt.ROI(88, 0, 98, 10, frame=1, is_tip=True),
+            ],
+        ]
+
+        tracks = tracker.link_detections(detections, max_distance=5)
+
+        self.assertEqual(sorted(len(track) for track in tracks), [2, 2])
+
+    def test_laptrack_respects_minimum_box_overlap(self):
+        """The legacy overlap control should remain an actual IoU threshold."""
+        tracker = tt.Tracker()
+        detections = [
+            [tt.ROI(0, 0, 10, 10, frame=0, is_tip=True)],
+            [tt.ROI(8, 0, 18, 10, frame=1, is_tip=True)],
+        ]
+
+        permissive = tracker.link_detections(detections, min_overlap=0.10)
+        strict = tracker.link_detections(detections, min_overlap=0.20)
+
+        self.assertEqual([len(track) for track in permissive], [2])
+        self.assertEqual(sorted(len(track) for track in strict), [1, 1])
 
     def test_track_elongation_accepts_frames_without_tips(self):
         """Tracking should return no tracks when every frame lacks tips."""

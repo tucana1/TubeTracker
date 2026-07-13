@@ -48,29 +48,9 @@ eval "$(conda shell.zsh activate tt_voys_brown)"
 echo ""
 echo ""
 
-echo "...Installing WxPython..."
+echo "...Installing pinned TubeTracker dependencies..."
 
-python -m pip install wxpython==4.2.1
-
-echo "...Done..."
-echo ""
-
-echo ""
-
-echo "...Installing OpenCV..."
-
-#python -m pip install opencv-python==4.9.0.80
-conda install conda-forge::opencv=4.10.0
-echo ""
-
-echo "...Installing Pandas..."
-
-python -m pip install pandas==2.1.4
-echo ""
-
-echo "...Installing motpy..."
-
-python -m pip install motpy==0.0.10
+python -m pip install -r "${0:A:h}/requirements.txt"
 echo ""
 
 echo "...Done..."

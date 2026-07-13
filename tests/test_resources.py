@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 import TubeTracker as tt
+import tubetracker.analysis as analysis
 from tubetracker_resources import (
     LOGO_PATH,
     TIP_TEMPLATE_MANIFEST,
@@ -52,8 +53,19 @@ class ResourceTests(unittest.TestCase):
 
     def test_templates_are_not_embedded_in_the_python_source(self):
         """Legacy template pixel arrays should remain outside source code."""
-        source = Path(tt.__file__).read_text(encoding="utf-8")
+        source = Path(analysis.__file__).read_text(encoding="utf-8")
         self.assertNotIn("weigths =", source)
+
+    def test_unmaintained_motpy_dependency_is_removed(self):
+        """Tracking should use LapTrack without retaining Motpy imports."""
+        source = Path(analysis.__file__).read_text(encoding="utf-8").lower()
+        project = (Path(tt.__file__).parent / "pyproject.toml").read_text(
+            encoding="utf-8"
+        ).lower()
+        self.assertNotIn("motpy", source)
+        self.assertNotIn("motpy", project)
+        self.assertIn("laptrack", source)
+        self.assertIn("laptrack", project)
 
 
 if __name__ == "__main__":

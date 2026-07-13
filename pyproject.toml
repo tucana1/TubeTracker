@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "brown-tubetracker"
+version = "0.1.0"
+description = "Desktop analysis of pollen germination and tube-tip growth"
+readme = "README.md"
+requires-python = ">=3.10,<3.15"
+license = "LicenseRef-Brown-University"
+license-files = ["LICENSE"]
+dependencies = [
+  "wxPython==4.2.1",
+  "numpy==2.2.6",
+  "opencv-contrib-python==5.0.0.93",
+  "pandas==2.3.3",
+  "laptrack==0.17.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "build==1.5.1",
+  "pytest==9.1.1",
+]
+
+[project.urls]
+Repository = "https://github.com/tucana1/TubeTracker"
+
+[project.gui-scripts]
+tubetracker = "tubetracker.gui:main"
+
+[tool.setuptools]
+py-modules = ["TubeTracker", "tubetracker_resources"]
+packages = [
+  "tubetracker",
+  "tubetracker_assets",
+  "tubetracker_assets.tip_templates",
+]
+include-package-data = true
+
+[tool.setuptools.package-data]
+tubetracker_assets = ["logo.png"]
+"tubetracker_assets.tip_templates" = ["*.json", "*.md", "*.png"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["*Tests"]
+python_functions = ["test_*"]
+pythonpath = ["."]
+addopts = ["--strict-config", "--strict-markers", "-ra"]

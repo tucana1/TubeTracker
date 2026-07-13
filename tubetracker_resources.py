@@ -10,10 +10,10 @@ import cv2 as cv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-ASSET_ROOT = PROJECT_ROOT / "assets"
+ASSET_ROOT = PROJECT_ROOT / "tubetracker_assets"
 TIP_TEMPLATE_DIR = ASSET_ROOT / "tip_templates"
 TIP_TEMPLATE_MANIFEST = TIP_TEMPLATE_DIR / "manifest.json"
-LOGO_PATH = PROJECT_ROOT / "logo.png"
+LOGO_PATH = ASSET_ROOT / "logo.png"
 
 
 class ResourceError(RuntimeError):
