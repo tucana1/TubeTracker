@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "description": "Legacy TubeTracker grayscale tip-matching templates, extracted losslessly from the original embedded arrays.",
+  "templates": [
+    {
+      "file": "tip_00.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "d67ea08060c42c1a1e7d7a541d758ff95034816a58f73a2ecdc0778634dc6a57"
+    },
+    {
+      "file": "tip_01.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "10e5ba42674bb314280b38989c93f1289fc3c57e82292e27a9c52cf540e63d51"
+    },
+    {
+      "file": "tip_02.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "aa9be1d38f1d5a3c35bd5f3bc5fd8050125c48db82a2e53e5d5deda0d56b701e"
+    },
+    {
+      "file": "tip_03.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "3a5e083a413fc8cc823d88108f9b732073864acac9af3e74e6c57ee3eb925da6"
+    },
+    {
+      "file": "tip_04.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "13de5df3c24b93c8144238b008ce0d7227f833348f4fe3b0130d75ef3937a71e"
+    },
+    {
+      "file": "tip_05.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "4faa82b11dd31109d8d6bebf8a9080c46aa590f094a04ae3cbd3e4bc262445f3"
+    },
+    {
+      "file": "tip_06.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "a656b274af6d5cdbf15159449350fc38732ceea35a839c4a7cddf57843f153ed"
+    },
+    {
+      "file": "tip_07.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "125eeebed2c36967e457530fed5420cc21ba6828ee16cb810f9a99d9c760d003"
+    },
+    {
+      "file": "tip_08.png",
+      "shape": [
+        25,
+        25
+      ],
+      "pixel_sha256": "be3210d296d5933b4cc4ca8320d70da31fed1514ac8be22cbf246dfc0e740433"
+    },
+    {
+      "file": "tip_09.png",
+      "shape": [
+        22,
+        16
+      ],
+      "pixel_sha256": "514e1a4f90effa5352fba578209fe0aa9579d48cf6c42e1f2dc7acfe30970cc6"
+    },
+    {
+      "file": "tip_10.png",
+      "shape": [
+        20,
+        21
+      ],
+      "pixel_sha256": "97673eea4cb3419c4f131ae9cf6c020ce6baeb21bd21f7b3c2a3ca82f18d1846"
+    },
+    {
+      "file": "tip_11.png",
+      "shape": [
+        19,
+        21
+      ],
+      "pixel_sha256": "c319b76b457a97141c610f9066ffc69b59cd626aa6bfd76a285d4a62faa1c82c"
+    },
+    {
+      "file": "tip_12.png",
+      "shape": [
+        20,
+        21
+      ],
+      "pixel_sha256": "d4826f0e02257e0451b5465bbc8333df8d91d88a0c64f7f90cd9caef9d1f5f87"
+    },
+    {
+      "file": "tip_13.png",
+      "shape": [
+        21,
+        22
+      ],
+      "pixel_sha256": "e5eb39d681071498cf36a7fc2b44e7f6fc1b4c646389e3962e59ba778ad94fcf"
+    },
+    {
+      "file": "tip_14.png",
+      "shape": [
+        21,
+        23
+      ],
+      "pixel_sha256": "1335231d90373344f450accf2ab8a832b17d4b26e82abfc854181af56261f252"
+    },
+    {
+      "file": "tip_15.png",
+      "shape": [
+        20,
+        22
+      ],
+      "pixel_sha256": "fa3df70fbc602be8ec5cbf2e1a702b9b37a49fa20a71c20778be508154ebf766"
+    },
+    {
+      "file": "tip_16.png",
+      "shape": [
+        21,
+        19
+      ],
+      "pixel_sha256": "f7a4e4236679c9c9196bfe98c6e6518f18c712f6f62096aaaa06f310e065007b"
+    },
+    {
+      "file": "tip_17.png",
+      "shape": [
+        23,
+        20
+      ],
+      "pixel_sha256": "ae8b1fdb82b02fa8366970280064753902870bc6ee0e87c535dd0dcca7d23cde"
+    },
+    {
+      "file": "tip_18.png",
+      "shape": [
+        21,
+        22
+      ],
+      "pixel_sha256": "62bce1a8f692d230590f7d3b2ce2a4a8daaf424dfb48e44afa3afa2b2a5b044c"
+    },
+    {
+      "file": "tip_19.png",
+      "shape": [
+        21,
+        23
+      ],
+      "pixel_sha256": "2499a6444e14b50aed69455870d1328f7e4a48c693e1d57a71f4d478ba3b569a"
+    },
+    {
+      "file": "tip_20.png",
+      "shape": [
+        21,
+        23
+      ],
+      "pixel_sha256": "0f2ca544082538c4ec51fe5143e7c5ed99efec56136b9225cb0875e2dd0263f2"
+    },
+    {
+      "file": "tip_21.png",
+      "shape": [
+        23,
+        22
+      ],
+      "pixel_sha256": "3a9de857aa2091f8a6347bc282e3b3e1daba5aeb0685d3d65821c09fb3645251"
+    },
+    {
+      "file": "tip_22.png",
+      "shape": [
+        23,
+        22
+      ],
+      "pixel_sha256": "52132ae4c9cdc4462874bab297724173f17086e41b68bfbced1e8bc095d6c538"
+    }
+  ]
+}

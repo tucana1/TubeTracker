@@ -1,32 +1,48 @@
 #!/opt/miniconda3/envs/tbtkr/bin/python3
 #-*- coding: utf-8 -*-
+"""Desktop and analysis engine for pollen germination and tube tracking."""
 
-import io
 import os
 import wx
 import cv2 as cv
 import csv
 import math
-import wx.adv
-import shutil
-import random
 import tempfile
 import numpy as np
 import pandas as pd
 from glob import glob
-from os.path import join
 from pathlib import Path
 import statistics as stat
 from random import randint
-from pandas import DataFrame, Series
-from motpy import Box, Detection, MultiObjectTracker
+from motpy import Detection, MultiObjectTracker
+
+from tubetracker_resources import load_logo, load_tip_templates
+
 tempdir = tempfile.TemporaryDirectory()
 temp_dir = tempdir.name
-tip_dir = temp_dir + '/detections.csv'
 title = 'TubeTracker'
 
+UI_BACKGROUND = wx.Colour(231, 236, 241)
+UI_PANEL = wx.Colour(247, 249, 251)
+UI_CANVAS = wx.Colour(255, 255, 255)
+UI_FIELD = wx.Colour(255, 255, 255)
+UI_TEXT = wx.Colour(36, 45, 54)
+UI_MUTED_TEXT = wx.Colour(83, 96, 109)
+UI_ACCENT = wx.Colour(35, 94, 145)
+
+# Fixed hit-or-miss definitions for skeleton endpoints; these are not learned weights.
+TIP_ENDPOINT_KERNELS = (
+	np.array(([0, 0, 0], [-1, 1, -1], [-1, -1, -1]), dtype=np.int8),
+	np.array(([0, -1, -1], [0, 1, -1], [0, -1, -1]), dtype=np.int8),
+	np.array(([-1, -1, 0], [-1, 1, 0], [-1, -1, 0]), dtype=np.int8),
+	np.array(([-1, -1, -1], [-1, 1, -1], [0, 0, 0]), dtype=np.int8),
+)
+
 class Detections:
+	"""Preprocess microscopy frames and retain foreground component detections."""
+
 	def __init__(self, img_list = None, bg_threshold = 10, blur_radius = 1):
+		"""Initialize frame storage and segment the supplied image sequence."""
 		if img_list != None:
 			self.img_list_input = img_list
 			self.img_list_gray = []
@@ -40,6 +56,7 @@ class Detections:
 			self.remove_bg_and_locate_rois()
 
 	def color_pallette(self):
+		"""Build the grayscale-to-BGR lookup table used by heatmap displays."""
 		v = 127.5
 		a = -230/(v*v)
 		rows = []
@@ -66,6 +83,7 @@ class Detections:
 		return pd.read_csv(os.path.expanduser(data_dir), names=['gray', 'b', 'g', 'r'])
 
 	def false_color(self, gray, min_pxl = 1):
+		"""Map grayscale intensities to the application's false-color palette."""
 		col_p = self.color_pallette()
 		h, w = gray.shape
 		mask = np.zeros((h,w,3), dtype = np.uint8)
@@ -77,6 +95,7 @@ class Detections:
 		return mask
 
 	def get_noiseless_frame(self, frame, bnr = False, gray = False, fill_holes = False):
+		"""Return a processed frame in binary, grayscale, or BGR form."""
 		if self.img_list_length > frame:
 			if bnr == True:
 				x = self.img_list_gray_noiseless[frame].copy()
@@ -100,14 +119,17 @@ class Detections:
 					return cv.cvtColor(self.img_list_gray_noiseless[frame], cv.COLOR_GRAY2BGR)
 
 	def get_raw_colored_frame(self, frame):
+		"""Return a false-colored processed frame for display."""
 		if self.img_list_length > frame:
 			return self.false_color(gray = self.img_list_gray_noiseless[frame])
 
 	def get_raw_frame(self, frame):
+		"""Return the stored grayscale edge frame converted to BGR."""
 		if self.img_list_length > frame:
 			return cv.cvtColor(self.img_list_gray[frame], cv.COLOR_GRAY2BGR)
 
 	def remove_bg_and_locate_rois(self, bg_threshold = None, frame = None, filter_radius = None, sigma = None, blur_radius = None):
+		"""Threshold foreground and record component bounding boxes by frame."""
 		if self.img_list_length > 0:
 			if bg_threshold == None:
 				bg_threshold = self.bg_threshold
@@ -157,6 +179,7 @@ class Detections:
 				self.img_list_gray_noiseless[frame] = gray
 
 	def segment_inputs(self):
+		"""Convert source images into morphology-enhanced edge frames."""
 		self.img_list_gray = []
 		self.kernel = np.ones((3, 3), np.uint8)
 		img_list = self.img_list_input.copy()
@@ -168,7 +191,10 @@ class Detections:
 			self.img_list_gray.append(gray)
 
 class Point:
+	"""Represent a two-dimensional coordinate with optional frame metadata."""
+
 	def __init__(self, x=0, y=0, frame = None, detection_method = "auto"):
+		"""Store coordinate, frame, and detection provenance values."""
 		self.x = x
 		self.y = y
 		self.coor = (x, y)
@@ -180,7 +206,10 @@ class Point:
 			self.frame = None
 
 class ROI:
+	"""Represent a rectangular detection and its biological display state."""
+
 	def __init__(self, x_l, y_t, x_r, y_b, color = (255, 0, 0), ID = '', frame = 0, img = None, detection_method = "auto", group = '', is_germinated = False, is_bursted = False, is_tip = False, filled_in = False, is_used = False, is_burst_candidate = False):
+		"""Initialize bounds, geometry, identity, and tracking state."""
 		self.gv1 = Point(x = x_l, y = y_t)
 		self.gv2 = Point(x = x_r, y = y_b)
 		self.gv3 = Point(x = int((x_r+x_l)/2), y = int((y_b+y_t)/2))
@@ -213,9 +242,11 @@ class ROI:
 			self.get_axes_int_points(img = img, ret = False)
 
 	def distance_btw(self, p1, p2):
+		"""Return Euclidean distance between two point-like objects."""
 		return math.sqrt(math.pow(p1.x - p2.x, 2) + math.pow(p1.y - p2.y, 2))
 
 	def f1(self, other):
+		"""Return overlap area with another ROI as a fraction of this ROI."""
 		if (min(self.gv2.x, other.gv2.x) < max(self.gv1.x, other.gv1.x)) or (min(self.gv2.y, other.gv2.y) < max(self.gv1.y, other.gv1.y)):
 			return 0
 		elif self.gv1.x < other.gv1.x and self.gv2.x > other.gv2.x and self.gv1.y < other.gv1.y and self.gv2.y > other.gv2.y:
@@ -226,6 +257,7 @@ class ROI:
 			return (abs(min(self.gv2.x, other.gv2.x) - max(self.gv1.x, other.gv1.x))*abs(min(self.gv2.y, other.gv2.y) - max(self.gv1.y, other.gv1.y)))/self.gv4
 
 	def f3(self, others, overlap = 0.10, check_frame = False):
+		"""Report whether this ROI sufficiently overlaps any ROI in a collection."""
 		ret = 0
 		for other in others:
 			if self.f1(other) >= overlap:
@@ -243,6 +275,7 @@ class ROI:
 			return True
 
 	def f4(self, others, idx = False, check_frame = False):
+		"""Return the best-overlapping ROI or its index from a collection."""
 		ret = None
 		if self.f3(others, check_frame = check_frame):
 			overlap = 0
@@ -266,6 +299,7 @@ class ROI:
 		return ret
 
 	def grain_color(self, paint = True):
+		"""Choose a display color for tip, germination, and rupture state."""
 		if self.is_tip:
 			if paint:
 				return (255,0,255)
@@ -298,6 +332,7 @@ class ROI:
 						return (0,0,255)
 
 	def get_axes_int_points(self, img, ret = True):
+		"""Estimate major and minor axis intersections using contour PCA."""
 		dxx = 1
 		area = -1
 		cnts, _ = cv.findContours(img[self.gv1.y:self.gv2.y, self.gv1.x:self.gv2.x], cv.RETR_LIST, cv.CHAIN_APPROX_NONE)
@@ -380,27 +415,35 @@ class ROI:
 			return self.ma_ax_int_p1, self.ma_ax_int_p2, self.mi_ax_int_p1, self.mi_ax_int_p2
 
 	def set_id(self, ID):
+		"""Assign a string identifier to the detection."""
 		self.id = str(ID)
 
 class Screen(wx.Panel):
+	"""Display the active microscopy frame inside the desktop application."""
+
 	def __init__(self, parent, path, size = (1000, 800), pos = (222, 20)):
+		"""Create the image panel and initialize it with the application logo."""
 		self.size = Point(x = size[0], y = size[1])
 		wx.Panel.__init__(self, parent, size = self.size.coor, pos = pos)
 		self.parent = parent
 		self.path = path
 		self.ratios = (1, 1)
-		cv.imwrite(self.path + "/logo.png", cv.resize(cv.imread("logo.png"), self.size.coor))
+		cv.imwrite(self.path + "/logo.png", cv.resize(load_logo(), self.size.coor))
 		self.imageCtrl = wx.StaticBitmap(self, wx.ID_ANY, wx.Bitmap(wx.Image(self.path + "/logo.png", wx.BITMAP_TYPE_ANY)))
 		self.Layout()
 
 	def display(self, img):
+		"""Resize, cache, and display an OpenCV image in the panel."""
 		img_path = self.path + "/img.png"
 		cv.imwrite(img_path, cv.resize(img, self.size.coor))
 		self.imageCtrl.SetBitmap(wx.Bitmap(wx.Image(img_path, wx.BITMAP_TYPE_ANY)))
 		self.Refresh()
 
 class Screen_Control(wx.Panel):
+	"""Handle frame-canvas keyboard, pointer, and overlay interactions."""
+
 	def __init__(self, panel, parent, path, size = (1000, 800), pos = (222, 20)):
+		"""Create the transparent interaction layer over the image display."""
 		wx.Panel.__init__(self, parent, size = size, pos = pos)
 		self.parent = parent
 		self.Bind(wx.EVT_MOTION, self.on_mouse_move)
@@ -417,6 +460,7 @@ class Screen_Control(wx.Panel):
 		self.Layout()
 
 	def on_keyboard(self, e):
+		"""Navigate frames with arrow keys and preserve canvas focus."""
 		if e.GetKeyCode() == wx.WXK_UP:
 			self.parent.change_frame(self.parent.move_xl)
 		elif e.GetKeyCode() == wx.WXK_DOWN:
@@ -430,6 +474,7 @@ class Screen_Control(wx.Panel):
 		self.SetFocus()
 
 	def on_mouse_click(self, e):
+		"""Record manual edit points according to the selected QC operation."""
 		self.SetFocus()
 		pos = self.ScreenToClient(e.GetPosition())
 		screen_pos = self.GetScreenPosition()
@@ -445,15 +490,18 @@ class Screen_Control(wx.Panel):
 			self.user_clicks.append(pt)
 
 	def on_mouse_move(self, e):
+		"""Update the crosshair position while the pointer moves."""
 		self.SetFocus()
 		self.c2 = e.GetPosition()
 		self.Refresh()
 
 	def on_mouse_up(self, e):
+		"""Restore the normal cursor after a pointer interaction."""
 		self.SetCursor(wx.Cursor(wx.CURSOR_ARROW))
 		self.SetFocus()
 
 	def on_paint(self, e):
+		"""Draw crosshairs, tracks, tips, grains, and manual annotations."""
 		dc = wx.PaintDC(self)
 		dc.SetPen(wx.Pen('gray', 1))
 		dc.SetBrush(wx.Brush("BLACK", wx.TRANSPARENT))
@@ -503,7 +551,10 @@ class Screen_Control(wx.Panel):
 		self.SetFocus()
 
 class Track:
+	"""Represent a time-ordered trajectory or grain observation sequence."""
+
 	def __init__(self, boxes, color = (0,0,0), ID = '', fill_holes = False):
+		"""Initialize trajectory state from a collection of frame-specific ROIs."""
 		self.burst_frame = -1
 		self.burst_method = "manual"
 		self.is_burst_candidate = False
@@ -529,6 +580,7 @@ class Track:
 		self.gv5 = ["track." + self.id + " length ()"]
 
 	def f1(self, box):
+		"""Insert an ROI into the trajectory while preserving frame order."""
 		box.group = self.id
 		if self.gv1 == []:
 			self.gv1.append(box)
@@ -547,10 +599,12 @@ class Track:
 					break
 
 	def f2(self, boxes):
+		"""Insert each supplied ROI into the trajectory."""
 		for box in boxes:
 			self.f1(box)
 
 	def f3(self, coef = Point(x=1,y=1), disp = 2.00, disp_u = "um", num_frames = 300, time_p_frame = 60):
+		"""Calculate calibrated coordinates and cumulative movement over time."""
 		if self.gv2 > 1:
 			self.gv3 = [[self.id, self.gv1[0].gv6, int(self.gv1[0].gv3.x/coef.x), int(self.gv1[0].gv3.y/coef.y), self.gv1[0].gv6*time_p_frame, 0, 0, self.gv1[0].detection_method]]
 			length = 0
@@ -587,6 +641,7 @@ class Track:
 				self.gv5.append(k)
 
 	def f4(self, box, keep_leftover = False):
+		"""Truncate the trajectory near an ROI and optionally return its tail."""
 		distance = 1000000
 		index = None
 		min_length = 2
@@ -613,6 +668,7 @@ class Track:
 				return None
 
 	def f5(self):
+		"""Return endpoint displacement divided by total trajectory distance."""
 		abs_len = 0
 		for i in range(1, self.gv2):
 			abs_len += self.f6(self.gv1[i-1], self.gv1[i])
@@ -622,12 +678,14 @@ class Track:
 			return self.f6(self.gv1[0], self.gv1[self.gv2-1])/abs_len
 
 	def f6(self, box1, box2, img_ratio = None):
+		"""Measure centroid distance with optional image-scale correction."""
 		if img_ratio ==None:
 			return math.sqrt(math.pow(float(box1.gv3.x - box2.gv3.x), 2) + math.pow(float(box1.gv3.y - box2.gv3.y), 2))
 		else:
 			return math.sqrt(math.pow(float(box1.gv3.x - box2.gv3.x)/img_ratio.x, 2) + math.pow(float(box1.gv3.y - box2.gv3.y)/img_ratio.y, 2))
 
 	def fill_missing_frames(self, ret = False, up_to_frame = -1):
+		"""Linearly interpolate missing trajectory frames and optional trailing frames."""
 		k = 0
 		h = []
 		w = []
@@ -665,6 +723,7 @@ class Track:
 			return boxes
 
 	def first_frame(self):
+		"""Return the earliest frame represented by the trajectory."""
 		f = 100000000
 		for roi in self.gv1:
 			if roi.gv6 < f:
@@ -672,6 +731,7 @@ class Track:
 		return f
 
 	def last_frame(self):
+		"""Return the latest frame represented by the trajectory."""
 		f = 0
 		for roi in self.gv1:
 			if roi.gv6 > f:
@@ -679,6 +739,7 @@ class Track:
 		return f
 
 	def remove_survival(self, what = "g"):
+		"""Clear a germination or rupture annotation from this grain track."""
 		if what == "g":
 			self.ger_p_value = 1
 			self.ger_frame = -1
@@ -694,6 +755,7 @@ class Track:
 			self.burst_method = "manual"
 
 	def roi_closest_to(self, frame):
+		"""Return the observation nearest to a requested frame."""
 		dt = 100000000
 		idx = 0
 		k = -1
@@ -707,9 +769,11 @@ class Track:
 		return self.gv1[idx]
 
 	def set_id(self, ID):
+		"""Assign a string identifier to the trajectory."""
 		self.id = str(ID)
 
 	def survival_values(self, tbf = 30):
+		"""Serialize grain detection, germination, rupture, and provenance values."""
 		if self.is_germinated:
 			gt = self.ger_frame*tbf
 		else:
@@ -721,6 +785,7 @@ class Track:
 		return [self.id, self.gv1[0].gv6*tbf, gt, bt, self.gv1[0].gv6, self.ger_frame, self.burst_frame, self.ger_p_value, self.gv1[0].gv3.x, self.gv1[0].gv3.y, self.gv1[0].gv4, self.detection_method, self.germination_method, self.burst_method]
 
 	def update_germination(self, frame, p_value, method = "auto"):
+		"""Mark germination at a frame when it does not conflict with rupture."""
 		if frame <= self.last_frame():
 			add_ger = True
 			if self.is_bursted:
@@ -738,6 +803,7 @@ class Track:
 						r.is_germinated = False
 
 	def update_burst(self, frame, method = "manual"):
+		"""Mark a reviewed rupture event and update per-frame grain state."""
 		if frame <= self.last_frame():
 			self.burst_frame = frame
 			self.is_bursted = True
@@ -752,11 +818,12 @@ class Track:
 				if self.burst_frame <= self.ger_frame:
 					self.ger_frame = -1
 					self.ger_p_value = 1
-					self.is_germinated == False
+					self.is_germinated = False
 					for r in self.gv1:
 						r.is_germinated = False
 
 	def set_burst_candidate(self, frame, confidence, reason, track_id = ""):
+		"""Attach an unconfirmed rupture suggestion and supporting evidence."""
 		if frame <= self.last_frame() and not self.is_bursted:
 			self.is_burst_candidate = True
 			self.burst_candidate_frame = frame
@@ -770,6 +837,7 @@ class Track:
 					r.is_burst_candidate = False
 
 	def clear_burst_candidate(self):
+		"""Remove any unconfirmed rupture suggestion from this grain."""
 		self.is_burst_candidate = False
 		self.burst_candidate_frame = -1
 		self.burst_candidate_confidence = 0.0
@@ -779,12 +847,16 @@ class Track:
 			r.is_burst_candidate = False
 
 	def accept_burst_candidate(self):
+		"""Convert the current rupture suggestion into a reviewed event."""
 		if self.is_burst_candidate:
 			frame = self.burst_candidate_frame
-			self.update_burst(frame = frame, method = "auto_tip_burst")
+			self.update_burst(frame = frame, method = "reviewed_burst_candidate")
 
 class Tracker:
+	"""Coordinate pollen-grain detection, tip tracking, events, and exports."""
+
 	def __init__(self, screen_size = (1000,800)):
+		"""Initialize analysis parameters, counters, and empty result collections."""
 		self.pxl_dis = 1.00
 		self.dis_unit = "um"
 		self.gv3 = []
@@ -844,14 +916,19 @@ class Tracker:
 		self.aceptance_ratio = 0.5
 		self.ger_confirm_frames = 8
 		self.burst_candidates = []
+		self.enable_burst_candidates = False
+		self.burst_candidates_evaluated = False
 		self.burst_score_threshold = 0.5
 		self.burst_end_margin = 3
 		self.burst_area_spike_ratio = 1.6
 
 	def detections_generator(self, data_dir = ""):
+		"""Yield Motpy detections grouped by frame from a bounding-box CSV."""
 		if not os.path.isfile(os.path.expanduser(data_dir)):
 			raise ValueError('file '+ data_dir + ' does not exist')
 		df = pd.read_csv(os.path.expanduser(data_dir), names=['frame', 'x_l', 'y_t', 'x_r', 'y_b'])
+		if df.empty:
+			return
 		for frame in range(df.frame.max() + 1):
 			detections = []
 			for _, row in df[df.frame == frame].iterrows():
@@ -859,6 +936,7 @@ class Tracker:
 			yield frame, detections
 
 	def draw_results(self , tracks = True):
+		"""Render track paths or grain states onto copies of source frames."""
 		img_list = []
 		lwd = 1
 		for img in self.all_detections.img_list_input:
@@ -887,6 +965,7 @@ class Tracker:
 		return img_list
 
 	def exclude_grains(self):
+		"""Remove grains whose identifiers are listed in the exclusion state."""
 		ids = self.gv3
 		if len(self.valid_grains) > 0 and len(self.gv3) > 0:
 			for grain in self.valid_grains:
@@ -895,12 +974,14 @@ class Tracker:
 					self.valid_grains.remove(grain)
 
 	def f9(self, genre = None):
+		"""Generate a random BGR display color, optionally restricted to light tones."""
 		if genre == None:
 			return (randint(0, 255),randint(0, 255),randint(0, 255))
 		else:
 			return (randint(100, 255),randint(100, 255),randint(100, 255))
 
 	def f10(self, what = "t"):
+		"""Allocate or recycle an identifier for a grain, track, or tip."""
 		ID = ''
 		if what == "g":
 			if len(self.gv11) > 0:
@@ -935,6 +1016,7 @@ class Tracker:
 		return str(ID)
 
 	def f12(self, ID, what = "t"):
+		"""Return an identifier to the appropriate reusable-ID pool."""
 		ID = int(ID)
 		if what == "g" and ID not in self.gv11:
 			self.gv11.append(ID)
@@ -947,6 +1029,7 @@ class Tracker:
 			self.gv32p.sort()
 
 	def f17(self, filename, img_list, img_per_sec = 25):
+		"""Encode an image sequence as an MJPG AVI video."""
 		try:
 			h, w, l = img_list[0].shape
 		except:
@@ -958,6 +1041,7 @@ class Tracker:
 		writer = None
 
 	def find_grains(self):
+		"""Detect circular pollen grains and link observations across frames."""
 		size_cutoff = 1.3
 		self.valid_grains = []
 		self.gv3 = []
@@ -979,7 +1063,10 @@ class Tracker:
 				if k >= self.all_detections.img_list_length:
 					break
 				gr_tr = int(self.grain_tresh)
-				grains = np.uint16(np.around(cv.HoughCircles(self.all_detections.img_list_gray_noiseless[k], cv.HOUGH_GRADIENT, 1, int(0.75*(self.max_grain_radius+self.min_grain_radius)), param1=210, param2 = gr_tr, minRadius = int(self.min_grain_radius), maxRadius = int(self.max_grain_radius))))
+				circles = cv.HoughCircles(self.all_detections.img_list_gray_noiseless[k], cv.HOUGH_GRADIENT, 1, int(0.75*(self.max_grain_radius+self.min_grain_radius)), param1=210, param2 = gr_tr, minRadius = int(self.min_grain_radius), maxRadius = int(self.max_grain_radius))
+				if circles is None:
+					continue
+				grains = np.uint16(np.around(circles))
 				for i in grains[0, :]:
 					grain = ROI(x_l = int(i[0] - i[2]), y_t = int(i[1] - i[2]), x_r = int(i[0] + i[2]), y_b = int(i[1] + i[2]), frame = k, group = str(voys))
 					voys += 1
@@ -1038,6 +1125,7 @@ class Tracker:
 				self.valid_grains.append(grain)
 
 	def find_tips_se(self):
+		"""Detect candidate tube tips as endpoints of foreground skeletons."""
 		overlap = 0.5
 		frame = -1
 		valid_tips = []
@@ -1056,7 +1144,9 @@ class Tracker:
 				rois.append(ROI(x_l = x, y_t = y, x_r = x+w, y_b = y+h, frame = frame))
 			sk = cv.ximgproc.thinning(img, None, 1)
 			H,W = img.shape
-			out = cv.morphologyEx(sk, cv.MORPH_HITMISS, np.array(([0, 0, 0], [-1, 1, -1], [-1, -1, -1]), dtype="int")) + cv.morphologyEx(sk, cv.MORPH_HITMISS, np.array(([0, -1, -1], [0, 1, -1], [0, -1, -1]), dtype="int")) + cv.morphologyEx(sk, cv.MORPH_HITMISS, np.array(([-1, -1, 0],  [-1, 1, 0], [-1, -1, 0]), dtype="int")) + cv.morphologyEx(sk, cv.MORPH_HITMISS, np.array(([-1, -1, -1], [-1, 1, -1], [0, 0, 0]), dtype="int"))
+			out = cv.morphologyEx(sk, cv.MORPH_HITMISS, TIP_ENDPOINT_KERNELS[0])
+			for kernel in TIP_ENDPOINT_KERNELS[1:]:
+				out = out + cv.morphologyEx(sk, cv.MORPH_HITMISS, kernel)
 			tips = np.argwhere(out == 255)
 			try:
 				tips_in_k = self.valid_tips[frame]
@@ -1089,6 +1179,7 @@ class Tracker:
 		self.valid_tips = valid_tips
 
 	def find_tips_tm(self):
+		"""Detect tube tips with the versioned grayscale template library."""
 		overlap = 0.1
 		templates = self.tip_templates()
 		area = []
@@ -1139,6 +1230,7 @@ class Tracker:
 					self.valid_tips.append(tips_in_k)
 
 	def match_templates(self, img, templates, frame = -1, threshold1 = 0.75):
+		"""Match tip templates in one frame and filter geometric false positives."""
 		tmp = []
 		knl_r = 2
 		flt1 = 3.5/5
@@ -1203,6 +1295,7 @@ class Tracker:
 		return detections
 
 	def save_results(self, save_dir = ""):
+		"""Write annotated videos, trajectories, events, and summary CSV files."""
 		if len(self.valid_tracks) > 0:
 			for track in self.valid_tracks:
 				track.f3(coef = self.img_rp, disp = self.pxl_dis, disp_u = self.dis_unit, num_frames = len(self.file_names), time_p_frame = self.time_p_frame)
@@ -1282,9 +1375,9 @@ class Tracker:
 				rows.append([frame, frame*self.time_p_frame, g, g/len(ger_frames), b, b/len(burst_frames)])
 			with open(name, 'w', newline='') as f:
 				csv.writer(f).writerows(rows)
-			if len(self.burst_candidates) == 0:
+			if self.enable_burst_candidates and not self.burst_candidates_evaluated:
 				self.find_burst_candidates()
-			if len(self.burst_candidates) > 0:
+			if self.enable_burst_candidates and len(self.burst_candidates) > 0:
 				name = save_dir + "burst.candidates.csv"
 				rows = [["grain_id", "frame", "time ("+self.time_unit+")", "confidence", "method", "associated_track_id", "evidence"]]
 				for c in self.burst_candidates:
@@ -1292,7 +1385,60 @@ class Tracker:
 				with open(name, 'w', newline='') as f:
 					csv.writer(f).writerows(rows)
 
+	def coordinate_rows(self):
+		"""Return a tidy coordinate/time table for all accepted tip tracks."""
+		header = [
+			"grain_id",
+			"track_id",
+			"frame",
+			"time_" + self.time_unit,
+			"centroid_x_original_px",
+			"centroid_y_original_px",
+			"cumulative_movement_px",
+			"cumulative_movement_" + self.dis_unit,
+			"growth_rate_" + self.dis_unit + "_per_" + self.time_unit,
+			"detection_method",
+		]
+		if not self.file_names:
+			return [header]
+		track_to_grain = {}
+		for grain in self.valid_grains:
+			track = self.associate_grain_to_track(grain)
+			if track is not None and track.id not in track_to_grain:
+				track_to_grain[track.id] = grain.id
+		rows = [header]
+		for track in self.valid_tracks:
+			track.f3(
+				coef=self.img_rp,
+				disp=self.pxl_dis,
+				disp_u=self.dis_unit,
+				num_frames=len(self.file_names),
+				time_p_frame=self.time_p_frame,
+			)
+			previous_time = None
+			previous_length = None
+			for point in track.gv3:
+				growth_rate = ""
+				if previous_time is not None and point[4] > previous_time:
+					growth_rate = (point[6] - previous_length)/(point[4] - previous_time)
+				rows.append([
+					track_to_grain.get(track.id, ""),
+					point[0],
+					point[1],
+					point[4],
+					point[2],
+					point[3],
+					point[5],
+					point[6],
+					growth_rate,
+					point[7],
+				])
+				previous_time = point[4]
+				previous_length = point[6]
+		return rows
+
 	def segment_inputs(self, for_ger = True, false_color = True):
+		"""Load extracted frame files and build the processed detection sequence."""
 		if self.file_names is None:
 			pass
 		else:
@@ -1308,36 +1454,11 @@ class Tracker:
 			self.all_detections = Detections(img_list = img_list, bg_threshold = self.bg_threshold, blur_radius = self.filter_radius)
 
 	def tip_templates(self):
-		weigths = [[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 133, 255, 255, 252, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 211, 255, 255, 255, 255, 255, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 79, 255, 255, 255, 255, 255, 255, 250, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 35, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 38, 255, 255, 255, 255, 255, 255, 255, 255, 252, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 182, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 228, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 250, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 194, 177, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 182, 255, 255, 255, 255, 232, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 28, 255, 255, 255, 255, 255, 255, 247, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 199, 255, 255, 255, 255, 255, 255, 255, 221, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 196, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 191, 255, 255, 255, 255, 255, 255, 255, 255, 255, 76, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 51, 255, 255, 255, 255, 255, 255, 255, 255, 255, 240, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 179, 255, 255, 255, 255, 255, 255, 255, 255, 255, 157, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 248, 255, 255, 255, 255, 255, 255, 255, 255, 255, 37, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 97, 255, 255, 255, 255, 255, 255, 255, 255, 255, 220, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 214, 255, 255, 255, 255, 255, 255, 255, 255, 255, 102, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 255, 255, 255, 255, 255, 255, 255, 255, 255, 249, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 2, 0]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 77, 191, 207, 133, 31, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 243, 255, 255, 255, 255, 255, 236, 17, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 255, 255, 255, 255, 255, 255, 255, 255, 83, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 139, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 194, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 236, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 252, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 252, 6, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 173, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254, 38, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 124, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 234, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 212, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 162, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 91, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 24, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 250, 255, 255, 255, 255, 255, 255]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 5, 154, 255, 255, 255, 255, 199, 92, 30, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 56, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 250, 153, 66, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 195, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 214, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 196, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 213, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 77, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 135, 252, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 18, 57, 194, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 25, 114, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 12, 94, 199, 247, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 3, 204, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 17, 254, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 253, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 50, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 224, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 223, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 48, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 253, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 254, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 200, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 85, 196, 246, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 58, 241, 255, 255, 205, 14, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 207, 255, 255, 255, 255, 255, 255, 255, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 237, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 62, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 38, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 202, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 197, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 71, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 253, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 254, 122, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 49, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 238, 36, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 207, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 160, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 94, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 15, 133, 200, 199, 118, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 9, 223, 255, 255, 255, 255, 255, 254, 23, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 61, 255, 255, 255, 255, 255, 255, 255, 255, 252, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 68, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 29, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 6, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 243, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 40, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 206, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 84, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 156, 0, 0, 0, 0, 0, 0, 0, 0, 0, 23, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 69, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 148, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 219, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 251, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 69, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 147, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 213, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 32, 178, 249, 206, 60, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 224, 255, 255, 255, 255, 255, 231, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 234, 255, 255, 255, 255, 255, 255, 255, 166, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 156, 255, 255, 255, 255, 255, 255, 255, 255, 255, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 83, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 130, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 181, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 254, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 204, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 164, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 33, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 66, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 99, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 18, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 226, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 242, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 123, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 49, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 45, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 163, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 183, 0, 0, 0, 0, 0, 0, 0, 0]],
-		[(25,25),[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 35, 165, 134, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 255, 143, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 245, 255, 255, 255, 255, 255, 255, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 119, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 253, 255, 255, 255, 255, 255, 255, 255, 255, 138, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 255, 255, 255, 255, 255, 255, 255, 255, 255, 250, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 85, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 121, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 127, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 0, 0, 0, 0, 0, 0, 0]],
-		[(22,16),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,13,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,229,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,107,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,221,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,212,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,191,0,0,0,0,254,255,255,255,255,255,255,255,255,255,255,170,0,0,0,0,138,255,255,255,255,255,255,255,255,255,255,253,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255]],
-		[(20,21),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,116,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,184,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,241,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(19,21),[255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,200,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,0,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,131,0,0,0,0,245,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(20,21),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,225,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,1,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,225,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(21,22),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,102,255,255,255,213,3,0,0,0,0,0,0,0,0,0,0,0,0,0,0,9,255,255,255,255,255,255,255,147,0,0,0,0,0,0,0,0,0,0,0,0,2,255,255,255,255,255,255,255,255,255,206,0,0,0,0,0,0,0,0,0,0,0,252,255,255,255,255,255,255,255,255,255,255,193,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,233,0,0,0,0,0,0,0,0,23,255,255,255,255,255,255,255,255,255,255,255,255,255,217,0,0,0,0,0,0,0,23,255,255,255,255,255,255,255,255,255,255,255,255,255,255,236,0,0,0,0,0,0,1,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,241,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,3,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,11,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,15,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,10,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,7,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255]],
-		[(21,23),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,19,67,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,231,255,255,255,255,255,191,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,68,0,0,0,0,0,0,0,0,0,0,0,0,239,255,255,255,255,255,255,255,255,255,255,251,3,0,0,0,59,0,0,0,0,0,3,255,255,255,255,255,255,255,255,255,255,255,255,255,232,0,19,255,0,0,0,0,0,122,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,189,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,145,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,22,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,254,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,3,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,94,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,186,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,3,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,45,255,255,255,255,255,255,255,255]],
-		[(20,22),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,250,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,230,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,183,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,93,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,17,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,33,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,122,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,251,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,212,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,92,0,0,0,0,0,36,255,255,255,255,255,255,255,255,255,255,255,255,255,117,0,0,0,0,0,0,0,0,248,255,255,255,255,255,255,255,255,255,255,170,0,0,0,0,0,0,0,0,0,0,0,254,255,255,255,255,255,255,255,223,0,0,0,0,0,0,0,0,0,0,0,0,0,0,109,255,255,255,255,248,7,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(21,19),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,2,251,255,255,255,255,16,0,0,0,0,0,0,0,0,0,0,0,63,255,255,255,255,255,255,255,173,0,0,0,0,0,0,0,0,0,1,255,255,255,255,255,255,255,255,255,82,0,0,0,0,0,0,0,0,248,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,26,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,81,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,87,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,87,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,87,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,87,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,87,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,87,0,0,0,0,0,107,220,255,255,255,255,255,255,255,255,255,255,255,231,128,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255]],
-		[(23,20),[255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,244,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,250,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,212,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,10,255,255,255,255,255,255,255,255,255,255,174,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,13,0,0,0,0,0,0,0,0,0,0,0,0,206,255,255,255,255,235,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(21,22),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,250,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,53,255,255,255,255,0,0,0,0,0,0,0,0,0,13,50,55,55,55,55,55,55,146,255,255,255,255,0,0,0,0,0,0,0,45,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,105,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,253,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,11,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,222,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,177,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,1,104,238,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,85,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,7,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255]],
-		[(21,23),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,30,255,255,255,255,248,3,0,0,0,0,0,0,0,0,160,0,0,0,0,0,8,251,255,255,255,255,255,255,255,83,0,0,0,0,0,0,0,255,117,0,0,1,248,255,255,255,255,255,255,255,255,255,255,12,0,0,0,0,0,0,255,255,22,167,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,192,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,254,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,36,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,89,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,185,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,225,0,0,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(21,23),[0,0,0,0,0,0,0,0,0,0,0,0,0,225,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,28,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,0,219,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,155,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,85,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,9,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,38,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,163,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,252,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,250,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,130,255,255,255,255,255,255,255,255,255,255,255,255,255,115,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,214,0,0,19,255,255,0,0,0,0,0,0,19,255,255,255,255,255,255,255,255,237,0,0,0,0,0,94,255,0,0,0,0,0,0,0,2,255,255,255,255,255,255,12,0,0,0,0,0,0,0,111,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(23,22),[255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,53,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,31,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,1,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,249,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,5,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,92,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,248,104,0,9,255,255,255,255,255,255,255,255,255,255,255,255,255,26,0,0,0,0,0,0,0,0,252,255,255,255,255,255,255,255,255,255,255,255,255,163,0,0,0,0,0,0,0,0,2,255,255,255,255,255,255,255,255,255,255,255,255,185,0,0,0,0,0,0,0,0,0,185,255,255,255,255,255,255,255,255,255,255,255,48,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,84,255,255,255,255,255,255,255,255,255,161,0,0,0,0,0,0,0,0,0,0,0,0,191,255,255,255,255,255,255,255,228,0,0,0,0,0,0,0,0,0,0,0,0,0,0,44,255,255,255,255,255,73,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]],
-		[(23,22),[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,12,120,147,83,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,254,255,255,255,255,255,219,0,0,0,0,0,0,0,0,0,0,0,0,0,20,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,193,0,0,0,0,0,0,0,0,0,0,42,255,255,255,255,255,255,255,255,255,255,255,1,0,0,0,0,0,0,0,0,0,251,255,255,255,255,255,255,255,255,255,255,255,241,0,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,22,0,0,0,0,0,0,0,0,226,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,21,255,255,255,255,255,255,255,255,255,255,255,255,255,131,0,0,0,0,0,0,0,0,253,255,255,255,255,255,255,255,255,255,255,255,255,255,68,255,255,0,0,0,0,0,7,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,226,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,112,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,0,38,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,0,160,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,0,234,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,0,0,0,0,0,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255,255]]
-		]
-		templates = []
-		for w in weigths:
-			templates.append(np.resize(np.asarray(w[1], dtype = np.uint8),w[0]))
-		return templates
+		"""Return validated image templates for the legacy tip detector."""
+		return load_tip_templates()
 
 	def track_elongation(self):
+		"""Link detected tips into filtered tube-growth trajectories."""
 		disp_ratio = 0.25
 		self.valid_tracks  = []
 		self.filled_in_tips = []
@@ -1356,6 +1477,8 @@ class Tracker:
 					if tip.w >= self.min_tip_side and tip.h >= self.min_tip_side:
 						tmp.append(tip.w)
 						tmp.append(tip.h)
+			if len(tmp) == 0:
+				return
 			rd = stat.mean(tmp)/2
 			tip_path = temp_dir + "/tips.csv"
 			with open(tip_path, 'w', newline = '') as f:
@@ -1414,6 +1537,7 @@ class Tracker:
 						self.f12(trk.id)
 
 	def track_germination_via_tips(self):
+		"""Infer germination from sustained tip movement overlapping a grain."""
 		disp_ratio = 0.3
 		cutoff = self.ger_confirm_frames
 		confirm_at = self.aceptance_ratio
@@ -1480,6 +1604,7 @@ class Tracker:
 														t = t.f4(tips[i])
 
 	def track_germination_via_area(self):
+		"""Infer germination from statistically unusual local area changes."""
 		cutoff = self.ger_confirm_frames
 		confirm_at = self.aceptance_ratio
 		area = []
@@ -1487,7 +1612,7 @@ class Tracker:
 			for roi in grain.gv1:
 				if not roi.is_filled_in:
 					area.append(roi.gv4)
-		if len(area) > 0:
+		if len(area) > 1:
 			sd = stat.stdev(area)/stat.mean(area)
 		else:
 			sd = 0.08270356
@@ -1531,6 +1656,7 @@ class Tracker:
 									grain.ger_p_value = p_val
 
 	def associate_grain_to_track(self, grain):
+		"""Return the most plausible tip trajectory associated with a grain."""
 		if len(self.valid_tracks) == 0:
 			return None
 		ref_frame = grain.ger_frame if grain.ger_frame >= 0 else grain.first_frame()
@@ -1556,6 +1682,7 @@ class Tracker:
 		return best
 
 	def local_foreground(self, center, frame, half):
+		"""Measure foreground area and component count near a point in one frame."""
 		if frame < 0 or frame >= self.all_detections.img_list_length:
 			return (0, 0)
 		img = self.all_detections.get_noiseless_frame(frame = frame, bnr = True, gray = True)
@@ -1574,6 +1701,7 @@ class Tracker:
 		return (area, len(cnts))
 
 	def score_burst(self, grain, track, last_valid_frame):
+		"""Score a possible rupture from track termination and local morphology."""
 		if track is None or track.gv2 < 2:
 			return None
 		end_frame = track.last_frame()
@@ -1608,7 +1736,9 @@ class Tracker:
 		return {"grain_id": grain.id, "frame": end_frame, "time": end_frame*self.time_p_frame, "confidence": round(score, 3), "method": "auto_tip_burst", "track_id": track.id, "reason": "+".join(reasons)}
 
 	def find_burst_candidates(self):
+		"""Generate reviewer-only rupture suggestions for germinated grains."""
 		self.burst_candidates = []
+		self.burst_candidates_evaluated = True
 		if len(self.valid_grains) == 0 or self.all_detections == []:
 			return self.burst_candidates
 		last_valid_frame = self.all_detections.img_list_length - 1
@@ -1629,10 +1759,13 @@ class Tracker:
 		return self.burst_candidates
 
 class Tracker_GUI(wx.Frame):
+	"""Provide the desktop workflow for loading, reviewing, and exporting analyses."""
+
 	def __init__(self,title = title):
+		"""Construct controls, analysis state, menus, canvas, and review panels."""
 		wx.Frame.__init__(self, None, title=title)
 		self.first_use = True
-		self.gv1 = wx.GetDisplaySize()
+		self.gv1 = wx.GetClientDisplayRect().GetSize()
 		self.tracker = Tracker(screen_size = self.f47("tt4"))
 		self.input_ext = ".avi"
 		self.ids_to_process = ''
@@ -1640,13 +1773,14 @@ class Tracker_GUI(wx.Frame):
 		self.move_xl = 5
 		self.number_of_uses = 0
 		self.screen_size = self.f47("tt4")
-		self.save_name = 'Please Enter Save Name Here'
+		self.save_name = 'Enter output name'
+		self.output_directory = None
 		self.panel_lt = wx.Panel(self, pos=self.f45("pnl1"), size=self.f47("pnl1"))
 		wx.StaticBox(self.panel_lt, label='Image Parameters', pos=self.f45("ly1"), size=self.f47("ly1"))
 		self.rotate_input = wx.CheckBox(self.panel_lt, label = "Rotate images", pos = self.f45("cb_b1"))
-		b1 = wx.Button(self.panel_lt, label = "data directory", size = self.f47("b1"), pos = self.f45("b1"))
+		b1 = wx.Button(self.panel_lt, label = "Choose Folder", size = self.f47("b1"), pos = self.f45("b1"))
 		b1.Bind(wx.EVT_BUTTON, self.on_data_directory)
-		b2 = wx.Button(self.panel_lt, label = "save", size = self.f47("b2"), pos = self.f45("b2"))
+		b2 = wx.Button(self.panel_lt, label = "Save Results", size = self.f47("b2"), pos = self.f45("b2"))
 		b2.Bind(wx.EVT_BUTTON, self.on_save)
 		self.suported_file_ext = ['.avi', ".mp4",'.png', '.tiff', '.tif', '.jpeg', '.jpg']
 		self.cb1 = wx.ComboBox(self.panel_lt, choices=self.suported_file_ext, size = self.f47("cb1"), pos = self.f45("cb1"))
@@ -1665,9 +1799,9 @@ class Tracker_GUI(wx.Frame):
 		self.smouthing_radius = wx.Slider(self.panel_lt, value=int(self.tracker.filter_radius), minValue=1, maxValue=20, style=wx.SL_HORIZONTAL, pos=self.f45("lt_sl2"), size=self.f47("br_sl1"))
 		self.smouthing_radius.Bind(wx.EVT_SLIDER, self.on_filter_radius)
 		self.smouthing_radius_lab = wx.StaticText(self.panel_lt, label=str(self.tracker.filter_radius), style=wx.ALIGN_LEFT, pos = self.f45("st1sal"))
-		wx.StaticText(self.panel_lt, label="File Extention: ", style=wx.ALIGN_LEFT, pos = self.f45("st1"))
-		wx.StaticText(self.panel_lt, label='''Time/frame: ''', style=wx.ALIGN_LEFT, pos = self.f45("st9"))
-		wx.StaticText(self.panel_lt, label="1 pxl is: ", style=wx.ALIGN_LEFT, pos = self.f45("st10"))
+		wx.StaticText(self.panel_lt, label="File type:", style=wx.ALIGN_LEFT, pos = self.f45("st1"))
+		wx.StaticText(self.panel_lt, label='''Time per frame:''', style=wx.ALIGN_LEFT, pos = self.f45("st9"))
+		wx.StaticText(self.panel_lt, label="1 pixel:", style=wx.ALIGN_LEFT, pos = self.f45("st10"))
 		cv.imwrite(temp_dir + "/heatmap.png", cv.resize(self.get_heatmap(), self.f47("heatmap")))
 		self.heatmap = wx.StaticBitmap(self.panel_lt, wx.ID_ANY, wx.Bitmap(wx.Image(temp_dir + "/heatmap.png", wx.BITMAP_TYPE_ANY)), size = self.f47("heatmap"), pos = self.f45("heatmap"))
 		self.min_tresh_bar = wx.Slider(self.panel_lt, value=self.tracker.bg_threshold, minValue=1, maxValue=255, style=wx.SL_HORIZONTAL, pos=self.f45("sl_heatmap"), size=self.f47("heatmap"))
@@ -1681,67 +1815,67 @@ class Tracker_GUI(wx.Frame):
 		b4b.Bind(wx.EVT_BUTTON, self.on_update_frame_bg)
 		self.panel_lb = wx.Panel(self, pos=self.f45("pnl2"), size=self.f47("pnl2"))
 		wx.StaticBox(self.panel_lb, label='QC and Manual Tracking', pos=self.f45("ly2"), size=self.f47("ly2"))
-		b11 = wx.Button(self.panel_lb, label = "update", size = self.f47("b11"), pos = self.f45("b11"))
+		b11 = wx.Button(self.panel_lb, label = "Apply Edit", size = self.f47("b11"), pos = self.f45("b11"))
 		b11.Bind(wx.EVT_BUTTON, self.on_manual_update)
 		self.st11 = wx.StaticText(self.panel_lb, label=self.f29(16), pos = self.f45("st11"))
 		self.cb_id = 0
-		labels = [["remove track", self.f45("chb1")], ["link tracks", self.f45("chb2")], ["extend track", self.f45("chb3")], ["add track", self.f45("chb4")], ["split track", self.f45("chb5")], ["truncate track", self.f45("chb6")], ["add tip", self.f45("chb7")], ["add grain", self.f45("chb8")], ["add germ frame",self.f45("chb9")], ["add burst frame",self.f45("chb9a")]]
+		labels = [["Remove track", self.f45("chb1")], ["Link tracks", self.f45("chb2")], ["Extend track", self.f45("chb3")], ["Add track", self.f45("chb4")], ["Split track", self.f45("chb5")], ["Truncate track", self.f45("chb6")], ["Add tip", self.f45("chb7")], ["Add grain", self.f45("chb8")], ["Add germ frame",self.f45("chb9")], ["Add burst frame",self.f45("chb9a")]]
 		for label in labels:
 			self.make_checkbox(self.panel_lb, label[0], label[1], self.on_manual_checkboxes, self.cb_id)
 			self.cb_id+=1
-		self.chb1 = self.FindWindowByLabel("remove track")
-		self.chb2 = self.FindWindowByLabel("link tracks")
-		self.chb3 = self.FindWindowByLabel("extend track")
-		self.chb4 = self.FindWindowByLabel("add track")
-		self.chb5 = self.FindWindowByLabel("split track")
-		self.chb6 = self.FindWindowByLabel("truncate track")
-		self.chb7 = self.FindWindowByLabel("add germ frame")
-		self.chb8 = self.FindWindowByLabel("add grain")
-		self.chb9 = self.FindWindowByLabel("add burst frame")
-		self.chb8a = self.FindWindowByLabel("add tip")
+		self.chb1 = self.FindWindowByLabel("Remove track")
+		self.chb2 = self.FindWindowByLabel("Link tracks")
+		self.chb3 = self.FindWindowByLabel("Extend track")
+		self.chb4 = self.FindWindowByLabel("Add track")
+		self.chb5 = self.FindWindowByLabel("Split track")
+		self.chb6 = self.FindWindowByLabel("Truncate track")
+		self.chb7 = self.FindWindowByLabel("Add germ frame")
+		self.chb8 = self.FindWindowByLabel("Add grain")
+		self.chb9 = self.FindWindowByLabel("Add burst frame")
+		self.chb8a = self.FindWindowByLabel("Add tip")
 		self.tc10 = wx.TextCtrl(self.panel_lb, value=self.ids_to_process, size = self.f47("tc10"), pos = self.f45("tc10"))
 		self.tc10.Bind(wx.EVT_TEXT, self.on_ids_to_process)
 		self.panel_rt = wx.Panel(self, pos=self.f45("pnl5"), size=self.f47("pnl5"))
-		wx.StaticBox(self.panel_rt, label='Automated Particle Detection', pos=self.f45("ly4"), size=self.f47("ly4"))
-		wx.StaticText(self.panel_rt, label="Grain Detection ", style=wx.ALIGN_LEFT, pos = self.f45("st13"))
-		wx.StaticText(self.panel_rt, label="New grains from: ", style=wx.ALIGN_LEFT, pos = self.f45("st14"))
+		wx.StaticBox(self.panel_rt, label='Automated Pollen Detection', pos=self.f45("ly4"), size=self.f47("ly4"))
+		wx.StaticText(self.panel_rt, label="Grain Detection", style=wx.ALIGN_LEFT, pos = self.f45("st13"))
+		wx.StaticText(self.panel_rt, label="Detection frames:", style=wx.ALIGN_LEFT, pos = self.f45("st14"))
 		wx.StaticText(self.panel_rt, label="-", style=wx.ALIGN_LEFT, pos = self.f45("st15"))
 		self.tc5 = wx.TextCtrl(self.panel_rt, value = str(self.tracker.grain_det_start + 1), size = self.f47("tc"), pos = self.f45("tc5"))
 		self.tc5.Bind(wx.EVT_TEXT, self.on_grain_det_start)
 		self.tc6 = wx.TextCtrl(self.panel_rt, value=str(self.tracker.grain_det_stop + 1), size = self.f47("tc"), pos = self.f45("tc6"))
 		self.tc6.Bind(wx.EVT_TEXT, self.on_grain_det_stop)
-		wx.StaticText(self.panel_rt, label="≤ Exp. radius ≤", style=wx.ALIGN_LEFT, pos = self.f45("st17"))
+		wx.StaticText(self.panel_rt, label="≤ radius ≤", style=wx.ALIGN_LEFT, pos = self.f45("st17"))
 		self.tc7 = wx.TextCtrl(self.panel_rt, value=str(int(self.tracker.min_grain_radius/self.tracker.img_ratio)), size = self.f47("tc"), pos = self.f45("tc7"))
 		self.tc7.Bind(wx.EVT_TEXT, self.on_min_grain_radius)
 		self.tc8 = wx.TextCtrl(self.panel_rt, value=str(int(self.tracker.max_grain_radius/self.tracker.img_ratio)), size = self.f47("tc"), pos = self.f45("tc8"))
 		self.tc8.Bind(wx.EVT_TEXT, self.on_max_grain_radius)
-		wx.StaticText(self.panel_rt, label="Det. threshold: ", style=wx.ALIGN_LEFT, pos = self.f45("rt_st6"))
+		wx.StaticText(self.panel_rt, label="Threshold:", style=wx.ALIGN_LEFT, pos = self.f45("rt_st6"))
 		self.grain_det_tresh_lab = wx.StaticText(self.panel_rt, label= str(self.tracker.grain_tresh), style=wx.ALIGN_LEFT, pos = self.f45("rt_st6l"))
 		self.grain_det_tresh = wx.Slider(self.panel_rt, value=int(self.tracker.grain_tresh), minValue=10, maxValue=40, style=wx.SL_HORIZONTAL, pos=self.f45("rt_sl2"), size=self.f47("br_sl1"))
 		self.grain_det_tresh.Bind(wx.EVT_SLIDER, self.on_grain_det_threshold)
-		b3 = wx.Button(self.panel_rt, label = "find grains", size = self.f47("b3"), pos = self.f45("b3"))
+		b3 = wx.Button(self.panel_rt, label = "Find Grains", size = self.f47("b3"), pos = self.f45("b3"))
 		b3.Bind(wx.EVT_BUTTON, self.on_find_grains)
-		wx.StaticText(self.panel_rt, label="Tip Detection ", style=wx.ALIGN_LEFT, pos = self.f45("st20"))
-		wx.StaticText(self.panel_rt, label="% Identity:", style=wx.ALIGN_LEFT, pos = self.f45("st23"))
-		wx.StaticText(self.panel_rt, label="Seg. edge", style=wx.ALIGN_LEFT, pos = self.f45("st23a"))
-		wx.StaticText(self.panel_rt, label="T. match", style=wx.ALIGN_LEFT, pos = self.f45("st23b"))
+		wx.StaticText(self.panel_rt, label="Tip Detection", style=wx.ALIGN_LEFT, pos = self.f45("st20"))
+		wx.StaticText(self.panel_rt, label="Match:", style=wx.ALIGN_LEFT, pos = self.f45("st23"))
+		wx.StaticText(self.panel_rt, label="Segment edge", style=wx.ALIGN_LEFT, pos = self.f45("st23a"))
+		wx.StaticText(self.panel_rt, label="Template", style=wx.ALIGN_LEFT, pos = self.f45("st23b"))
 		self.tip_det_mthd = wx.Slider(self.panel_rt, value=1, minValue=1, maxValue=2, style=wx.SL_HORIZONTAL, pos=self.f45("st23c"), size=self.f47("rt_sl1a"))
 		self.tip_tresh_det_lab = wx.StaticText(self.panel_rt, label= str(int(self.tracker.tip_det_threshold_percent*100)), style=wx.ALIGN_LEFT, pos = self.f45("br_st2"))
 		self.tip_tresh_det = wx.Slider(self.panel_rt, value=int(self.tracker.tip_det_threshold_percent*100), minValue=1, maxValue=100, style=wx.SL_HORIZONTAL, pos=self.f45("br_sl2"), size=self.f47("br_sl1"))
 		self.tip_tresh_det.Bind(wx.EVT_SLIDER, self.on_tip_det_thresh)
-		wx.StaticText(self.panel_rt, label="Min. tip sidelength:", style=wx.ALIGN_LEFT, pos = self.f45("st22"))
+		wx.StaticText(self.panel_rt, label="Minimum tip size:", style=wx.ALIGN_LEFT, pos = self.f45("st22"))
 		self.tc15a = wx.TextCtrl(self.panel_rt, value=str(self.tracker.min_tip_side), size = self.f47("tc"), pos = self.f45("tc15a"))
 		self.tc15a.Bind(wx.EVT_TEXT, self.on_min_tip_sidelength)
-		b5a = wx.Button(self.panel_rt, label = "find tips", size = self.f47("b3"), pos = self.f45("b5a"))
+		b5a = wx.Button(self.panel_rt, label = "Find Tips", size = self.f47("b3"), pos = self.f45("b5a"))
 		b5a.Bind(wx.EVT_BUTTON, self.on_find_tips)
 		self.panel_rb = wx.Panel(self, pos=self.f45("pnl6"), size=self.f47("pnl6"))
 		wx.StaticBox(self.panel_rb, label='Automated Tip Tracking', pos=self.f45("ly5a"), size=self.f47("ly5a"))
 		wx.StaticBox(self.panel_rb, label='Automated Germination Tracking', pos=self.f45("ly5b"), size=self.f47("ly5b"))
-		wx.StaticText(self.panel_rb, label="Germination p_val:", style=wx.ALIGN_LEFT, pos = self.f45("st19"))
+		wx.StaticText(self.panel_rb, label="Germination p-value:", style=wx.ALIGN_LEFT, pos = self.f45("st19"))
 		self.tc11 = wx.TextCtrl(self.panel_rb, value=str(self.tracker.gv5), size = self.f47("tc11"), pos = self.f45("tc11"))
 		self.tc11.Bind(wx.EVT_TEXT, self.f20)
-		wx.StaticText(self.panel_rb, label="Tip ovlp ", style=wx.ALIGN_LEFT, pos = self.f45("st23d"))
-		wx.StaticText(self.panel_rb, label="Area chg", style=wx.ALIGN_LEFT, pos = self.f45("st23e"))
+		wx.StaticText(self.panel_rb, label="Tip overlap", style=wx.ALIGN_LEFT, pos = self.f45("st23d"))
+		wx.StaticText(self.panel_rb, label="Area change", style=wx.ALIGN_LEFT, pos = self.f45("st23e"))
 		self.ger_track_mthd = wx.Slider(self.panel_rb, value=1, minValue=1, maxValue=2, style=wx.SL_HORIZONTAL, pos=self.f45("st23f"), size=self.f47("rt_sl1a"))
 		wx.StaticText(self.panel_rb, label="Confirmation frames:", style=wx.ALIGN_LEFT, pos = self.f45("st19x"))
 		self.tc11x = wx.TextCtrl(self.panel_rb, value=str(self.tracker.ger_confirm_frames), size = self.f47("tc16"), pos = self.f45("tc11x"))
@@ -1750,7 +1884,7 @@ class Tracker_GUI(wx.Frame):
 		self.tc11y_lab = wx.StaticText(self.panel_rb, label=str(self.tracker.aceptance_ratio), style=wx.ALIGN_LEFT, pos = self.f45("tc11yl"))
 		self.tc11y = wx.Slider(self.panel_rb, value=int(100*self.tracker.aceptance_ratio), minValue=10, maxValue=100, style=wx.SL_HORIZONTAL, pos=self.f45("tc11y"), size=self.f47("tc11y"))
 		self.tc11y.Bind(wx.EVT_SLIDER, self.on_aceptance_ratio)
-		b4 = wx.Button(self.panel_rb, label = "track", size = self.f47("b5"), pos = self.f45("b4"))
+		b4 = wx.Button(self.panel_rb, label = "Track Germination", size = self.f47("b5"), pos = self.f45("b4"))
 		b4.Bind(wx.EVT_BUTTON, self.on_track_germination)
 		wx.StaticText(self.panel_rb, label="Gap closing:", style=wx.ALIGN_LEFT, pos = self.f45("st25"))
 		self.tc15 = wx.TextCtrl(self.panel_rb, value=str(self.tracker.tip_gap_closing), size = self.f47("tc15"), pos = self.f45("tc15"))
@@ -1765,42 +1899,370 @@ class Tracker_GUI(wx.Frame):
 		wx.StaticText(self.panel_rb, label="Smoothing gap:", style=wx.ALIGN_LEFT, pos = self.f45("st27x"))
 		self.tc17x = wx.TextCtrl(self.panel_rb, value=str(self.tracker.flaten_gap), size = self.f47("tc17"), pos = self.f45("tc17x"))
 		self.tc17x.Bind(wx.EVT_TEXT, self.on_flaten_gap)
-		b5 = wx.Button(self.panel_rb, label = "track", size = self.f47("b5"), pos = self.f45("b5"))
+		b5 = wx.Button(self.panel_rb, label = "Track Tips", size = self.f47("b5"), pos = self.f45("b5"))
 		b5.Bind(wx.EVT_BUTTON, self.on_track_elongation)
 		self.panel_mb = wx.Panel(self, pos=self.f45("pnl4"), size=self.f47("pnl4"))
-		b6 = wx.Button(self.panel_mb, label = "show frame:", size = self.f47("b6"), pos = self.f45("b6"))
+		b6 = wx.Button(self.panel_mb, label = "Go to Frame", size = self.f47("b6"), pos = self.f45("b6"))
 		b6.Bind(wx.EVT_BUTTON, self.on_bt_show)
-		b7 = wx.Button(self.panel_mb, label = "<-", size = self.f47("b7"), pos = self.f45("b7"))
+		b7 = wx.Button(self.panel_mb, label = "", size = self.f47("b7"), pos = self.f45("b7"))
+		b7.SetBitmap(wx.ArtProvider.GetBitmap(wx.ART_GO_BACK, wx.ART_BUTTON, (16, 16)))
+		b7.SetToolTip("Previous frame")
 		b7.Bind(wx.EVT_BUTTON, self.on_reverse)
-		b8 = wx.Button(self.panel_mb, label = "<<-", size = self.f47("b8"), pos = self.f45("b8"))
+		b8 = wx.Button(self.panel_mb, label = "-5", size = self.f47("b8"), pos = self.f45("b8"))
+		b8.SetToolTip("Back 5 frames")
 		b8.Bind(wx.EVT_BUTTON, self.on_reverse_xl)
-		b9 = wx.Button(self.panel_mb, label = "->", size = self.f47("b9"), pos = self.f45("b9"))
+		b9 = wx.Button(self.panel_mb, label = "", size = self.f47("b9"), pos = self.f45("b9"))
+		b9.SetBitmap(wx.ArtProvider.GetBitmap(wx.ART_GO_FORWARD, wx.ART_BUTTON, (16, 16)))
+		b9.SetToolTip("Next frame")
 		b9.Bind(wx.EVT_BUTTON, self.on_forward)
-		b10 = wx.Button(self.panel_mb, label = "->>", size = self.f47("b10"), pos = self.f45("b10"))
+		b10 = wx.Button(self.panel_mb, label = "+5", size = self.f47("b10"), pos = self.f45("b10"))
+		b10.SetToolTip("Forward 5 frames")
 		b10.Bind(wx.EVT_BUTTON, self.on_forward_xl)
 		self.tc1 = wx.TextCtrl(self.panel_mb, value = "1", size = self.f47("tc1"), pos = self.f45("tc1"))
 		self.st12 = wx.StaticText(self.panel_mb, label="1/1", style=wx.ALIGN_LEFT, pos = self.f45("mb_st2"))
-		wx.StaticText(self.panel_mb, label="Display:", style=wx.ALIGN_LEFT, pos = self.f45("mb_st3"))
-		labels = [["heatmap", self.f45("chb11")], ["bl_n_wh", self.f45("chb10")], ["tips", self.f45("chb13")], ["tracks", self.f45("chb14")], ["grain status", self.f45("chb15")]]
+		wx.StaticText(self.panel_mb, label="Overlays:", style=wx.ALIGN_LEFT, pos = self.f45("mb_st3"))
+		labels = [["Heatmap", self.f45("chb11")], ["Binary", self.f45("chb10")], ["Tips", self.f45("chb13")], ["Tracks", self.f45("chb14")], ["Grain status", self.f45("chb15")]]
 		for label in labels:
 			self.make_checkbox(self.panel_mb, label[0], label[1], self.on_what_to_display, self.cb_id)
 			self.cb_id+=1
-		self.chb10 = self.FindWindowByLabel("bl_n_wh")
-		self.chb11 = self.FindWindowByLabel("heatmap")
-		self.chb13 = self.FindWindowByLabel("tips")
-		self.chb14 = self.FindWindowByLabel("tracks")
-		self.chb15 = self.FindWindowByLabel("grain status")
+		self.chb10 = self.FindWindowByLabel("Binary")
+		self.chb11 = self.FindWindowByLabel("Heatmap")
+		self.chb13 = self.FindWindowByLabel("Tips")
+		self.chb14 = self.FindWindowByLabel("Tracks")
+		self.chb15 = self.FindWindowByLabel("Grain status")
 		self.panel_mt = wx.Panel(self, pos=self.f45("pnl3"), size=self.f47("pnl3"))
 		wx.StaticBox(self.panel_mt, label='Display', pos=self.f45("ly3"), size=self.f47("ly3"))
 		self.screen = Screen(self.panel_mt,temp_dir, size = self.f47("tt4"), pos = self.f45("tt4"))
 		self.screen_control = Screen_Control(self.panel_mt, parent = self, path = temp_dir, size = self.f47("tt4"), pos = (self.f45("tt4")[0] + self.f45("pnl3")[0], self.f45("tt4")[1] + self.f45("pnl3")[1]))
 		self.gv2 = self.tracker.gv5
 		self.panel_rbb = wx.Panel(self, pos=self.f45("pnl7"), size=self.f47("pnl7"))
-		wx.StaticBox(self.panel_rbb, label='Comments', pos=self.f45("ly6"), size=self.f47("ly6"))
-		self.SetMenuBar(wx.MenuBar())
+		wx.StaticBox(self.panel_rbb, label='Burst Review', pos=self.f45("ly6"), size=self.f47("ly6"))
+		self.burst_candidate_records = []
+		burst_find = wx.Button(self.panel_rbb, label="Find Candidates", pos=self.f45("burst_find"), size=self.f47("burst_find"))
+		burst_find.SetToolTip("Suggest possible ruptures after tracking germination")
+		burst_find.Bind(wx.EVT_BUTTON, self.on_find_burst_candidates)
+		self.burst_choice = wx.ComboBox(self.panel_rbb, choices=[], style=wx.CB_READONLY, pos=self.f45("burst_choice"), size=self.f47("burst_choice"))
+		self.burst_choice.SetToolTip("Select a candidate to jump to its proposed rupture frame")
+		self.burst_choice.Bind(wx.EVT_COMBOBOX, self.on_select_burst_candidate)
+		self.burst_confirm = wx.Button(self.panel_rbb, label="Confirm", pos=self.f45("burst_confirm"), size=self.f47("burst_action"))
+		self.burst_confirm.SetToolTip("Confirm the selected candidate as a reviewed rupture event")
+		self.burst_confirm.Bind(wx.EVT_BUTTON, self.on_confirm_burst_candidate)
+		self.burst_dismiss = wx.Button(self.panel_rbb, label="Dismiss", pos=self.f45("burst_dismiss"), size=self.f47("burst_action"))
+		self.burst_dismiss.SetToolTip("Dismiss the selected candidate")
+		self.burst_dismiss.Bind(wx.EVT_BUTTON, self.on_dismiss_burst_candidate)
+		self.refresh_burst_candidates()
+		self.build_menu_bar()
+		self.CreateStatusBar(2)
+		self.SetStatusWidths([-2, -3])
+		self.update_output_status()
+		self.apply_ui_style()
+		self.panel_mb.Raise()
 		self.Maximize(True)
 
+	def build_menu_bar(self):
+		"""Create file-export and session-recovery application menus."""
+		menu_bar = wx.MenuBar()
+		file_menu = wx.Menu()
+		open_item = file_menu.Append(wx.ID_ANY, "Open Video or Images...")
+		output_item = file_menu.Append(wx.ID_ANY, "Choose Output Folder...")
+		file_menu.AppendSeparator()
+		export_csv_item = file_menu.Append(wx.ID_ANY, "Export Coordinates CSV")
+		save_item = file_menu.Append(wx.ID_ANY, "Save All Results")
+		menu_bar.Append(file_menu, "File")
+
+		session_menu = wx.Menu()
+		reset_tracking_item = session_menu.Append(wx.ID_ANY, "Restart Tracking")
+		restart_analysis_item = session_menu.Append(wx.ID_ANY, "Restart Analysis")
+		start_over_item = session_menu.Append(wx.ID_ANY, "Start Over")
+		menu_bar.Append(session_menu, "Session")
+		self.SetMenuBar(menu_bar)
+
+		self.Bind(wx.EVT_MENU, self.on_data_directory, open_item)
+		self.Bind(wx.EVT_MENU, self.on_choose_output_directory, output_item)
+		self.Bind(wx.EVT_MENU, self.on_export_coordinates, export_csv_item)
+		self.Bind(wx.EVT_MENU, self.on_save, save_item)
+		self.Bind(wx.EVT_MENU, self.on_reset_tracking, reset_tracking_item)
+		self.Bind(wx.EVT_MENU, self.on_restart_analysis, restart_analysis_item)
+		self.Bind(wx.EVT_MENU, self.on_start_over, start_over_item)
+
+	def apply_ui_style(self):
+		"""Apply a restrained visual hierarchy without changing the legacy layout."""
+		self.SetBackgroundColour(UI_BACKGROUND)
+		base_font = wx.Font(wx.SystemSettings.GetFont(wx.SYS_DEFAULT_GUI_FONT))
+		base_font.SetPointSize(10)
+		heading_font = wx.Font(base_font)
+		heading_font.SetWeight(wx.FONTWEIGHT_BOLD)
+		section_labels = {"Grain Detection", "Tip Detection"}
+		primary_actions = {
+			"Apply Edit",
+			"Find Candidates",
+			"Find Grains",
+			"Find Tips",
+			"Save Results",
+			"Track Germination",
+			"Track Tips",
+		}
+		panels = (
+			self.panel_lt,
+			self.panel_lb,
+			self.panel_mt,
+			self.panel_mb,
+			self.panel_rt,
+			self.panel_rb,
+			self.panel_rbb,
+		)
+		for panel in panels:
+			panel.SetBackgroundColour(UI_PANEL)
+			for child in panel.GetChildren():
+				child.SetFont(base_font)
+				if isinstance(child, wx.StaticBox):
+					child.SetFont(heading_font)
+					child.SetForegroundColour(UI_MUTED_TEXT)
+				elif isinstance(child, wx.StaticText):
+					child.SetForegroundColour(UI_TEXT)
+					if child.GetLabel().strip() in section_labels:
+						child.SetFont(heading_font)
+						child.SetForegroundColour(UI_ACCENT)
+				elif isinstance(child, (wx.TextCtrl, wx.ComboBox)):
+					child.SetBackgroundColour(UI_FIELD)
+					child.SetForegroundColour(UI_TEXT)
+				elif isinstance(child, wx.Button):
+					child.SetCursor(wx.Cursor(wx.CURSOR_HAND))
+					if child.GetLabel() in primary_actions:
+						child.SetFont(heading_font)
+				else:
+					child.SetForegroundColour(UI_TEXT)
+		self.panel_mt.SetBackgroundColour(UI_CANVAS)
+		self.Layout()
+
+	def update_output_status(self, message = None):
+		"""Show the persistent output folder and latest operation status."""
+		if self.output_directory is None:
+			self.SetStatusText("Output folder: not selected", 0)
+		else:
+			self.SetStatusText("Output folder: " + str(self.output_directory), 0)
+		self.SetStatusText(message or "Ready", 1)
+
+	def normalized_output_name(self):
+		"""Return a safe nonempty base name for exported files."""
+		name = self.save_name.strip()
+		if name == "" or name == "Enter output name":
+			name = "result"
+		name = "".join(
+			character if character.isalnum() or character in "-_." else "_"
+			for character in name
+		)
+		return name.strip(".") or "result"
+
+	def on_choose_output_directory(self, e):
+		"""Prompt for and remember the session's export directory."""
+		with wx.DirDialog(
+			self,
+			"Choose an output folder",
+			style=wx.DD_DEFAULT_STYLE | wx.DD_DIR_MUST_EXIST,
+		) as dialog:
+			if dialog.ShowModal() != wx.ID_OK:
+				return None
+			self.output_directory = Path(dialog.GetPath()).resolve()
+		self.update_output_status()
+		return self.output_directory
+
+	def ensure_output_directory(self):
+		"""Return the selected output directory, prompting when absent."""
+		if self.output_directory is None:
+			return self.on_choose_output_directory(None)
+		return self.output_directory
+
+	def clear_burst_review(self):
+		"""Reset all pending rupture suggestions and review state."""
+		self.tracker.burst_candidates = []
+		self.tracker.enable_burst_candidates = False
+		self.tracker.burst_candidates_evaluated = False
+		self.burst_candidate_records = []
+		self.refresh_burst_candidates()
+
+	def reset_tracking_state(self):
+		"""Clear tracks and downstream events while retaining grains and tips."""
+		self.tracker.valid_tracks = []
+		self.tracker.other_tracks = []
+		self.tracker.filled_in_tips = []
+		self.tracker.gv31 = 1
+		self.tracker.gv32 = []
+		for tips in self.tracker.valid_tips:
+			for tip in tips:
+				tip.is_used = False
+		for grain in self.tracker.valid_grains:
+			grain.remove_survival(what="g")
+			grain.remove_survival(what="b")
+			grain.clear_burst_candidate()
+		self.clear_burst_review()
+		self.screen_control.user_clicks = []
+		self.chb14.SetValue(False)
+		self.chb15.SetValue(False)
+
+	def on_reset_tracking(self, e):
+		"""Confirm and perform a tracking-only restart."""
+		if not self.tracker.file_names:
+			return
+		choice = wx.MessageBox(
+			"Clear tip tracks, germination calls, and burst review while keeping detected grains and tips?",
+			"Restart Tracking",
+			wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+			self,
+		)
+		if choice != wx.YES:
+			return
+		self.reset_tracking_state()
+		self.update_screen()
+		self.update_output_status("Tracking reset. Detected grains and tips were kept.")
+
+	def on_restart_analysis(self, e):
+		"""Confirm and clear detections while retaining video and parameters."""
+		if not self.tracker.file_names:
+			return
+		choice = wx.MessageBox(
+			"Clear all detections and tracking results while keeping the loaded video and current parameters?",
+			"Restart Analysis",
+			wx.YES_NO | wx.NO_DEFAULT | wx.ICON_QUESTION,
+			self,
+		)
+		if choice != wx.YES:
+			return
+		self.reset_tracking_state()
+		self.tracker.valid_grains = []
+		self.tracker.valid_tips = []
+		self.tracker.pot_grains = []
+		self.tracker.gv8 = 1
+		self.update_screen()
+		self.update_output_status("Analysis restarted. Video and parameters were kept.")
+
+	def on_start_over(self, e):
+		"""Confirm and clear the entire loaded-video analysis session."""
+		if not self.tracker.file_names:
+			return
+		choice = wx.MessageBox(
+			"Close the current video and clear all unsaved analysis results?",
+			"Start Over",
+			wx.YES_NO | wx.NO_DEFAULT | wx.ICON_WARNING,
+			self,
+		)
+		if choice != wx.YES:
+			return
+		self.reset_tracking_state()
+		self.tracker.valid_grains = []
+		self.tracker.valid_tips = []
+		self.tracker.file_names = None
+		self.tracker.all_detections = []
+		self.first_use = True
+		self.img_to_display = 0
+		self.screen_control.frame = 0
+		self.screen_control.user_clicks = []
+		for checkbox in (self.chb10, self.chb11, self.chb13, self.chb14, self.chb15):
+			checkbox.SetValue(False)
+		self.screen.display(load_logo())
+		self.st12.SetLabel("1/1")
+		self.update_output_status("Session cleared. Ready for another video.")
+
+	def refresh_burst_candidates(self):
+		"""Rebuild rupture-review choices and action availability."""
+		self.burst_choice.Clear()
+		for candidate in self.burst_candidate_records:
+			self.burst_choice.Append(
+				"Grain {} | frame {} | score {:.2f}".format(
+					candidate["grain_id"],
+					candidate["frame"] + 1,
+					candidate["confidence"],
+				)
+			)
+		has_candidates = len(self.burst_candidate_records) > 0
+		self.burst_confirm.Enable(has_candidates)
+		self.burst_dismiss.Enable(has_candidates)
+		if has_candidates:
+			self.burst_choice.SetSelection(0)
+		else:
+			self.burst_choice.Append("No candidates yet")
+			self.burst_choice.SetSelection(0)
+
+	def on_find_burst_candidates(self, e):
+		"""Validate prerequisites and populate experimental rupture suggestions."""
+		if not self.tracker.file_names:
+			wx.MessageBox("Load a video before reviewing ruptures.", "Burst Review", wx.OK | wx.ICON_INFORMATION, self)
+			return
+		if len(self.tracker.valid_grains) == 0:
+			wx.MessageBox("Run Find Grains first.", "Burst Review", wx.OK | wx.ICON_INFORMATION, self)
+			return
+		if len(self.tracker.valid_tracks) == 0:
+			wx.MessageBox("Run Find Tips and Track Tips first.", "Burst Review", wx.OK | wx.ICON_INFORMATION, self)
+			return
+		if not any(grain.is_germinated for grain in self.tracker.valid_grains):
+			wx.MessageBox("Run Track Germination first.", "Burst Review", wx.OK | wx.ICON_INFORMATION, self)
+			return
+		self.tracker.enable_burst_candidates = True
+		self.burst_candidate_records = list(self.tracker.find_burst_candidates())
+		self.refresh_burst_candidates()
+		if len(self.burst_candidate_records) == 0:
+			wx.MessageBox("No rupture candidates were found.", "Burst Review", wx.OK | wx.ICON_INFORMATION, self)
+		else:
+			self.on_select_burst_candidate(None)
+
+	def on_select_burst_candidate(self, e):
+		"""Jump to a selected suggestion and enable grain-state overlays."""
+		index = self.burst_choice.GetSelection()
+		if index < 0 or index >= len(self.burst_candidate_records):
+			return
+		candidate = self.burst_candidate_records[index]
+		frame = int(candidate["frame"])
+		self.img_to_display = frame
+		self.screen_control.frame = frame
+		self.chb15.SetValue(True)
+		self.burst_choice.SetToolTip("Evidence: " + candidate["reason"])
+		self.update_screen()
+
+	def selected_burst_candidate(self):
+		"""Return the selected candidate record and corresponding grain."""
+		index = self.burst_choice.GetSelection()
+		if index < 0 or index >= len(self.burst_candidate_records):
+			return (None, None, None)
+		candidate = self.burst_candidate_records[index]
+		grain = next(
+			(
+				grain
+				for grain in self.tracker.valid_grains
+				if str(grain.id) == str(candidate["grain_id"])
+			),
+			None,
+		)
+		return (index, candidate, grain)
+
+	def remove_selected_burst_candidate(self, index, candidate):
+		"""Remove a reviewed suggestion and advance to the next candidate."""
+		self.burst_candidate_records.pop(index)
+		if candidate in self.tracker.burst_candidates:
+			self.tracker.burst_candidates.remove(candidate)
+		self.refresh_burst_candidates()
+		if len(self.burst_candidate_records) > 0:
+			self.on_select_burst_candidate(None)
+		else:
+			self.update_screen()
+
+	def on_confirm_burst_candidate(self, e):
+		"""Record the selected rupture suggestion as manually reviewed."""
+		index, candidate, grain = self.selected_burst_candidate()
+		if grain is None:
+			return
+		grain.accept_burst_candidate()
+		self.remove_selected_burst_candidate(index, candidate)
+
+	def on_dismiss_burst_candidate(self, e):
+		"""Dismiss the selected rupture suggestion without recording an event."""
+		index, candidate, grain = self.selected_burst_candidate()
+		if grain is None:
+			return
+		grain.clear_burst_candidate()
+		self.remove_selected_burst_candidate(index, candidate)
+
 	def add_grain_frame(self, for_ger = True):
+		"""Apply manual germination or rupture frames from canvas clicks."""
 		if len(self.screen_control.user_clicks) > 0:
 			dt = int(0.5*(self.tracker.max_grain_radius + self.tracker.min_grain_radius))
 			for center in self.screen_control.user_clicks:
@@ -1822,6 +2284,7 @@ class Tracker_GUI(wx.Frame):
 							self.tracker.valid_grains[idx].update_burst(frame = center.frame, method = "manual")
 
 	def add_grains(self):
+		"""Create manually positioned grain tracks from canvas selections."""
 		dt = int(0.5*(self.tracker.max_grain_radius + self.tracker.min_grain_radius))
 		if self.tracker.file_names != None:
 			if len(self.screen_control.user_clicks) > 0:
@@ -1834,6 +2297,7 @@ class Tracker_GUI(wx.Frame):
 						self.tracker.valid_grains.append(g)
 
 	def add_tips(self):
+		"""Add or remove manual tip detections at selected frame coordinates."""
 		dt = int(0.6*self.tracker.min_tip_side)
 		if len(self.screen_control.user_clicks) > 0:
 			for center in self.screen_control.user_clicks:
@@ -1854,6 +2318,7 @@ class Tracker_GUI(wx.Frame):
 					self.tracker.valid_tips[center.frame].append(tip)
 
 	def add_track(self):
+		"""Create a manual tip trajectory from selected frame coordinates."""
 		dt = int(0.6*self.tracker.min_tip_side)
 		if len(self.screen_control.user_clicks) > 0:
 			track = []
@@ -1870,6 +2335,7 @@ class Tracker_GUI(wx.Frame):
 					self.tracker.valid_tips.append(roi)
 
 	def change_frame(self, by):
+		"""Move the display by a wrapped frame offset."""
 		if self.tracker.file_names != None:
 			self.img_to_display = self.img_to_display + by
 			if self.img_to_display >= len(self.tracker.file_names):
@@ -1881,6 +2347,7 @@ class Tracker_GUI(wx.Frame):
 			self.screen_control.Refresh()
 
 	def cut_track(self, keep_leftover = False):
+		"""Truncate selected tracks and optionally retain their trailing segments."""
 		ids = self.f2(self.ids_to_process, separation = ',')
 		if len(ids) > 0 and len(self.screen_control.user_clicks) > 0:
 			if len(ids) == len(self.screen_control.user_clicks):
@@ -1900,6 +2367,7 @@ class Tracker_GUI(wx.Frame):
 				pass
 
 	def extend_track(self):
+		"""Extend selected tracks with manually clicked tip positions."""
 		dt = int(0.6*self.tracker.min_tip_side)
 		trk_id = self.f2(self.ids_to_process, separation = ',')[0]
 		for track in self.tracker.valid_tracks:
@@ -1915,6 +2383,7 @@ class Tracker_GUI(wx.Frame):
 					self.screen_control.user_clicks.append(Point(x = roi.gv3.x, y = roi.gv3.y, frame = roi.gv6))
 
 	def f2(self, string, separation = ",", track_undo = False):
+		"""Parse a separated identifier string into validated IDs."""
 		if separation is None:
 			num = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
 			x = ''
@@ -1947,6 +2416,7 @@ class Tracker_GUI(wx.Frame):
 				return ids
 
 	def f3(self, string, track_undo = False, sep1 = "/", sep2 = ","):
+		"""Parse grouped track identifiers for multi-track editing operations."""
 		entries = self.f2(string, separation = sep1)
 		res = []
 		undo = []
@@ -1964,11 +2434,13 @@ class Tracker_GUI(wx.Frame):
 			return res
 
 	def f20(self, e):
+		"""Update the germination significance threshold from its text field."""
 		self.tracker.gv5 = float(self.tc11.GetValue())
 		if self.tracker.gv5 <= 0:
 			self.tracker.gv5 = self.gv2
 
 	def f29(self, item):
+		"""Return contextual manual-edit instructions for a selected operation."""
 		if item == 1:
 			cmt = '''To manually track or update burst, select (click inside) the BURSTED grain on the frame the event first happens. To remove burst, select the grain in the final frame. Click Update when done. '''
 		elif item == 2:
@@ -2043,6 +2515,7 @@ class Tracker_GUI(wx.Frame):
 			return res
 
 	def f45(self, item):
+		"""Scale a named legacy control position to the usable display size."""
 		xy = None
 		poss = 5
 		if item == "pnl1":
@@ -2240,7 +2713,7 @@ class Tracker_GUI(wx.Frame):
 		elif item == "st23f":
 			xy = (75, 205)
 		elif item == "b4":
-			xy = (60, 330)
+			xy = (35, 330)
 		elif item == "pnl6":
 			xy = (1228, 300)
 		elif item == "ly5a":
@@ -2286,11 +2759,19 @@ class Tracker_GUI(wx.Frame):
 		elif item == "tc17x":
 			xy = (150, 115)
 		elif item == "b5":
-			xy = (60, 150)
+			xy = (35, 150)
 		elif item == "pnl7":
 			xy = (1228, 660)
 		elif item == "ly6":
 			xy = (5, 0)
+		elif item == "burst_find":
+			xy = (20, 22)
+		elif item == "burst_choice":
+			xy = (10, 51)
+		elif item == "burst_confirm":
+			xy = (10, 82)
+		elif item == "burst_dismiss":
+			xy = (110, 82)
 		elif item == "st28":
 			xy = (1235, 650)
 		if xy == None:
@@ -2303,6 +2784,7 @@ class Tracker_GUI(wx.Frame):
 			return (int(self.gv1[0]*xy[0]/1445), int(self.gv1[1]*xy[1]/865))
 
 	def f47(self, item):
+		"""Scale a named legacy control size to the usable display size."""
 		xy = None
 		if item == "pnl1":
 			xy = (210, 370)
@@ -2391,7 +2873,7 @@ class Tracker_GUI(wx.Frame):
 		elif item == "tc17":
 			xy = (40,-1)
 		elif item == "b5":
-			xy = (100, -1)
+			xy = (150, -1)
 		elif item == "br_sl1":
 			xy = (70, -1)
 		elif item == "rt_sl1a":
@@ -2402,6 +2884,12 @@ class Tracker_GUI(wx.Frame):
 			xy = (210, 120)
 		elif item == "ly6":
 			xy = (205, 120)
+		elif item == "burst_find":
+			xy = (170, -1)
+		elif item == "burst_choice":
+			xy = (190, -1)
+		elif item == "burst_action":
+			xy = (90, -1)
 		if xy == None:
 			return None
 		elif xy[0] < 0:
@@ -2412,6 +2900,7 @@ class Tracker_GUI(wx.Frame):
 			return (int(self.gv1[0]*xy[0]/1445), int(self.gv1[1]*xy[1]/865))
 
 	def get_file_names(self, heading = '', ending = '.png'):
+		"""Yield collision-resistant sequential temporary frame filenames."""
 		num = list(range(10))
 		for a in num:
 			for b in num:
@@ -2426,6 +2915,7 @@ class Tracker_GUI(wx.Frame):
 												yield str(heading) + str(a) + str(b) + str(c) + str(d) + str(e) + str(f) + str(g) + str(h) + str(i) + str(j) + str(ending)
 
 	def get_heatmap(self, h=50, w = 256):
+		"""Render the grayscale false-color palette as a horizontal legend."""
 		mask = np.zeros((h,w,3), dtype = np.uint8)
 		col_p = Detections.color_pallette(None)
 		for pxl in range(256):
@@ -2435,6 +2925,7 @@ class Tracker_GUI(wx.Frame):
 		return mask
 
 	def link_tracks(self):
+		"""Merge manually grouped trajectories and restore interpolated tips."""
 		track_groups = self.f3(self.ids_to_process)
 		for tracks_ids in track_groups:
 			if len(self.tracker.valid_tracks) > 0:
@@ -2457,17 +2948,20 @@ class Tracker_GUI(wx.Frame):
 						self.screen_control.user_clicks.append(Point(x = roi.gv3.x, y = roi.gv3.y, frame = roi.gv6))
 
 	def make_checkbox(self, panel, label, pos, bind, id):
+		"""Create and bind a consistently styled checkbox control."""
 		cb = wx.CheckBox(panel, id, label = label, pos = pos)
 		self.Bind(wx.EVT_CHECKBOX, bind, cb)
 		cb.SetFont(wx.Font(10, wx.SWISS, wx.NORMAL, wx.NORMAL))
 
 	def on_aceptance_ratio(self, e):
+		"""Update the required fraction of frames confirming germination."""
 		val = int(self.tc11y.GetValue())/100
 		self.tracker.aceptance_ratio = val
 		self.tc11y_lab.SetLabel('{}'.format(val))
 		self.reset_focus()
 
 	def on_bt_show(self, e):
+		"""Jump to the frame entered in the frame-number field."""
 		if self.tracker.file_names != None:
 			if self.tc1.GetValue() != '':
 				self.img_to_display = int(int(self.tc1.GetValue()) - 1)
@@ -2480,9 +2974,11 @@ class Tracker_GUI(wx.Frame):
 		self.reset_focus()
 
 	def on_cb1(self, e):
+		"""Update the selected input file extension."""
 		self.input_ext = self.cb1.GetValue()
 
 	def on_data_directory(self, e):
+		"""Load a video or image sequence and initialize frame segmentation."""
 		if self.input_ext in self.suported_file_ext:
 			if self.first_use:
 				move_on = True
@@ -2545,6 +3041,11 @@ class Tracker_GUI(wx.Frame):
 				self.tracker.gv32 = []
 				self.tracker.valid_tracks = []
 				self.tracker.valid_grains = []
+				self.tracker.burst_candidates = []
+				self.tracker.enable_burst_candidates = False
+				self.tracker.burst_candidates_evaluated = False
+				self.burst_candidate_records = []
+				self.refresh_burst_candidates()
 				self.tracker.gv31 = 1
 				self.tracker.gv8 = 1
 				self.tracker.segment_inputs()
@@ -2552,20 +3053,24 @@ class Tracker_GUI(wx.Frame):
 		self.reset_focus()
 
 	def on_dis_unit(self, e):
+		"""Update the physical distance unit used in exports."""
 		self.tracker.dis_unit = self.cb3.GetValue()
 
 	def on_filter_radius(self, e):
+		"""Update the foreground smoothing radius from its slider."""
 		val = self.smouthing_radius.GetValue()
 		self.tracker.filter_radius = int(val)
 		self.smouthing_radius_lab.SetLabel('{}'.format(val))
 		self.reset_focus()
 
 	def on_find_grains(self, e):
+		"""Run automated grain detection for the loaded sequence."""
 		if self.tracker.file_names != None:
 			self.tracker.find_grains()
 		self.reset_focus()
 
 	def on_find_tips(self, e):
+		"""Run the selected tip detector and optionally replace prior tips."""
 		mthd = int(self.tip_det_mthd.GetValue())
 		if self.tracker.file_names != None:
 			if len(self.tracker.valid_tips) > 0:
@@ -2582,39 +3087,48 @@ class Tracker_GUI(wx.Frame):
 		self.reset_focus()
 
 	def on_forward(self, e):
+		"""Advance the display by one frame."""
 		self.change_frame(1)
 		self.reset_focus()
 
 	def on_forward_xl(self, e):
+		"""Advance the display by the configured multi-frame step."""
 		self.change_frame(self.move_xl)
 		self.reset_focus()
 
 	def on_gap_closing(self, e):
+		"""Update the maximum gap used when linking tip detections."""
 		self.tracker.tip_gap_closing = int(self.tc15.GetValue())
 
 	def on_ger_confirm_frames(self, e):
+		"""Update the number of frames used to confirm germination."""
 		self.tracker.ger_confirm_frames = int(self.tc11x.GetValue())
 
 	def on_grain_det_start(self, e):
+		"""Update the first frame considered for new-grain detection."""
 		self.tracker.grain_det_start = int(self.tc5.GetValue()) - 1
 		if self.tracker.grain_det_start < 0:
 			self.tracker.grain_det_start = 0
 
 	def on_grain_det_stop(self, e):
+		"""Update the last frame considered for new-grain detection."""
 		self.tracker.grain_det_stop = int(self.tc6.GetValue()) - 1
 		if self.tracker.grain_det_stop < 0:
 			self.tracker.grain_det_stop = 0
 
 	def on_grain_det_threshold(self, e):
+		"""Update the Hough-circle grain detection threshold."""
 		val = self.grain_det_tresh.GetValue()
 		self.tracker.grain_tresh = int(val)
 		self.grain_det_tresh_lab.SetLabel('{}'.format(val))
 		self.reset_focus()
 
 	def on_ids_to_process(self, e):
+		"""Store identifiers entered for a manual QC operation."""
 		self.ids_to_process = self.tc10.GetValue()
 
 	def on_manual_checkboxes(self, e):
+		"""Enforce one manual edit mode and show its instructions."""
 		if self.chb1.GetValue()==self.chb2.GetValue()==self.chb3.GetValue()==self.chb4.GetValue()==self.chb7.GetValue()==self.chb5.GetValue()==self.chb6.GetValue()==self.chb8.GetValue()==self.chb9.GetValue()==self.chb8a.GetValue()==False:
 			self.chb2.Enable(True)
 			self.chb3.Enable(True)
@@ -2740,6 +3254,7 @@ class Tracker_GUI(wx.Frame):
 		self.reset_focus()
 
 	def on_manual_update(self, e):
+		"""Apply the currently selected manual QC operation."""
 		if len(self.tracker.valid_tracks) > 0:
 			if self.chb1.GetValue() == True:
 				self.remove_track()
@@ -2773,71 +3288,103 @@ class Tracker_GUI(wx.Frame):
 		self.reset_focus()
 
 	def on_max_grain_radius(self, e):
+		"""Update the maximum expected grain radius and area."""
 		self.tracker.max_grain_radius = int(int(self.tc8.GetValue())*self.tracker.img_ratio)
 		self.tracker.max_grain_area = int(math.pi*self.tracker.max_grain_radius*self.tracker.max_grain_radius)
 
 	def on_min_grain_radius(self, e):
+		"""Update the minimum expected grain radius and area."""
 		self.tracker.min_grain_radius = int(int(self.tc7.GetValue())*self.tracker.img_ratio)
 		self.tracker.min_grain_area = int(math.pi*self.tracker.min_grain_radius*self.tracker.min_grain_radius)
 
 	def on_min_threshold(self, e):
+		"""Update the foreground background-cutoff threshold."""
 		val = self.min_tresh_bar.GetValue()
 		self.tracker.bg_threshold = int(val)
 		self.st_bg_cutoff.SetLabel('{}'.format(val))
 		self.reset_focus()
 
 	def on_min_tip_per_trk(self, e):
+		"""Update the minimum observations required for a tip track."""
 		self.tracker.min_tip_per_trk = int(self.tc16.GetValue())
 
 	def on_min_tip_sidelength(self, e):
+		"""Update the minimum accepted tip bounding-box side length."""
 		self.tracker.min_tip_side = int(self.tc15a.GetValue())
 
 	def on_pxl_dis(self, e):
+		"""Update the physical distance represented by one source pixel."""
 		self.tracker.pxl_dis = float(self.tc3.GetValue())
 
 	def on_reverse(self, e):
+		"""Move the display backward by one frame."""
 		self.change_frame(-1)
 		self.reset_focus()
 
 	def on_reverse_xl(self, e):
+		"""Move the display backward by the configured multi-frame step."""
 		self.change_frame(-self.move_xl)
 		self.reset_focus()
 
 	def on_save(self, e):
-		dlg = wx.DirDialog(self, "Please, choose a directory where to save current results:", style = wx.DD_DEFAULT_STYLE|wx.DD_DIR_MUST_EXIST|wx.DD_CHANGE_DIR)
-		if dlg.ShowModal() == wx.ID_OK:
-			if self.save_name == 'Please Enter Save Name Here' or self.save_name == '':
-				self.save_name = 'result'
-			save_dir = dlg.GetPath() + '/' + self.save_name + "."
-			self.tracker.save_results(save_dir)
+		"""Save all available analysis outputs to the selected directory."""
+		if len(self.tracker.valid_tracks) == 0 and len(self.tracker.valid_grains) == 0:
+			wx.MessageBox("There are no analysis results to save yet.", "Save Results", wx.OK | wx.ICON_INFORMATION, self)
+			return
+		output_directory = self.ensure_output_directory()
+		if output_directory is None:
+			return
+		name = self.normalized_output_name()
+		save_prefix = str(output_directory / (name + "."))
+		self.tracker.save_results(save_prefix)
+		self.update_output_status("Saved all results to " + str(output_directory))
 		self.reset_focus()
-		dlg.Destroy()
+
+	def on_export_coordinates(self, e):
+		"""Write the tidy track coordinate and biological-time CSV."""
+		if len(self.tracker.valid_tracks) == 0:
+			wx.MessageBox("Track tips before exporting coordinates.", "Export Coordinates", wx.OK | wx.ICON_INFORMATION, self)
+			return
+		output_directory = self.ensure_output_directory()
+		if output_directory is None:
+			return
+		path = output_directory / (self.normalized_output_name() + ".coordinates.csv")
+		with path.open("w", newline="") as handle:
+			csv.writer(handle).writerows(self.tracker.coordinate_rows())
+		self.update_output_status("Exported coordinates to " + str(path))
 
 	def on_save_name(self, e):
+		"""Update the base name used for exported files."""
 		self.save_name = self.tc4.GetValue()
 
 	def on_time_p_frame(self, e):
+		"""Update the biological time represented by one frame."""
 		self.tracker.time_p_frame = int(self.tc2.GetValue())
 
 	def on_time_unit(self, e):
+		"""Update the biological time unit used in displays and exports."""
 		self.tracker.time_unit = self.cb2.GetValue()
 
 	def on_tip_det_thresh(self, e):
+		"""Update the template-matching identity threshold."""
 		val = self.tip_tresh_det.GetValue()
 		self.tracker.tip_det_threshold_percent = int(val)/100
 		self.tip_tresh_det_lab.SetLabel('{}'.format(val))
 		self.reset_focus()
 
 	def on_tip_max_step(self, e):
+		"""Update the minimum overlap used to link tip detections."""
 		val = int(self.tc17.GetValue())/100
 		self.tracker.tip_max_step = val
 		self.tc17_lab.SetLabel('{}'.format(val))
 		self.reset_focus()
 
 	def on_flaten_gap(self, e):
+		"""Update the trajectory smoothing interval."""
 		self.tracker.flaten_gap = int(self.tc17x.GetValue())
 
 	def on_track_elongation(self, e):
+		"""Link tip detections into trajectories and review interpolated tips."""
 		if self.tracker.file_names == None:
 			pass
 		else:
@@ -2859,6 +3406,7 @@ class Tracker_GUI(wx.Frame):
 		self.reset_focus()
 
 	def on_track_germination(self, e):
+		"""Run the selected germination inference method and refresh overlays."""
 		if self.tracker.file_names is None:
 			pass
 		else:
@@ -2882,25 +3430,25 @@ class Tracker_GUI(wx.Frame):
 				else:
 					print("Tracking Germination via Area Change")
 					self.tracker.track_germination_via_area()
-					if len(self.tracker.valid_tracks) > 0:
-						cands = self.tracker.find_burst_candidates()
-						wx.MessageBox(str(len(cands)) + " burst candidate(s) found (shown in orange under 'grain status'). These are suggestions only: no burst is marked automatically. To confirm one, use 'add burst frame' on the candidate grain; they are also exported to burst.candidates.csv on save.", "Burst candidates", wx.OK | wx.ICON_INFORMATION, self)
 			self.update_screen()
 		self.reset_focus()
 
 	def on_update_all_bg(self, e):
+		"""Recompute foreground segmentation for every loaded frame."""
 		if self.tracker.all_detections != []:
 			self.tracker.all_detections.remove_bg_and_locate_rois(bg_threshold = self.tracker.bg_threshold, blur_radius = self.tracker.filter_radius)
 			self.update_screen()
 		self.reset_focus()
 
 	def on_update_frame_bg(self, e):
+		"""Recompute foreground segmentation for only the displayed frame."""
 		if self.tracker.all_detections != []:
 			self.tracker.all_detections.remove_bg_and_locate_rois(bg_threshold = self.tracker.bg_threshold, frame = self.screen_control.frame, blur_radius = self.tracker.filter_radius)
 			self.update_screen()
 		self.reset_focus()
 
 	def on_what_to_display(self, e):
+		"""Keep display modes consistent and redraw selected overlays."""
 		if self.chb10.GetValue() == self.chb11.GetValue() == False:
 			self.chb10.Enable(True)
 			self.chb11.Enable(True)
@@ -2913,6 +3461,7 @@ class Tracker_GUI(wx.Frame):
 		self.reset_focus()
 
 	def remove_track(self, ids = None):
+		"""Remove selected trajectories and recycle their identifiers."""
 		if ids == None:
 			ids = self.f2(self.ids_to_process, separation = ',')
 		temp = []
@@ -2925,9 +3474,11 @@ class Tracker_GUI(wx.Frame):
 				self.tracker.valid_tracks.remove(track)
 
 	def reset_focus(self):
+		"""Return keyboard focus to the interactive image canvas."""
 		self.screen_control.SetFocus()
 
 	def update_screen(self):
+		"""Render the selected frame mode and synchronize frame indicators."""
 		if self.tracker.file_names != None:
 			if self.chb11.GetValue() == True:
 				self.screen.display(self.tracker.all_detections.get_raw_colored_frame(self.img_to_display))
@@ -2939,6 +3490,7 @@ class Tracker_GUI(wx.Frame):
 			self.screen_control.Refresh()
 
 def main():
+	"""Launch the wxPython TubeTracker desktop application."""
 	app = wx.App()
 	ex = Tracker_GUI()
 	ex.Show()
@@ -2946,4 +3498,3 @@ def main():
 
 if __name__ == '__main__':
 	main()
-
