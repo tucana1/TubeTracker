@@ -15,6 +15,8 @@ keyframe every 12 frames at the encoder's quality floor, so it reads keyframes o
 and works on registered averages of 25 keyframes (300 source frames per "bin").
 
 ```bash
+# one step for any movie: cache (first time), analysis, review gallery in the browser
+.venv/bin/python -m sparsetrack run MOVIE            # or double-click Analyze_Movie_SparseTrack.command
 # build the cache: keyframe bins, registration, grain census (~30-40 s for the sparse movie)
 .venv/bin/python -m sparsetrack prepare MOVIE --out runs/sparsetrack/ld
 # benchmark labelling tool (local web page; answers saved to the labels file after every click)

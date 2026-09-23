@@ -59,6 +59,34 @@ def cmd_synth(args) -> None:
                name=args.name or f"synth{tag}_s{args.seed}{'_lossless' if args.lossless else ''}")
 
 
+def auto_frames_per_bin(movie: str | Path, target_bins: int = 175) -> int:
+    """Whole keyframe groups per bin, about ``target_bins`` bins per movie (the sparse movie: 300)."""
+    from .video import probe
+    info = probe(movie)
+    step = info.keyframe_interval or max(1, info.n_frames // max(len(info.keyframes), 1))
+    return int(max(step, round(info.n_frames / target_bins / step) * step))
+
+
+def cmd_run(args) -> None:
+    """One step for a new movie: cache (first time only), analysis, review gallery."""
+    import re
+    import webbrowser
+    from .analyze import analyze
+    movie = Path(args.movie).expanduser()
+    out = Path(args.out) if args.out else Path("runs/sparsetrack") / re.sub(r"[^A-Za-z0-9_.-]+", "_", movie.stem).strip("_.")
+    cache = out / "cache"
+    if not ((cache / "meta.json").exists() and (cache / "grains.json").exists()):
+        fpb = args.frames_per_bin or auto_frames_per_bin(movie)
+        print(f"preparing {movie.name}: {fpb} frames per bin")
+        stack.prepare(movie, cache, frames_per_bin=fpb, ref_bins=3, ref_start="auto")
+        write_census(cache, 3, args.flatfield)
+    analyze(cache, out / "analysis", video=args.video)
+    page = (out / "analysis" / "index.html").resolve()
+    print(f"review gallery: {page}")
+    if not args.no_browser:
+        webbrowser.open(page.as_uri())
+
+
 def cmd_bench(args) -> None:
     from .bench.server import serve
     serve(args.cache, args.labels, port=args.port, open_browser=not args.no_browser, annotator=args.annotator)
@@ -123,6 +151,14 @@ def main(argv=None) -> None:
                    help="v1: clean isolated tubes; v2: adds foreign tubes, crossings, curls, pauses/stops, "
                         "drifting grains and docking particles")
     y.set_defaults(func=cmd_synth)
+    r = sub.add_parser("run", help="prepare (first time), analyse and open the review gallery for a movie")
+    r.add_argument("movie")
+    r.add_argument("--out", help="output folder (default runs/sparsetrack/<movie name>)")
+    r.add_argument("--frames-per-bin", type=int, help="default: whole keyframe groups, about 175 bins per movie")
+    r.add_argument("--flatfield", action="store_true", help="correct vignetting before grain detection")
+    r.add_argument("--video", action="store_true", help="also render field_overlay.mp4")
+    r.add_argument("--no-browser", action="store_true")
+    r.set_defaults(func=cmd_run)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")
     e.add_argument("--labels", required=True)
     e.add_argument("--pred", required=True, nargs="+")
