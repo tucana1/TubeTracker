@@ -41,6 +41,7 @@ STATIC = Path(__file__).with_name("static")
 COARSE = {"bins_per_tile": 4, "half": 28, "zoom": 2.0, "cols": 11, "header": 16, "gap": 2}
 FINE = {"n_tiles": 18, "half": 24, "zoom": 4.0, "cols": 6, "header": 16, "gap": 2}
 TRACE_VIEWS = {"near": {"half": 64, "zoom": 5.0}, "wide": {"half": 128, "zoom": 2.5}}
+ZOOM = {"half": 56, "zoom": 4.5}  # census close-up of the grain in focus
 RETEST_SIZE = 8
 FOLLOW_HALF = 60        # crop used to measure a grain's own drift
 FOLLOW_MAX_STEP = 10.0  # a jump bigger than this between bins means the tracking is unreliable
@@ -152,7 +153,7 @@ class Bench:
             "movie": self.doc["movie"], "n_bins": self.n_bins, "frames_per_bin": self.fpb,
             "shifts": self.meta["shifts"], "order": self.order(), "grains": grains,
             "labels": labels, "retest": self.doc["retest"], "trace_plan": plan,
-            "layout": {"coarse": COARSE, "fine": FINE, "trace": TRACE_VIEWS},
+            "layout": {"coarse": COARSE, "fine": FINE, "trace": TRACE_VIEWS, "zoom": ZOOM},
             "verdicts": VERDICTS, "trace_states": TRACE_STATES, "exclude_reasons": EXCLUDE_REASONS,
             "progress": {"grains": len(todo), "onset_done": onset_done,
                          "traces_needed": traces_needed, "traces_done": traces_done},
@@ -316,6 +317,15 @@ class Bench:
         window = self.renderer.contrast(gid, g["x"], g["y"], v["half"], mode, self.follow(gid))
         return png(self.renderer.to_display(img, window, v["zoom"]))
 
+    def zoom_png(self, x: float, y: float, which: str) -> bytes:
+        """Census close-up: the early (reference) or late field around a reference point."""
+        rs = self.renderer.ref_start
+        b0, b1 = (rs, rs + 2) if which == "early" else (self.n_bins - 4, self.n_bins - 2)
+        img = self.renderer.mean_crop(b0, b1, x, y, ZOOM["half"])
+        finite = img[np.isfinite(img)]
+        lo, hi = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0.0, 255.0))
+        return png(self.renderer.to_display(img, (float(lo), float(hi)), ZOOM["zoom"]))
+
     def field_png(self, which: str) -> bytes:
         key = f"field_{which}"
         cached = self.cache_dir / f"{key}.png"
@@ -359,6 +369,9 @@ def make_handler(bench: Bench):
                     kind, mode = parts[2], q.get("contrast", "n")
                     if kind == "field":
                         return self._send(200, bench.field_png(q.get("which", "early")), "image/png")
+                    if kind == "zoom":
+                        return self._send(200, bench.zoom_png(float(q["x"]), float(q["y"]), q.get("which", "early")),
+                                          "image/png")
                     gid = parts[3]
                     if kind == "coarse":
                         return self._send(200, bench.coarse_png(gid, mode), "image/png")

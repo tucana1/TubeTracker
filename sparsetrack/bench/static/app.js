@@ -120,25 +120,61 @@ function render() {
 
 // ---------------------------------------------------------------- 1. grain census
 const RING = { included: "#4ade80", excluded: "#f87171", user: "#38bdf8", selected: "#facc15" };
+const ringColor = (g) => (g.excluded ? RING.excluded : g.source === "user" ? RING.user : RING.included);
+function censusCentre() {
+  // the close-up follows the grain in focus, unless empty space on the map was clicked
+  if (!S.zoomAt || S.zoomAt.gid !== S.gid) { const g = grain(); S.zoomAt = { x: g.x, y: g.y, gid: S.gid }; }
+  return S.zoomAt;
+}
+function focusGrain(gid, keepView) {
+  if (S.gid !== gid) { S.timers[S.gid] = spent(); S.gid = gid; S.openedAt = Date.now(); resetGrainState(); }
+  if (keepView && S.zoomAt) S.zoomAt.gid = gid;
+  render();
+}
 function renderCensus() {
-  help(`Check that every pollen grain is circled. <b>Click a circle</b> to exclude it (clump member,
-    edge, not a grain) or open it. <b>Click an uncircled grain</b> to add it. The early view is the
-    registered start of the movie; the late view shows the end. Keys: <kbd>E</kbd> early/late.`);
+  help(`<b>Click any grain</b> on the map, or step with <kbd>←</kbd>/<kbd>→</kbd>, to bring it into focus: the close-up
+    on the right shows it large. <b>In the close-up</b>, click the exact grain you mean (where grains overlap), then use
+    the buttons under it to exclude it (clump member, edge, not a grain) or include it again; click an
+    <b>uncircled</b> grain there to add it. Clicking empty space on the map moves the close-up there.
+    <kbd>E</kbd> early/late.`);
   const c = $("#content");
   const dot = (col, t) => `<span class="legend"><i style="border-color:${col}"></i>${t}</span>`;
   c.innerHTML = `<div><button class="act ${S.fieldWhich === "early" ? "on" : ""}" id="fe">Early (no tubes)</button>
     <button class="act ${S.fieldWhich === "late" ? "on" : ""}" id="fl">Late (end of movie)</button>
     <span class="muted">${included().length} grains included · ${S.st.order.length - included().length} excluded</span>
-    ${dot(RING.included, "included")}${dot(RING.excluded, "excluded ✕")}${dot(RING.user, "added by you")}${dot(RING.selected, "selected")}</div>
-    <div class="wrap"><canvas id="field"></canvas></div>`;
+    ${dot(RING.included, "included")}${dot(RING.excluded, "excluded ✕")}${dot(RING.user, "added by you")}${dot(RING.selected, "in focus")}</div>
+    <div class="row wrapping"><div class="wrap"><canvas id="field"></canvas></div>
+      <div class="zoomside"><div class="wrap"><canvas id="zoom"></canvas></div><div id="zoomctl"></div></div></div>`;
   $("#fe").onclick = () => { S.fieldWhich = "early"; render(); };
   $("#fl").onclick = () => { S.fieldWhich = "late"; render(); };
   S._field = S._field || {};
-  const cached = S._field[S.fieldWhich];
-  if (cached) return drawField();
-  const img = new Image();
-  img.onload = () => { S._field[S.fieldWhich] = img; drawField(); };
-  img.src = `/api/img/field?which=${S.fieldWhich}`;
+  if (S._field[S.fieldWhich]) drawField();
+  else {
+    const img = new Image();
+    img.onload = () => { S._field[S.fieldWhich] = img; drawField(); };
+    img.src = `/api/img/field?which=${S.fieldWhich}`;
+  }
+  drawZoom(); renderZoomControls();
+}
+// every mark is drawn twice, a dark halo then the colour, so it reads on light background and dark grains
+function haloRing(ctx, x, y, r, color, width, dash) {
+  ctx.setLineDash(dash || []);
+  ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
+  ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = width + 3; ctx.stroke();
+  ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+  ctx.setLineDash([]);
+}
+function haloCross(ctx, x, y, d, color) {
+  for (const [w, col] of [[5, "rgba(0,0,0,0.7)"], [2.5, color]]) {
+    ctx.beginPath(); ctx.moveTo(x - d, y - d); ctx.lineTo(x + d, y + d);
+    ctx.moveTo(x + d, y - d); ctx.lineTo(x - d, y + d);
+    ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
+  }
+}
+function haloText(ctx, text, x, y, color, bold) {
+  ctx.font = bold ? "bold 13px sans-serif" : "bold 11px sans-serif";
+  ctx.lineJoin = "round"; ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(0,0,0,0.8)"; ctx.strokeText(text, x, y);
+  ctx.fillStyle = color; ctx.fillText(text, x, y);
 }
 function drawField() {
   const img = (S._field || {})[S.fieldWhich], cv = $("#field");
@@ -146,34 +182,17 @@ function drawField() {
   cv.width = img.width; cv.height = img.height;
   const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0);
   const s = img.width / S.st.movie.width;
-  // every mark is drawn twice: a dark halo, then the colour, so it stands out on the light
-  // background and on the dark grains alike
-  const ring = (x, y, r, color, width, dash) => {
-    ctx.setLineDash(dash || []);
-    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
-    ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = width + 3; ctx.stroke();
-    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
-    ctx.setLineDash([]);
-  };
-  const cross = (x, y, d, color) => {
-    for (const [w, col] of [[5, "rgba(0,0,0,0.7)"], [2.5, color]]) {
-      ctx.beginPath(); ctx.moveTo(x - d, y - d); ctx.lineTo(x + d, y + d);
-      ctx.moveTo(x + d, y - d); ctx.lineTo(x - d, y + d);
-      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
-    }
-  };
   for (const gid of S.st.order) {
     const g = S.st.grains[gid];
     const x = g.x * s, y = g.y * s, r = g.r * s + 5;
-    const color = g.excluded ? RING.excluded : g.source === "user" ? RING.user : RING.included;
-    ring(x, y, r, color, 2.5, g.excluded ? [5, 4] : null);
-    if (g.excluded) cross(x, y, r * 0.55, RING.excluded);
-    if (gid === S.gid) ring(x, y, r + 6, RING.selected, 3.5);
-    ctx.font = gid === S.gid ? "bold 13px sans-serif" : "bold 11px sans-serif";
-    ctx.lineJoin = "round"; ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(0,0,0,0.8)";
-    ctx.strokeText(gid, x + r + 4, y - r + 2);
-    ctx.fillStyle = gid === S.gid ? RING.selected : color; ctx.fillText(gid, x + r + 4, y - r + 2);
+    haloRing(ctx, x, y, r, ringColor(g), 2.5, g.excluded ? [5, 4] : null);
+    if (g.excluded) haloCross(ctx, x, y, r * 0.55, RING.excluded);
+    if (gid === S.gid) haloRing(ctx, x, y, r + 6, RING.selected, 3.5);
+    haloText(ctx, gid, x + r + 4, y - r + 2, gid === S.gid ? RING.selected : ringColor(g), gid === S.gid);
   }
+  const Z = S.st.layout.zoom, at = censusCentre();  // where the close-up is looking
+  ctx.setLineDash([6, 4]); ctx.strokeStyle = RING.selected; ctx.lineWidth = 2;
+  ctx.strokeRect((at.x - Z.half) * s, (at.y - Z.half) * s, 2 * Z.half * s, 2 * Z.half * s); ctx.setLineDash([]);
   cv.onclick = (e) => {
     const x = e.offsetX / s, y = e.offsetY / s;
     let best = null, bd = 1e9;
@@ -181,14 +200,69 @@ function drawField() {
       const g = S.st.grains[gid]; const d = Math.hypot(g.x - x, g.y - y);
       if (d < bd) { bd = d; best = gid; }
     }
-    if (best && bd <= S.st.grains[best].r + 8 / s) {
-      if (S.gid !== best) { S.timers[S.gid] = spent(); S.gid = best; S.openedAt = Date.now(); resetGrainState(); }
-      renderChrome(); drawField();
-      return grainMenu(e.pageX, e.pageY, best);
+    if (best && bd <= S.st.grains[best].r + 8 / s) return focusGrain(best, false);
+    S.zoomAt = { x, y, gid: S.gid };  // look here; pick or add grains in the close-up
+    drawField(); drawZoom();
+  };
+}
+function drawZoom() {
+  const Z = S.st.layout.zoom, at = censusCentre();
+  const key = `${S.fieldWhich}:${at.x.toFixed(1)}:${at.y.toFixed(1)}`;
+  S._zoom = S._zoom || {};
+  const img = S._zoom[key];
+  if (!img) {
+    const im = new Image();
+    im.onload = () => { S._zoom[key] = im; drawZoom(); };
+    im.src = `/api/img/zoom?x=${at.x}&y=${at.y}&which=${S.fieldWhich}`;
+    return;
+  }
+  const cv = $("#zoom"); if (!cv) return;
+  cv.width = img.width; cv.height = img.height;
+  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0);
+  const toC = (x, y) => [(x - at.x + Z.half) * Z.zoom, (y - at.y + Z.half) * Z.zoom];
+  for (const gid of S.st.order) {
+    const g = S.st.grains[gid];
+    if (Math.abs(g.x - at.x) > Z.half + g.r + 4 || Math.abs(g.y - at.y) > Z.half + g.r + 4) continue;
+    const [x, y] = toC(g.x, g.y), r = g.r * Z.zoom + 6;
+    haloRing(ctx, x, y, r, ringColor(g), 3, g.excluded ? [8, 6] : null);
+    if (g.excluded) haloCross(ctx, x, y, r * 0.5, RING.excluded);
+    if (gid === S.gid) haloRing(ctx, x, y, r + 8, RING.selected, 4);
+    haloText(ctx, gid, x + r * 0.72 + 4, y - r * 0.72, gid === S.gid ? RING.selected : ringColor(g), true);
+  }
+  cv.onclick = (e) => {
+    const x = at.x - Z.half + e.offsetX / Z.zoom, y = at.y - Z.half + e.offsetY / Z.zoom;
+    let best = null, bd = 1e9;  // the grain whose circle holds the click (nearest centre if several)
+    for (const gid of S.st.order) {
+      const g = S.st.grains[gid]; const d = Math.hypot(g.x - x, g.y - y);
+      if (d <= g.r + 2 && d < bd) { bd = d; best = gid; }
     }
-    if (confirm(`Add a grain centred at (${x.toFixed(0)}, ${y.toFixed(0)})?`)) {
-      post("/api/grain", { x, y }).then(refresh).then(render);
+    if (best) return focusGrain(best, true);
+    if (confirm(`Add a grain centred here (${x.toFixed(0)}, ${y.toFixed(0)})?`)) {
+      post("/api/grain", { x, y }).then(refresh).then(() => {
+        const added = S.st.order.filter((g) => S.st.grains[g].source === "user")
+          .sort((a, b) => Math.hypot(S.st.grains[a].x - x, S.st.grains[a].y - y) - Math.hypot(S.st.grains[b].x - x, S.st.grains[b].y - y))[0];
+        if (added) focusGrain(added, true); else render();
+      });
     }
+  };
+}
+function renderZoomControls() {
+  const g = grain(), gid = S.gid, el = $("#zoomctl");
+  if (!el) return;
+  const layout = [g.isolated ? "isolated" : "", g.clump_size > 1 ? `clump of ${g.clump_size}` : "",
+                  g.border ? "near edge" : "", g.source === "user" ? "added by you" : ""].filter(Boolean).join(" · ");
+  const reasons = S.st.exclude_reasons.map((r) => `<button class="act" data-r="${r}">${r.replaceAll("_", " ")}</button>`).join("");
+  el.innerHTML = `<h3>${gid} <span class="muted">${layout}</span></h3>
+    ${g.excluded
+      ? `<p><b class="bad">excluded: ${g.exclude_reason.replaceAll("_", " ")}</b> <button class="act" data-inc="1">include again</button></p>`
+      : `<p>exclude as: ${reasons}</p>`}
+    <p><button class="act primary" data-open="1">open onset ▶</button></p>`;
+  el.onclick = async (e) => {
+    const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.open) return openGrain(gid, "onset");
+    if (b.dataset.inc) await post(`/api/exclude/${gid}`, { excluded: false });
+    if (b.dataset.r) await post(`/api/exclude/${gid}`, { excluded: true, reason: b.dataset.r });
+    await refresh(); render();
   };
 }
 function grainMenu(px, py, gid) {

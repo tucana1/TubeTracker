@@ -37,6 +37,11 @@ button.act.on { background: #1e40af; color: #fff; border-color: #1e40af; }
 .box.prior { outline: 4px dashed #1d4ed8; outline-offset: 1px; }
 .box.prior::after { content: "saved"; background: #1d4ed8; }
 .row { display: flex; gap: 16px; align-items: flex-start; }
+.row.wrapping { flex-wrap: wrap; margin-top: 6px; }
+.zoomside { max-width: 520px; }
+.zoomside h3 { margin: 8px 0 4px; font-size: 15px; }
+.zoomside p { margin: 4px 0; }
+.bad { color: #b91c1c; }
 .side { min-width: 250px; max-width: 320px; }
 .side h3 { margin: 4px 0 6px; font-size: 14px; }
 .chips span { display: inline-block; padding: 2px 7px; margin: 0 4px 4px 0; border-radius: 10px; background: #e5e7eb; font-size: 12px; cursor: pointer; }
