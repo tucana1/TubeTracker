@@ -73,17 +73,34 @@ class SynthConfig:
     p_move: float = 0.0                  # a grain (with its tube) drifts rigidly after the reference bins
     move_px: tuple = (5.0, 30.0)
     p_dock: float = 0.0                  # a particle docks on the rim: a change that is not a tube
+    p_evolve: float = 0.0                # a bright-cored tube starts as a dark line, turning bright-cored with age
+    evolve_bins: tuple = (3.0, 15.0)
+    p_anchor: float = 0.0                # a tube stuck to the substrate: its grain drifts, only the base bends
+    anchor_px: tuple = (3.0, 10.0)
+    bend_px: tuple = (8.0, 20.0)
+    p_arrive: float = 0.0                # a grain still landing during the first bins (the census sees a blur)
+    arrive_px: tuple = (20.0, 60.0)
+    arrive_bins: tuple = (1.5, 5.0)
+    p_stub: float = 0.0                  # a short fat tube that stops early
+    stub_len: tuple = (8.0, 14.0)
+    stub_width: tuple = (1.8, 2.5)
 
 
 def preset(name: str, **kw) -> SynthConfig:
     """``v1``: isolated clean tubes (the first benchmark). ``v2``: adds the failure classes seen
     on the real sparse movie - foreign tubes from clumps, touching and crossing tubes, curls,
-    growth that pauses or stops, width changes, drifting grains and docking particles."""
+    growth that pauses or stops, width changes, drifting grains and docking particles. ``v3``:
+    also tubes that start dark and turn bright-cored, tubes stuck to the substrate while their
+    grain drifts, grains still landing in the first bins, and short fat stubs."""
     if name == "v1":
         return SynthConfig(**kw)
+    v2 = dict(foreign_sources=True, p_free=0.35, p_curl=0.25, width=(0.8, 1.3), p_stop=0.35, pauses=0.7,
+              rate_jitter=0.25, p_move=0.2, p_dock=0.15)
     if name == "v2":
-        return SynthConfig(**{**dict(foreign_sources=True, p_free=0.35, p_curl=0.25, width=(0.8, 1.3), p_stop=0.35,
-                                     pauses=0.7, rate_jitter=0.25, p_move=0.2, p_dock=0.15), **kw})
+        return SynthConfig(**{**v2, **kw})
+    if name == "v3":  # + tubes whose look changes with age, tubes stuck to the substrate, landing grains, stubs
+        return SynthConfig(**{**v2, **dict(p_move=0.12, p_evolve=0.6, p_anchor=0.15, p_arrive=0.08, p_stub=0.08),
+                              **kw})
     raise ValueError(f"unknown synthetic preset {name!r}")
 
 
@@ -118,6 +135,23 @@ class Tube:
     move: np.ndarray = field(default=None)       # (n_frames, 2) grain displacement, or None
     scored: bool = True                          # False: a foreign-material source (clump grain...)
     info: dict = field(default_factory=dict)
+    evolve_tau: float = 0.0                      # frames for a bright-cored tube to lose its young dark look
+    anchor: np.ndarray = field(default=None)     # (n_frames, 2) grain drift for a tube stuck to the substrate
+    bend: float = 0.0                            # ...only this much of its base follows the grain
+    _anchor_maps: dict = field(default_factory=dict)
+
+    def anchored_maps(self, k: int, xx: np.ndarray, yy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(arclength, distance) maps of the tube with its base bent towards the drifted grain."""
+        dx, dy = self.anchor[k]
+        key = (int(round(dx * 2)), int(round(dy * 2)))
+        if key not in self._anchor_maps:
+            s = np.arange(len(self.path)) * 0.25
+            w = np.clip(1.0 - s / max(self.bend, 1e-6), 0.0, 1.0)[:, None]
+            bent = self.path + w * (np.array(key, np.float64) / 2.0)
+            d, idx = cKDTree(bent).query(np.stack([xx.ravel(), yy.ravel()], 1))
+            self._anchor_maps[key] = ((idx * 0.25).reshape(xx.shape).astype(np.float32),
+                                      d.reshape(xx.shape).astype(np.float32))
+        return self._anchor_maps[key]
 
     def length(self, t: np.ndarray) -> np.ndarray:
         cap = (len(self.path) - 1) * 0.25
@@ -163,6 +197,16 @@ def _trajectory(rng, cfg: SynthConfig, max_px: float) -> np.ndarray:
     w = w - w[start]
     w[:start] = 0.0
     return w / (np.abs(np.hypot(*w.T)).max() + 1e-9) * max_px
+
+
+def _arrival(rng, cfg: SynthConfig) -> np.ndarray:
+    """A grain gliding in and landing (decelerating) within the first bins; still afterwards."""
+    n, fpb = cfg.n_frames, cfg.frames_per_bin
+    land = rng.uniform(*cfg.arrive_bins) * fpb
+    a = rng.uniform(0, 2 * np.pi)
+    d0 = rng.uniform(*cfg.arrive_px) * np.array([math.cos(a), math.sin(a)])
+    k = np.arange(n, dtype=np.float64)
+    return d0[None, :] * (np.clip(1.0 - k / land, 0.0, None) ** 2)[:, None]
 
 
 def _paste(img: np.ndarray, sprite: np.ndarray, alpha: np.ndarray, x0: float, y0: float) -> None:
@@ -285,6 +329,15 @@ class Scene:
             if cfg.width != (1.0, 1.0):
                 t.width = float(rng.uniform(*cfg.width))
             t.info = {"free": free, "curl_rad_per_px": round(float(turn), 4)}
+            if cfg.p_stub > 0 and t.sched is not None and rng.random() < cfg.p_stub:
+                stop = float(rng.uniform(*cfg.stub_len))
+                t.sched = np.minimum(t.sched, stop)
+                t.width = float(rng.uniform(*cfg.stub_width))
+                t.path = t.path[:int(stop / 0.25) + 2]
+                t.info["stub"] = True
+            if cfg.p_evolve > 0 and t.bright and rng.random() < cfg.p_evolve:
+                t.evolve_tau = float(rng.uniform(*cfg.evolve_bins) * fpb)
+                t.info["evolves"] = True
             if rng.random() < cfg.p_rotate:
                 steps = rng.normal(0, 1, cfg.n_frames).cumsum()
                 steps = cv2.GaussianBlur(steps.reshape(1, -1), (0, 0), 200).ravel()
@@ -296,13 +349,23 @@ class Scene:
         self.sprites: dict[str, tuple] = {}
         self.docks: list[tuple] = []
         original = self.background.copy()
-        if cfg.p_move > 0:
+        self.anchored: set[str] = set()
+        self.arriving: set[str] = set()
+        if cfg.p_move > 0 or cfg.p_anchor > 0 or cfg.p_arrive > 0:
             hole = np.zeros((self.h, self.w), np.uint8)
             for g in grains:
-                if rng.random() < cfg.p_move:
+                if cfg.p_move > 0 and rng.random() < cfg.p_move:
                     self.moves[g["id"]] = _trajectory(rng, cfg, rng.uniform(*cfg.move_px))
-                    self.sprites[g["id"]] = _sprite(original, g)
-                    cv2.circle(hole, (int(round(g["x"])), int(round(g["y"]))), int(math.ceil(g["r"] + 6)), 255, -1)
+                elif cfg.p_anchor > 0 and rng.random() < cfg.p_anchor:
+                    self.moves[g["id"]] = _trajectory(rng, cfg, rng.uniform(*cfg.anchor_px))
+                    self.anchored.add(g["id"])
+                elif cfg.p_arrive > 0 and rng.random() < cfg.p_arrive:
+                    self.moves[g["id"]] = _arrival(rng, cfg)
+                    self.arriving.add(g["id"])
+                else:
+                    continue
+                self.sprites[g["id"]] = _sprite(original, g)
+                cv2.circle(hole, (int(round(g["x"])), int(round(g["y"]))), int(math.ceil(g["r"] + 6)), 255, -1)
             if self.moves:
                 u8 = np.clip(np.round(original), 0, 255).astype(np.uint8)
                 filled = cv2.inpaint(u8, hole, 9, cv2.INPAINT_TELEA).astype(np.float32)
@@ -327,7 +390,13 @@ class Scene:
                 start = float(rng.uniform(5 * fpb, cfg.n_frames * 0.9))
                 self.docks.append((g, phi, rad, sp, al, start))
         for t in self.tubes:
-            t.move = self.moves.get(t.grain["id"])
+            if t.grain["id"] in self.anchored:
+                t.anchor, t.bend, t.rot = self.moves[t.grain["id"]], float(rng.uniform(*cfg.bend_px)), None
+                t.info["anchored"] = True
+            else:
+                t.move = self.moves.get(t.grain["id"])
+            if t.grain["id"] in self.arriving:
+                t.info["arriving"] = True
         # per-tube lookup maps in the grain frame: nearest centreline arclength and distance
         self.maps = []
         for t in self.tubes:
@@ -338,8 +407,9 @@ class Scene:
                 reach = float(np.max(np.hypot(t.path[:, 0] - gx, t.path[:, 1] - gy))) + 8
                 lo = np.floor([gx - reach, gy - reach]).astype(int)
                 hi = np.ceil([gx + reach, gy + reach]).astype(int)
-            if t.move is not None:  # ...and a drifting one wherever its grain goes
-                m = int(math.ceil(np.abs(t.move).max())) + 2
+            drift = t.move if t.move is not None else t.anchor
+            if drift is not None:  # ...and a drifting one wherever its grain goes
+                m = int(math.ceil(np.abs(drift).max())) + 2
                 lo, hi = lo - m, hi + m
             lo = np.maximum(lo, 0)
             hi = np.minimum(hi, [self.w - 1, self.h - 1])
@@ -377,7 +447,9 @@ class Scene:
             ss, dd = s, d
             rot = t.rot is not None and abs(t.rot[k]) > 1e-3
             mv = t.move is not None and bool(np.any(np.abs(t.move[k]) > 1e-3))
-            if rot or mv:
+            if t.anchor is not None and bool(np.any(np.abs(t.anchor[k]) > 0.25)):
+                ss, dd = t.anchored_maps(k, xx, yy)
+            elif rot or mv:
                 # look up the unmoved, unrotated tube at each pixel
                 a = math.radians(-t.rot[k]) if rot else 0.0
                 mx, my = t.move[k] if mv else (0.0, 0.0)
@@ -393,8 +465,12 @@ class Scene:
                 continue
             age = k - t.birth(ss[on])
             mature = 1.0 - np.exp(-age / t.tau) if t.tau > 0 else np.ones_like(age)
+            prof = tube_profile(dd[on] / t.width, t.bright)
+            if t.evolve_tau > 0:  # young tube: a dark line; the bright core comes with age
+                wgt = 1.0 - np.exp(-age / t.evolve_tau)
+                prof = wgt * prof + (1.0 - wgt) * tube_profile(dd[on] / t.width, False)
             patch = img[lo[1]:hi[1] + 1, lo[0]:hi[0] + 1]
-            patch[on] += t.amp * tube_profile(dd[on] / t.width, t.bright) * mature
+            patch[on] += t.amp * prof * mature
         for g, phi, rad, sp, al, start in self.docks:
             if k < start:
                 continue
@@ -448,6 +524,7 @@ class Scene:
                                      "max_rotation_deg": float(np.abs(t.rot).max()) if t.rot is not None else 0.0,
                                      "final_length_px": float(L[-1]), "width": t.width, **t.info,
                                      "max_drift_px": (float(np.hypot(*t.move.T).max()) if t.move is not None
+                                                      else float(np.hypot(*t.anchor.T).max()) if t.anchor is not None
                                                       else 0.0),
                                      "dock_frame": docked.get(t.grain["id"], (None,))[0],
                                      "path_rel": np.round(t.path[::8] - [t.grain["x"], t.grain["y"]], 2).tolist()}}
@@ -460,7 +537,8 @@ class Scene:
                                       for b in range(8, n_bins - 1, 24)},
                            "truth": {"dock_frame": docked.get(g["id"], (None,))[0],
                                      "max_drift_px": (float(np.hypot(*self.moves[g["id"]].T).max())
-                                                      if g["id"] in self.moves else 0.0)}}
+                                                      if g["id"] in self.moves else 0.0),
+                                     "anchored": g["id"] in self.anchored, "arriving": g["id"] in self.arriving}}
         return {"schema": "sparsetrack.bench.v1", "origin": f"synthetic movie {name}", "config": asdict(cfg),
                 "frames_per_bin": fpb, "n_bins": n_bins, "grains": grains, "labels": labels,
                 "retest": {"grains": [], "labels": {}}}

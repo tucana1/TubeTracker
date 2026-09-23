@@ -5,9 +5,9 @@
 
 Synthetic movies come from `sparsetrack synth [--preset v2]` + `prepare --frames-per-bin 25
 --ref-start 0` (suite v1: runs/sparsetrack/synth/s{seed}_cache + synth_s{seed}_truth.json;
-suite v2: v2s{seed}_cache + synthv2_s{seed}_truth.json). The onset tolerance there is 50
-synthetic frames (= 600 source frames). v2 seeds 3-4 are the held-out synthetic test:
-report them only for a frozen variant (--seeds 3 4).
+suite v2/v3: v{2,3}s{seed}_cache + synthv{2,3}_s{seed}_truth.json). The onset tolerance
+there is 50 synthetic frames (= 600 source frames). Seeds 3-4 of v2 and v3 are the held-out
+synthetic test: report them only for a frozen variant (--seeds 3 4).
 """
 
 from __future__ import annotations
@@ -26,10 +26,13 @@ from sparsetrack.evaluate import load, score  # noqa: E402
 
 SYN = REPO / "runs/sparsetrack/synth"
 LEGACY_IDS = ["g025", "g014", "g037", "g034", "g013", "g030", "g029"]
-SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json")}
+SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json"),
+          "v3": ("v3s{}_cache", "synthv3_s{}_truth.json")}
 
 
 def parse_value(v: str):
+    if "," in v or v.startswith("("):  # a tuple: a,b or (a,b)
+        return tuple(parse_value(x) for x in v.strip("()").split(",") if x)
     for cast in (int, float):
         try:
             return cast(v)
@@ -104,6 +107,10 @@ def breakdown(r: dict) -> str:
         "slow (<0.4 px/bin)": lambda t: t.get("rate_px_per_bin", 9) < 0.4,
         "faint (amp<1.3)": lambda t: t.get("amplitude", 9) < 1.3,
         "maturing (tau>5)": lambda t: t.get("tau_bins", 0) > 5,
+        "look evolves": lambda t: t.get("evolves") is True,
+        "stuck to substrate": lambda t: t.get("anchored") is True,
+        "landing grain": lambda t: t.get("arriving") is True,
+        "fat stub": lambda t: t.get("stub") is True,
     }
     out = [f"{'group':22s} {'onset in tol':>14s} {'len in tol':>12s} {'med |len err|':>14s} {'controls ok':>12s}"]
     for name, sel in groups.items():

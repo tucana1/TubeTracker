@@ -55,6 +55,7 @@ class Params:
     evid_floor: float = 5.0
     lateral: float = 1.0         # sample +/- this many px across the path
     vmax_px: float = 4.0         # maximum front advance per bin
+    neg_weight: float = 1.0      # weight of negative evidence inside the claimed tube (gap bridging)
     skip_px: float = 1.5         # evidence this close to the exit is ignored (rim band)
     onset_px: float = 2.0        # onset when the front passes this far beyond the exit
     step: float = 0.5            # path sampling (px)
@@ -82,6 +83,7 @@ class Params:
     mf_z: float = 3.0            # onset when the calibrated score exceeds this (sustained)
     mf_z_low: float | None = 2.0   # ...then reaching back while it stays above this (hysteresis)
     mf_back_bins: int = 6        # ...by at most this many bins (a slow drift is not a stub)
+    mf_extra: tuple = ()         # extra stub templates: "dark" (generic young dark line), "negative"
     mf_follow_rotation: bool | str = "both"  # True: stub placed along the rotation track; "both": max of the two
     bg_subtract: bool = True     # subtract each bin's background change before reading the path
     # front evidence: "matched" = signed change projected on the tube's own end-state cross-section
@@ -93,10 +95,15 @@ class Params:
     mk_k: float = 4.0            # threshold = pre-onset base + mk_k * per-bin control sigma...
     mk_floor: float = 3.0        # ...but at least this
     mk_control_px: float = 9.0   # the noise control slides the template this far off the tube
+    mk_extra: tuple = ()         # extra cross-section templates for the evidence: "dark" (young tube)
     candidates: bool = True      # choose the centreline among branch/contact hypotheses by growth
     cand_tips: int = 4
     cand_nms_px: float = 10.0
+    cand_branch_tips: int = 6    # + this many skeleton branch ends
+    nest_px: float = 5.0         # a candidate within this of a longer one all along is the same tube
     beyond_weight: float = 0.0   # score = explained - beyond_weight * evidence left beyond the front
+    ridge_px: float = 5.0        # tube-likeness: end-state change on the path vs this far beside it
+    ridge_weight: float = 1.0    # score *= (1 - w) + w * fraction of path points on a ridge
     through_px: float = 12.0     # foreign-tube test: material this close to the exit...
     through_min_px: int = 10     # ...at least this many pixels of it, changed before the front left
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
@@ -419,6 +426,17 @@ def matched_stub_signal(signed: np.ndarray, late_minus_early: np.ndarray, pts: n
     if norm < 1e-3:
         return np.zeros(len(signed)), info
     tmpl /= norm
+    tmpls = [tmpl]
+    if "negative" in p.mf_extra:  # a tube whose young look is the opposite of its mature one
+        tmpls.append(-tmpl)
+    centre_row = np.abs(across) < 1.0
+    bright_core = float(tmpl.reshape(len(stub), len(across))[:, centre_row].mean()) > 0
+    if "dark" in p.mf_extra and bright_core:  # a bright-cored tube may have been a plain dark line when young
+        u = np.tile(across, len(stub))
+        dark = -np.exp(-u ** 2 / 3.4)
+        dark = dark - dark.mean()
+        tmpls.append(dark / (np.linalg.norm(dark) + 1e-9))
+    tmpl_mat = np.stack(tmpls, axis=1)  # (points, templates)
     rel = grid - centre
     exit_offsets = np.arange(-p.mf_search, p.mf_search + 1e-9, 3.0)
     ctrl_offsets = [a for a in range(45, 360, 45)]
@@ -448,14 +466,20 @@ def matched_stub_signal(signed: np.ndarray, late_minus_early: np.ndarray, pts: n
                 cache[key] = maps(key)
             rows.append(cv2.remap(d, *cache[key], cv2.INTER_LINEAR, borderValue=0)[0])
         scores = np.stack(rows)
-    scores = scores.reshape(len(signed), -1, n_pts) @ tmpl  # (bins, placements)
-    exit_score = scores[:, :n_off].max(axis=1)
-    ctrl = scores[:, n_off:].reshape(len(signed), len(ctrl_offsets), n_off).max(axis=2)
-    base = np.median(ctrl, axis=1)
-    resid = ctrl - base[:, None]
-    sigma = max(1.4826 * float(np.median(np.abs(resid - np.median(resid)))), 1e-3)
-    info["control_sigma"] = round(sigma, 3)
-    return (exit_score - base) / sigma, info
+    all_scores = scores.reshape(len(signed), -1, n_pts) @ tmpl_mat  # (bins, placements, templates)
+    z = None
+    for j in range(tmpl_mat.shape[1]):
+        sc = all_scores[:, :, j]
+        exit_score = sc[:, :n_off].max(axis=1)
+        ctrl = sc[:, n_off:].reshape(len(signed), len(ctrl_offsets), n_off).max(axis=2)
+        base = np.median(ctrl, axis=1)
+        resid = ctrl - base[:, None]
+        sigma = max(1.4826 * float(np.median(np.abs(resid - np.median(resid)))), 1e-3)
+        zj = (exit_score - base) / sigma
+        z = zj if z is None else np.maximum(z, zj)
+        if j == 0:
+            info["control_sigma"] = round(sigma, 3)
+    return z, info
 
 
 def sustained_onset(signal: np.ndarray, p: "Params", threshold: float | None = None) -> tuple[int | None, float]:
@@ -504,6 +528,16 @@ def candidate_paths(comp: np.ndarray, ring: np.ndarray, cost: np.ndarray, gr: fl
     tube that wraps round and touches its grain again, from the other contacts too."""
     far, dist = _geodesic_far(comp, ring)
     tips = _local_maxima_tips(comp, dist, 4, p.cand_nms_px, p.cand_tips) or [far]
+    # every branch of the region gets its end as a hypothesis, however far the others reach
+    from skimage.morphology import skeletonize
+    skel = skeletonize(comp)
+    nb = cv2.filter2D(skel.astype(np.uint8), -1, np.ones((3, 3), np.float32), borderType=cv2.BORDER_CONSTANT)
+    ends = [(int(y), int(x)) for y, x in zip(*np.nonzero(skel & (nb == 2))) if dist[y, x] >= 6]
+    for y, x in sorted(ends, key=lambda e: -dist[e]):
+        if len(tips) >= p.cand_tips + p.cand_branch_tips:
+            break
+        if all(math.hypot(y - ty, x - tx) >= p.cand_nms_px for ty, tx in tips):
+            tips.append((y, x))
     n_c, c_lab = cv2.connectedComponents((ring & comp).astype(np.uint8), connectivity=8)
     contacts = [c_lab == c for c in range(1, n_c) if (c_lab == c).sum() >= 2]
     out, seen = [], []
@@ -566,6 +600,18 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
         tau_all = np.maximum(p.mk_floor, base[None] + p.mk_k * ctrl_sigma[:, None, None])  # (bins, angles, points)
         evid_all = np.clip((kymo_all - tau_all) / tau_all, -1.0, 1.0)
         extra["matched_control_sigma_median"] = round(float(np.median(ctrl_sigma)), 3)
+        if "dark" in p.mk_extra:
+            # the young part of a tube (always the tip) often looks like a plain dark line
+            dark = np.tile(-np.exp(-across ** 2 / 3.4), (len(pts), 1))
+            dark -= dark.mean(axis=1, keepdims=True)
+            dark /= np.linalg.norm(dark, axis=1, keepdims=True)
+            k_d = matched_kymograph(signed_all, dark, pts, normal, centre, across, angles)
+            c_d = np.concatenate([matched_kymograph(signed_all, dark, pts, normal, centre, across,
+                                                    angles[zero:zero + 1], lateral_offset=off)[:, 0]
+                                  for off in (-p.mk_control_px, p.mk_control_px)], axis=1)
+            s_d = np.maximum(1.4826 * np.median(np.abs(c_d - np.median(c_d, axis=1, keepdims=True)), axis=1), 0.3)
+            tau_d = np.maximum(p.mk_floor, k_d[:p.ref_bins].mean(axis=0)[None] + p.mk_k * s_d[:, None, None])
+            evid_all = np.maximum(evid_all, np.clip((k_d - tau_d) / tau_d, -1.0, 1.0))
         matched_evid = evid_all
     if p.evidence != "matched":
         kymo_all = _kymograph(diffs, pts, normal, centre, p.lateral, angles)  # (bins, angles, points)
@@ -596,7 +642,9 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
     kymo = kymo_all[np.arange(n_bins), ai]
     tau = tau_all[-1, ai[-1]] if tau_all.ndim == 3 else tau_all[ai[-1]]
     evid = evid_all[np.arange(n_bins), ai]
-    front = dp_front(evid, max(1, int(round(p.vmax_px / p.step))))
+    # missing evidence costs less than evidence gains: the front may bridge a short faint stretch
+    dp_evid = np.where(evid < 0, p.neg_weight * evid, evid) if p.neg_weight != 1.0 else evid
+    front = dp_front(dp_evid, max(1, int(round(p.vmax_px / p.step))))
     behind = np.arange(len(pts))[None, :] < front[:, None]
     explained = float(np.sum(np.where(behind, evid, 0.0)))
     beyond = float(np.sum(np.where(~behind, np.clip(evid, 0.0, None), 0.0)))
@@ -618,14 +666,25 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
             early_bins = frac[max(0, t0 - 8):max(0, t0 - 2)]
             through = bool(len(early_bins) and np.median(early_bins) >= 0.5)
     score = explained - p.beyond_weight * beyond
+    # a tube is a ridge in the end-state change: higher on the path than just beside it
+    chg = ctx["change"]
+    lat = p.ridge_px
+    samp = lambda q: cv2.remap(chg.astype(np.float32), q[:, 0].astype(np.float32)[None],
+                               q[:, 1].astype(np.float32)[None], cv2.INTER_LINEAR)[0]
+    on_path = np.max([samp(pts + o * normal) for o in (-1.0, 0.0, 1.0)], axis=0)
+    beside = np.maximum(samp(pts + lat * normal), samp(pts - lat * normal))
+    far_pts = ss >= p.skip_px + 2.0
+    ridge = float(np.mean((on_path - beside > 0.25 * on_path)[far_pts])) if far_pts.any() else 1.0
+    if p.ridge_weight > 0 and score > 0:
+        score *= (1.0 - p.ridge_weight) + p.ridge_weight * ridge
     if through:
         score = score * 0.25 if score > 0 else score - 10.0
     extra["rotation_deg"] = [round(float(t), 1) for t in theta]
     if p.rotate and np.max(np.abs(theta)) >= 10:
         flags.append(f"rotates:{np.max(np.abs(theta)):.0f}deg")
     return {"pts": pts, "ss": ss, "theta": theta, "front": front, "kymo": kymo, "tau": tau, "evid": evid,
-            "explained": explained, "beyond": beyond, "through": through, "score": score, "flags": flags,
-            "result": extra}
+            "explained": explained, "beyond": beyond, "through": through, "ridge": ridge, "score": score,
+            "flags": flags, "result": extra}
 
 
 def grain_settling(crops: np.ndarray, centre: float, gr: float, p: "Params") -> dict:
@@ -733,7 +792,8 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         result["_diag"] = (late, change, tube_mask, None, None, None, centre)
         return result
     attached.sort(reverse=True)
-    comp = lab == attached[0][1]
+    # with growth-scored candidates every region touching the rim is a hypothesis; otherwise the largest
+    comp = np.isin(lab, [l for _, l in attached]) if p.candidates else lab == attached[0][1]
     if len(attached) > 1:
         result["flags"].append("second_attached_component")
     # a change region shared with other grains is split by geodesic ownership: each pixel
@@ -757,17 +817,32 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     diffs = np.abs(reg - early[None])
     ctx = {"reg": reg, "early": early, "late": late, "ls": ls, "late_idx": late_idx,
            "centre": centre, "gr": gr, "rg": rg, "blocked": blocked, "tube_mask": tube_mask, "diffs": diffs,
-           "signed": (reg - early[None]).astype(np.float32), "n_bins": n_bins, "thr": thr, "comp": comp}
+           "signed": (reg - early[None]).astype(np.float32), "n_bins": n_bins, "thr": thr, "comp": comp,
+           "change": change}
     if p.candidates:
         cands = []
         for path_yx in candidate_paths(comp, ring, cost, gr, centre, p):
             read = read_path(ctx, path_yx, p)
             if read is not None:
                 cands.append(read)
-        read = max(cands, key=lambda c: c["score"]) if cands else None
+        # a candidate that is only a shorter stretch of another along the same tube is dropped:
+        # the growth front, not the path, decides how far the tube got (and tips are faint)
+        live = []
+        for i, a in enumerate(cands):
+            nested = False
+            for j, b in enumerate(cands):
+                if j != i and b["ss"][-1] > a["ss"][-1] + 1.0:
+                    d = np.min(np.hypot(a["pts"][:, None, 0] - b["pts"][None, :, 0],
+                                        a["pts"][:, None, 1] - b["pts"][None, :, 1]), axis=1)
+                    if np.all(d <= p.nest_px):
+                        nested = True
+                        break
+            if not nested:
+                live.append(a)
+        read = max(live or cands, key=lambda c: c["score"]) if cands else None
         result["path_candidates"] = [{"length_px": round(float(c["ss"][-1]), 1), "score": round(c["score"], 1),
                                       "explained": round(c["explained"], 1), "beyond": round(c["beyond"], 1),
-                                      "through": c["through"]} for c in cands]
+                                      "ridge": round(c["ridge"], 2), "through": c["through"]} for c in cands]
         if len(cands) > 1 and read is not cands[0]:
             result["flags"].append("path_by_growth")
     else:
