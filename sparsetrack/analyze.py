@@ -79,7 +79,8 @@ class Params:
     mf_half: float = 3.0         # ...+/- mf_half px across it
     mf_search: float = 15.0      # exit angle search (degrees either way)
     mf_z: float = 3.0            # onset when the calibrated score exceeds this (sustained)
-    mf_follow_rotation: bool = False  # place the stub along the rotation track (rotating tubes 6->11/22, legacy 6->4/7)
+    mf_z_low: float | None = 2.0   # ...then reaching back while it stays above this (hysteresis)
+    mf_follow_rotation: bool | str = "both"  # True: stub placed along the rotation track; "both": max of the two
     bg_subtract: bool = True     # subtract each bin's background change before reading the path
     # front evidence: "matched" = signed change projected on the tube's own end-state cross-section
     # (rejects blobs, focus and uniform brightness changes; synthetic lengths 68% -> 84% in tolerance);
@@ -744,7 +745,11 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     if p.onset_source == "matched":
         signed = (reg - early[None]).astype(np.float32)
         z, mf_info = matched_stub_signal(signed, (late - early), pts, centre, p,
-                                         theta=theta if p.mf_follow_rotation and p.rotate else None)
+                                         theta=theta if p.mf_follow_rotation is True and p.rotate else None)
+        if p.mf_follow_rotation == "both" and p.rotate and np.max(np.abs(theta)) >= 5:
+            # a rotating grain's tube emerged elsewhere on the rim: also look along the rotation track
+            z_rot, _ = matched_stub_signal(signed, (late - early), pts, centre, p, theta=theta)
+            z = np.maximum(z, z_rot)
         result["matched_filter"] = mf_info
         wedge, exit_track = z, np.full(n_bins, end_angle)
     elif p.onset_source == "wedge_fixed":
@@ -754,6 +759,10 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         wedge, exit_track = exit_track_signal(diffs, centre, gr, end_angle, p)
     result["exit_angle_deg"] = [round(float(a), 1) for a in exit_track]
     wedge_onset, wedge_thr = sustained_onset(wedge, p, threshold=p.mf_z if p.onset_source == "matched" else None)
+    if wedge_onset is not None and p.onset_source == "matched" and p.mf_z_low is not None:
+        # hysteresis: a confirmed stub reaches back while its score stays above the lower threshold
+        while wedge_onset > 0 and wedge[wedge_onset - 1] > p.mf_z_low:
+            wedge_onset -= 1
     result["onset_bins"] = {"front": front_onset, "wedge": wedge_onset}
     result["wedge"] = {"signal": [round(float(v), 2) for v in wedge], "threshold": round(wedge_thr, 2)}
     b = front_onset if p.onset_source == "front" else wedge_onset
