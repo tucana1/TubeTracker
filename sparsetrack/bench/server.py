@@ -7,7 +7,9 @@ and of the centerline observations (``path_xy``, ``path_complete``, ``direct_sta
 so answers can later be imported into an annotation project.
 
 Every judgement is made on a registered bin average; a bin decision is stored both
-as the bin index and as the bin-centre source frame.
+as the bin index and as the bin-centre source frame. Grain views follow the grain's own
+drift (the per-grain registration SparseTrack uses); traces are clicked in that
+grain-following view and stored in reference coordinates.
 """
 
 from __future__ import annotations
@@ -40,6 +42,8 @@ COARSE = {"bins_per_tile": 4, "half": 28, "zoom": 2.0, "cols": 11, "header": 16,
 FINE = {"n_tiles": 18, "half": 24, "zoom": 4.0, "cols": 6, "header": 16, "gap": 2}
 TRACE_VIEWS = {"near": {"half": 64, "zoom": 5.0}, "wide": {"half": 128, "zoom": 2.5}}
 RETEST_SIZE = 8
+FOLLOW_HALF = 60        # crop used to measure a grain's own drift
+FOLLOW_MAX_STEP = 10.0  # a jump bigger than this between bins means the tracking is unreliable
 
 
 def trace_bins(first_visible_bin: int, n_bins: int) -> list[int]:
@@ -68,6 +72,7 @@ class Bench:
         self.renderer = Renderer(self.bins, self.meta)
         self.fpb = int(self.meta["frames_per_bin"])
         self.n_bins = int(self.meta["n_bins"])
+        self._follow: dict[str, np.ndarray] = {}
         self.labels_path = Path(labels_path)
         self.journal_path = self.labels_path.with_suffix(".journal.jsonl")
         self.annotator = annotator
@@ -205,11 +210,14 @@ class Bench:
         if state in ("no_tube", "unsure"):
             pts = pts if state == "unsure" else []
         dx, dy = self.meta["shifts"][b]
+        fx, fy = (float(v) for v in self.follow(gid)[b])  # clicked in the grain-following view
+        ref = [[round(x + fx, 2), round(y + fy, 2)] for x, y in pts]
         length = float(np.sum(np.hypot(*np.diff(np.array(pts), axis=0).T))) if len(pts) > 1 else 0.0
         record = {
             "bin": b, "source_frame": self.bin_centre(b), "state": state,
-            "path_xy_ref": pts,
-            "path_xy": [[round(x + dx, 2), round(y + dy, 2)] for x, y in pts],
+            "path_xy_ref": ref,
+            "path_xy": [[round(x + dx, 2), round(y + dy, 2)] for x, y in ref],
+            "path_xy_view": pts, "view_offset": [round(fx, 2), round(fy, 2)],
             "path_complete": state == "full",
             "direct_state": {"full": "direct_visible", "partial": "direct_visible",
                              "no_tube": "no_tube_visible", "unsure": "not_directly_visible"}[state],
@@ -264,13 +272,33 @@ class Bench:
         return self.doc["retest"]["grains"]
 
     # ---- images ---------------------------------------------------------------------
+    def follow(self, gid: str) -> np.ndarray:
+        """(n_bins, 2) offsets that keep a drifting grain centred in its views (grain registration
+        on top of the field registration; zero before the reference bins and if it is erratic)."""
+        if gid not in self._follow:
+            from ..analyze import local_shifts
+            g = self.grain(gid)
+            rs, half = self.renderer.ref_start, FOLLOW_HALF
+            crops = np.stack([self.renderer.crop(b, g["x"], g["y"], half) for b in range(rs, self.n_bins)])
+            if np.isnan(crops).any():
+                crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)))
+            ls = local_shifts(crops, half - 0.5, g["r"], 12.0, 3)
+            steps = np.hypot(*np.diff(ls, axis=0).T) if len(ls) > 1 else np.zeros(1)
+            reach = float(np.hypot(*ls.T).max())
+            # a real drift (even a sudden push) moves a few px per bin and mostly one way; locking
+            # onto a neighbour or clump jumps far in one bin or wanders back and forth
+            if steps.max() > FOLLOW_MAX_STEP or (steps > 2).sum() > 10 or steps.sum() > 4 * reach + 30:
+                ls = np.zeros_like(ls)
+            self._follow[gid] = np.vstack([np.repeat(ls[:1], rs, axis=0), ls])
+        return self._follow[gid]
+
     def coarse_png(self, gid: str, mode: str) -> bytes:
         g = self.grain(gid)
         k = COARSE["bins_per_tile"]
         ranges = [(b, min(b + k - 1, self.n_bins - 1)) for b in range(0, self.n_bins, k)]
         labels = [f"{b0 * self.fpb}" for b0, _ in ranges]
         return png(self.renderer.strip(gid, g["x"], g["y"], ranges, labels, COARSE["half"], COARSE["zoom"],
-                                       COARSE["cols"], mode, COARSE["header"], COARSE["gap"]))
+                                       COARSE["cols"], mode, COARSE["header"], COARSE["gap"], self.follow(gid)))
 
     def fine_png(self, gid: str, start: int, mode: str) -> bytes:
         g = self.grain(gid)
@@ -278,14 +306,14 @@ class Bench:
         ranges = [(b, b) for b in range(start, min(self.n_bins, start + FINE["n_tiles"]))]
         labels = [f"bin {b}  f{self.bin_centre(b)}" for b, _ in ranges]
         return png(self.renderer.strip(gid, g["x"], g["y"], ranges, labels, FINE["half"], FINE["zoom"],
-                                       FINE["cols"], mode, FINE["header"], FINE["gap"]))
+                                       FINE["cols"], mode, FINE["header"], FINE["gap"], self.follow(gid)))
 
     def frame_png(self, gid: str, b: int, view: str, mode: str, smooth: int) -> bytes:
         g = self.grain(gid)
         v = TRACE_VIEWS[view]
         b0, b1 = int(b) - smooth, int(b) + smooth
-        img = self.renderer.mean_crop(b0, b1, g["x"], g["y"], v["half"])
-        window = self.renderer.contrast(gid, g["x"], g["y"], v["half"], mode)
+        img = self.renderer.mean_crop(b0, b1, g["x"], g["y"], v["half"], self.follow(gid))
+        window = self.renderer.contrast(gid, g["x"], g["y"], v["half"], mode, self.follow(gid))
         return png(self.renderer.to_display(img, window, v["zoom"]))
 
     def field_png(self, which: str) -> bytes:

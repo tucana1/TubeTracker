@@ -379,3 +379,24 @@ def test_synthetic_presets_render_every_phenomenon(tmp_path):
         truth = scene.truth(name)
         assert truth["labels"] and all(g["id"] in truth["labels"] for g in truth["grains"].values())
         assert float(np.abs(frames[-1].astype(float) - frames[0]).max()) > 20  # tubes were drawn
+
+
+def test_bench_views_follow_a_drifting_grain_and_store_reference_coordinates(tmp_path):
+    rng = np.random.default_rng(5)
+    n_bins, size = 24, 200
+    frames = []
+    for b in range(n_bins):
+        drift = 0.5 * max(0, b - 6)  # the grain drifts right from bin 7 on, 8.5 px by the end
+        frames.append(_grain_image(size, 100.0 + drift, 100.0, 12.0) + rng.normal(0, 0.5, (size, size)))
+    np.save(tmp_path / "bins.npy", np.stack(frames).astype(np.float16))
+    (tmp_path / "meta.json").write_text(json.dumps({
+        "schema": stack.SCHEMA, "frames_per_bin": 300, "n_bins": n_bins, "shifts": [[0.0, 0.0]] * n_bins,
+        "movie": {"name": "drift.mp4", "size_bytes": 1, "n_frames": n_bins * 300, "width": size, "height": size}}))
+    (tmp_path / "grains.json").write_text(json.dumps({"grains": annotate_layout(
+        [{"x": 100.0, "y": 100.0, "r": 12.0}], (size, size))}))
+    bench = Bench(tmp_path, tmp_path / "labels" / "t.json")
+    off = bench.follow("g001")
+    assert abs(off[-1][0] - 8.5) < 0.6 and abs(off[-1][1]) < 0.6 and abs(off[3][0]) < 0.3
+    rec = bench.set_trace("g001", {"bin": n_bins - 1, "state": "full", "points": [[112, 100], [122, 100]]})
+    assert rec["length_px"] == 10.0
+    assert abs(rec["path_xy_ref"][0][0] - (112 + off[-1][0])) < 1e-6 and rec["path_xy_view"][0] == [112.0, 100.0]

@@ -22,8 +22,13 @@ class Renderer:
         self.ref_start = int(meta.get("ref_start", 0))
         self._contrast: dict[tuple, tuple[float, float]] = {}
 
-    def crop(self, b: int, cx: float, cy: float, half: int) -> np.ndarray:
-        """Registered float32 crop (2*half square) of bin ``b`` centred on reference (cx, cy)."""
+    def crop(self, b: int, cx: float, cy: float, half: int, offsets: np.ndarray | None = None) -> np.ndarray:
+        """Registered float32 crop (2*half square) of bin ``b`` centred on reference (cx, cy).
+
+        ``offsets`` (n_bins, 2) moves the centre per bin, e.g. to follow a drifting grain.
+        """
+        if offsets is not None:
+            cx, cy = cx + float(offsets[b][0]), cy + float(offsets[b][1])
         dx, dy = self.shifts[b]
         sx, sy = cx + dx, cy + dy
         pad = half + 3
@@ -38,16 +43,18 @@ class Renderer:
         # patch pixel j covers reference x in [cx - half + j, cx - half + j + 1).
         return cv2.getRectSubPix(sub, (2 * half, 2 * half), (sx - cx0 - 0.5, sy - cy0 - 0.5))
 
-    def mean_crop(self, b0: int, b1: int, cx: float, cy: float, half: int) -> np.ndarray:
+    def mean_crop(self, b0: int, b1: int, cx: float, cy: float, half: int,
+                  offsets: np.ndarray | None = None) -> np.ndarray:
         b0, b1 = max(0, b0), min(self.n_bins - 1, b1)
-        return np.mean([self.crop(b, cx, cy, half) for b in range(b0, b1 + 1)], axis=0)
+        return np.mean([self.crop(b, cx, cy, half, offsets) for b in range(b0, b1 + 1)], axis=0)
 
-    def contrast(self, key, cx: float, cy: float, half: int, mode: str = "n") -> tuple[float, float]:
+    def contrast(self, key, cx: float, cy: float, half: int, mode: str = "n",
+                 offsets: np.ndarray | None = None) -> tuple[float, float]:
         """Display window for one grain, fixed across all its tiles."""
         cache_key = (key, half, mode)
         if cache_key not in self._contrast:
-            early = self.mean_crop(self.ref_start, self.ref_start + 2, cx, cy, half)
-            late = self.mean_crop(self.n_bins - 4, self.n_bins - 2, cx, cy, half)
+            early = self.mean_crop(self.ref_start, self.ref_start + 2, cx, cy, half, offsets)
+            late = self.mean_crop(self.n_bins - 4, self.n_bins - 2, cx, cy, half, offsets)
             if mode == "h":  # high contrast: narrow window around the background level
                 bg = float(np.median(early))
                 window = (bg - 20.0, bg + 12.0)
@@ -67,17 +74,17 @@ class Renderer:
         return u8
 
     def strip(self, key, cx: float, cy: float, ranges: list[tuple[int, int]], labels: list[str],
-              half: int, zoom: float, cols: int, mode: str = "n", header: int = 16, gap: int = 2
-              ) -> np.ndarray:
+              half: int, zoom: float, cols: int, mode: str = "n", header: int = 16, gap: int = 2,
+              offsets: np.ndarray | None = None) -> np.ndarray:
         """Grid of tiles, one per bin range, each with a text header above the image."""
-        window = self.contrast(key, cx, cy, half, mode)
+        window = self.contrast(key, cx, cy, half, mode, offsets)
         side = int(round(2 * half * zoom))
         rows = -(-len(ranges) // cols)
         sheet = np.full((rows * (side + header + gap), cols * (side + gap)), 255, np.uint8)
         for i, ((b0, b1), label) in enumerate(zip(ranges, labels)):
             r, c = divmod(i, cols)
             top, left = r * (side + header + gap), c * (side + gap)
-            tile = self.to_display(self.mean_crop(b0, b1, cx, cy, half), window, zoom)
+            tile = self.to_display(self.mean_crop(b0, b1, cx, cy, half, offsets), window, zoom)
             sheet[top + header:top + header + side, left:left + side] = tile[:side, :side]
             cv2.putText(sheet, label, (left + 3, top + header - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, 0, 1,
                         cv2.LINE_AA)

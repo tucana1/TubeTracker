@@ -44,7 +44,7 @@ function resetGrainState() {
 function loadTrace() {
   const b = plan()[S.traceIdx];
   const saved = b === undefined ? null : (label().traces || {})[String(b)];
-  S.pts = saved ? saved.path_xy_ref.map((p) => p.slice()) : [];
+  S.pts = saved ? (saved.path_xy_view || saved.path_xy_ref).map((p) => p.slice()) : [];
   S.contact = saved ? !!saved.contact : false;
 }
 function openGrain(gid, view) {
