@@ -159,3 +159,96 @@ def test_probe_and_keyframe_decode_on_a_synthetic_movie(tmp_path):
     assert info.keyframes == (0, 12, 24, 36) and info.keyframe_interval == 12 and info.n_frames == 48
     frames = [f for f, img in iter_keyframes(info)]
     assert frames == [0, 12, 24, 36]
+
+
+# ---------------------------------------------------------------- analysis and scoring
+from sparsetrack.analyze import Params, analyze_grain, dp_front, rotation_track, sustained_onset  # noqa: E402
+from sparsetrack.evaluate import interval_distance, score  # noqa: E402
+
+
+def test_interval_distance_signs():
+    assert interval_distance(500, 300, 600) == 0.0
+    assert interval_distance(300, 300, 600) == -0.0 and interval_distance(250, 300, 600) == -50.0
+    assert interval_distance(700, 300, 600) == 100.0
+    assert interval_distance(10, None, 600) == 0.0
+
+
+def test_dp_front_is_monotone_and_ignores_a_transient():
+    n_bins, n = 30, 40
+    ev = -np.ones((n_bins, n))
+    for t in range(10, n_bins):  # tube grows 1 point per bin from bin 10
+        ev[t, :t - 9] = 1.0
+    ev[4, :25] = 1.0  # a one-bin blob over the path
+    front = dp_front(ev, vmax=4)
+    assert np.all(np.diff(front) >= 0)
+    assert front[4] == 0 and front[9] == 0 and front[20] == 11 and front[-1] == 20
+
+
+def test_rotation_track_follows_evidence_and_is_pinned_at_the_end():
+    angles = np.arange(-30.0, 30.1, 3.0)
+    score_ = np.zeros((20, len(angles)))
+    for t in range(12):
+        score_[t, np.argmin(np.abs(angles - 15.0))] = 5.0  # early: rotated by +15 degrees
+    theta = rotation_track(score_, angles, penalty=0.1, max_turn=6.0, anchor_bins=3)
+    assert theta[-1] == 0.0 and theta[0] == 15.0
+    assert np.all(np.abs(np.diff(theta)) <= 6.0 + 1e-9)
+
+
+def test_sustained_onset_rejects_transient_and_needs_persistence():
+    p = Params()
+    sig = np.zeros(40)
+    sig[8:10] = 20.0            # transient bump
+    sig[20:] = 20.0             # real, persistent rise
+    t, _ = sustained_onset(sig, p)
+    assert t == 20
+    sig2 = np.zeros(40)
+    sig2[20:30] = 20.0          # rises then falls back: not a tube
+    assert sustained_onset(sig2, p)[0] is None
+
+
+def _synthetic_growth(n_bins=40, onset_bin=12, rate=1.5, size=320, gx=160.0, gy=160.0, r=13.0, angle=200.0,
+                      seed=0):
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    d = np.hypot(xx - gx, yy - gy)
+    grain = 175 - 90 * np.exp(-((d - r) ** 2) / 3.0)
+    a = np.deg2rad(angle)
+    u = np.array([np.cos(a), np.sin(a)])
+    along = (xx - gx) * u[0] + (yy - gy) * u[1] - r
+    across = -(xx - gx) * u[1] + (yy - gy) * u[0]
+    bins, lengths = [], []
+    for t in range(n_bins):
+        L = max(0.0, (t - onset_bin + 1) * rate)
+        lengths.append(L)
+        tube = (along > 0) & (along < L)
+        img = grain.copy()
+        img += np.where(tube, 18 * np.exp(-across ** 2 / 0.8) - 22 * np.exp(-(np.abs(across) - 1.6) ** 2 / 0.5), 0)
+        bins.append(img + rng.normal(0, 0.4, img.shape))
+    return np.stack(bins).astype(np.float16), np.array(lengths)
+
+
+def test_analyze_grain_recovers_synthetic_onset_and_length():
+    bins, true = _synthetic_growth()
+    meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
+    grain = {"id": "g001", "x": 160.0, "y": 160.0, "r": 13.0}
+    res = analyze_grain(Renderer(bins, meta), meta, grain, [], Params(half=100))
+    assert res["status"] == "emerged_within"
+    onset_bin = res["onset_frame"] // 300
+    assert abs(onset_bin - 12) <= 2
+    est = np.array(res["length"]["px"])
+    late = slice(20, len(bins))
+    assert np.median(np.abs(est[late] - true[late])) < 2.0
+    assert np.all(np.diff(est) >= -1e-9)
+
+
+def test_score_counts_onset_and_length_hits():
+    labels = {"frames_per_bin": 300, "grains": {"g1": {"x": 10, "y": 10, "isolated": True}},
+              "labels": {"g1": {"onset": {"verdict": "emerged_within", "last_absent_frame": 1000,
+                                          "first_visible_frame": 2000},
+                                "traces": {"20": {"state": "full", "length_px": 10.0, "source_frame": 6150},
+                                           "2": {"state": "no_tube", "length_px": 0.0, "source_frame": 750}}}}}
+    pred = {"method": "m", "grains": [{"id": "g1", "x": 10, "y": 10, "status": "emerged_within", "onset_frame": 2500,
+                                        "length": {"frames": [750, 6150], "px": [0.0, 11.5]}}]}
+    rep = score(labels, pred, onset_tol=600)
+    assert rep["onset"]["hits"] == 1 and rep["onset"]["late"] == 0
+    assert rep["length_full"]["within_tolerance"] == 1 and rep["absences"]["correct"] == 1

@@ -47,6 +47,22 @@ def cmd_bench(args) -> None:
     serve(args.cache, args.labels, port=args.port, open_browser=not args.no_browser, annotator=args.annotator)
 
 
+def cmd_analyze(args) -> None:
+    from .analyze import analyze
+    only = [g.strip() for g in args.only.split(",")] if args.only else None
+    analyze(args.cache, args.out, grains_path=args.grains, only=only)
+
+
+def cmd_eval(args) -> None:
+    from .evaluate import load, markdown, score
+    labels, preds = load(args.labels), [load(p) for p in args.pred]
+    text = "".join(markdown(score(labels, pred, onset_tol=args.onset_tol, subset=args.subset)) + "\n"
+                   for pred in preds)
+    print(text)
+    if args.out:
+        Path(args.out).write_text(text)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="sparsetrack")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -64,5 +80,18 @@ def main(argv=None) -> None:
     b.add_argument("--no-browser", action="store_true")
     b.add_argument("--annotator", default="investigator")
     b.set_defaults(func=cmd_bench)
+    a = sub.add_parser("analyze", help="per-grain onset and tube length for a prepared movie")
+    a.add_argument("cache")
+    a.add_argument("--out", required=True)
+    a.add_argument("--grains", help="grain list: a benchmark labels file (human census) or grains.json")
+    a.add_argument("--only", help="comma-separated grain ids")
+    a.set_defaults(func=cmd_analyze)
+    e = sub.add_parser("eval", help="score predictions against benchmark labels")
+    e.add_argument("--labels", required=True)
+    e.add_argument("--pred", required=True, nargs="+")
+    e.add_argument("--onset-tol", type=float, default=600.0)
+    e.add_argument("--subset", choices=("isolated", "all"), default="isolated")
+    e.add_argument("--out")
+    e.set_defaults(func=cmd_eval)
     args = ap.parse_args(argv)
     args.func(args)

@@ -1,0 +1,734 @@
+{
+ "schema": "sparsetrack.bench.v1",
+ "created": "2026-09-23T01:47:45",
+ "origin": "legacy human answers on single compressed frames (rev16-rev18); development reference only",
+ "movie": {
+  "path": "/Users/joshjiang/Downloads/test1lowdensjoshua-28c-hz.mp4 .mp4",
+  "name": "test1lowdensjoshua-28c-hz.mp4 .mp4",
+  "size_bytes": 45239700,
+  "mtime": 1786662827,
+  "width": 1280,
+  "height": 1024,
+  "n_frames": 52583,
+  "fps_container": 14.0,
+  "n_keyframes": 4382,
+  "keyframe_interval": 12
+ },
+ "frames_per_bin": 300,
+ "n_bins": 176,
+ "grains": {
+  "g025": {
+   "x": 926.5,
+   "y": 492.5,
+   "r": 12.5,
+   "ring_contrast": 51.7,
+   "body_contrast": 38.87,
+   "id": "g025",
+   "nn_dist": 122.4,
+   "clump_size": 1,
+   "border": false,
+   "isolated": true,
+   "source": "auto",
+   "legacy_name": "cf70",
+   "legacy_match_px": 1.1
+  },
+  "g014": {
+   "x": 498.5,
+   "y": 247.5,
+   "r": 14.1,
+   "ring_contrast": 24.64,
+   "body_contrast": 31.85,
+   "id": "g014",
+   "nn_dist": 132.0,
+   "clump_size": 1,
+   "border": false,
+   "isolated": true,
+   "source": "auto",
+   "legacy_name": "S3",
+   "legacy_match_px": 6.1
+  },
+  "g037": {
+   "x": 1088.5,
+   "y": 872.5,
+   "r": 13.6,
+   "ring_contrast": 32.2,
+   "body_contrast": 45.55,
+   "id": "g037",
+   "nn_dist": 104.2,
+   "clump_size": 1,
+   "border": false,
+   "isolated": true,
+   "source": "auto",
+   "legacy_name": "S4",
+   "legacy_match_px": 2.6
+  },
+  "g034": {
+   "x": 213.5,
+   "y": 743.5,
+   "r": 12.5,
+   "ring_contrast": 47.03,
+   "body_contrast": 36.22,
+   "id": "g034",
+   "nn_dist": 248.7,
+   "clump_size": 1,
+   "border": false,
+   "isolated": true,
+   "source": "auto",
+   "legacy_name": "S6",
+   "legacy_match_px": 1.7
+  },
+  "g013": {
+   "x": 887.5,
+   "y": 188.5,
+   "r": 14.9,
+   "ring_contrast": 22.72,
+   "body_contrast": 35.5,
+   "id": "g013",
+   "nn_dist": 80.4,
+   "clump_size": 1,
+   "border": false,
+   "isolated": true,
+   "source": "auto",
+   "legacy_name": "S9",
+   "legacy_match_px": 2.7
+  },
+  "g030": {
+   "x": 644.5,
+   "y": 640.5,
+   "r": 12.7,
+   "ring_contrast": 44.95,
+   "body_contrast": 40.3,
+   "id": "g030",
+   "nn_dist": 48.8,
+   "clump_size": 1,
+   "border": false,
+   "isolated": true,
+   "source": "auto",
+   "legacy_name": "S11",
+   "legacy_match_px": 2.8
+  },
+  "g029": {
+   "x": 535.5,
+   "y": 640.5,
+   "r": 13.2,
+   "ring_contrast": 48.12,
+   "body_contrast": 44.11,
+   "id": "g029",
+   "nn_dist": 59.4,
+   "clump_size": 1,
+   "border": false,
+   "isolated": true,
+   "source": "auto",
+   "legacy_name": "G0",
+   "legacy_match_px": 10.4
+  }
+ },
+ "labels": {
+  "g025": {
+   "onset": {
+    "verdict": "emerged_within",
+    "last_absent_frame": 300,
+    "first_visible_frame": 6000,
+    "last_absent_bin": 1,
+    "first_visible_bin": 20,
+    "review_origin": "human",
+    "view": "single frames"
+   },
+   "traces": {
+    "170": {
+     "state": "full",
+     "source_frame": 51270,
+     "length_px": 43.676,
+     "path_xy_ref": [
+      [
+       915.6965969368126,
+       490.0064987119937
+      ],
+      [
+       903.7271307651345,
+       482.52558235469485
+      ],
+      [
+       892.8263669302133,
+       476.3271088015044
+      ],
+      [
+       886.6278933770229,
+       473.3347422585848
+      ],
+      [
+       877.0095723462101,
+       470.1286352483139
+      ]
+     ],
+     "n_clicks": 5,
+     "review_origin": "human"
+    },
+    "0": {
+     "state": "no_tube",
+     "source_frame": 0,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "1": {
+     "state": "no_tube",
+     "source_frame": 300,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "34": {
+     "state": "full",
+     "source_frame": 10200,
+     "length_px": 8.984,
+     "path_xy_ref": [
+      [
+       914.7562192721954,
+       488.871170407412
+      ],
+      [
+       906.822173576946,
+       484.6562086318109
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "81": {
+     "state": "full",
+     "source_frame": 24300,
+     "length_px": 20.499,
+     "path_xy_ref": [
+      [
+       915.0366010811102,
+       489.48586504729474
+      ],
+      [
+       906.3587386019315,
+       485.76678112764665
+      ],
+      [
+       900.160265402518,
+       484.52708648776394
+      ],
+      [
+       896.6891204108465,
+       481.30388042406895
+      ]
+     ],
+     "n_clicks": 4,
+     "review_origin": "human"
+    },
+    "175": {
+     "state": "full",
+     "source_frame": 52582,
+     "length_px": 45.01,
+     "path_xy_ref": [
+      [
+       913.8510285852745,
+       490.0149871913416
+      ],
+      [
+       905.1731661060957,
+       485.8000254157405
+      ],
+      [
+       899.7185096906119,
+       482.5768193520455
+      ],
+      [
+       892.5282807792922,
+       475.13865151274933
+      ],
+      [
+       882.6107236602307,
+       471.91544544905435
+      ],
+      [
+       875.6684336768877,
+       467.45254474547664
+      ]
+     ],
+     "n_clicks": 6,
+     "review_origin": "human"
+    }
+   }
+  },
+  "g014": {
+   "onset": {
+    "verdict": "emerged_within",
+    "last_absent_frame": 10000,
+    "first_visible_frame": 13000,
+    "last_absent_bin": 33,
+    "first_visible_bin": 43,
+    "review_origin": "human",
+    "view": "single frames"
+   },
+   "traces": {
+    "1": {
+     "state": "no_tube",
+     "source_frame": 300,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "5": {
+     "state": "no_tube",
+     "source_frame": 1500,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "13": {
+     "state": "no_tube",
+     "source_frame": 4000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "33": {
+     "state": "no_tube",
+     "source_frame": 10000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "56": {
+     "state": "full",
+     "source_frame": 17000,
+     "length_px": 5.751,
+     "path_xy_ref": [
+      [
+       501.297509765625,
+       262.29749450683596
+      ],
+      [
+       501.422509765625,
+       268.04749450683596
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "80": {
+     "state": "full",
+     "source_frame": 24000,
+     "length_px": 10.236,
+     "path_xy_ref": [
+      [
+       499.99249267578125,
+       260.6025024414063
+      ],
+      [
+       498.49249267578125,
+       270.7275024414063
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    }
+   }
+  },
+  "g037": {
+   "onset": {
+    "verdict": "emerged_within",
+    "last_absent_frame": 8500,
+    "first_visible_frame": 9000,
+    "last_absent_bin": 28,
+    "first_visible_bin": 30,
+    "review_origin": "human",
+    "view": "single frames"
+   },
+   "traces": {
+    "5": {
+     "state": "no_tube",
+     "source_frame": 1500,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "16": {
+     "state": "no_tube",
+     "source_frame": 5000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "28": {
+     "state": "no_tube",
+     "source_frame": 8500,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "41": {
+     "state": "full",
+     "source_frame": 12500,
+     "length_px": 10.251,
+     "path_xy_ref": [
+      [
+       1078.3274658203125,
+       877.3024780273438
+      ],
+      [
+       1068.0774658203125,
+       877.4274780273438
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "53": {
+     "state": "full",
+     "source_frame": 16000,
+     "length_px": 17.103,
+     "path_xy_ref": [
+      [
+       1077.9724853515625,
+       877.0574829101562
+      ],
+      [
+       1060.9724853515625,
+       878.9324829101562
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "65": {
+     "state": "full",
+     "source_frame": 19500,
+     "length_px": 21.557,
+     "path_xy_ref": [
+      [
+       1076.6875244140624,
+       876.7125244140625
+      ],
+      [
+       1055.4375244140624,
+       880.3375244140625
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    }
+   }
+  },
+  "g034": {
+   "onset": {
+    "verdict": "emerged_within",
+    "last_absent_frame": 7000,
+    "first_visible_frame": 12000,
+    "last_absent_bin": 23,
+    "first_visible_bin": 40,
+    "review_origin": "human",
+    "view": "single frames"
+   },
+   "traces": {
+    "8": {
+     "state": "no_tube",
+     "source_frame": 2500,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "23": {
+     "state": "no_tube",
+     "source_frame": 7000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "40": {
+     "state": "full",
+     "source_frame": 12000,
+     "length_px": 7.708,
+     "path_xy_ref": [
+      [
+       201.42249755859376,
+       738.9675292968749
+      ],
+      [
+       193.79749755859376,
+       737.8425292968749
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "56": {
+     "state": "full",
+     "source_frame": 17000,
+     "length_px": 13.537,
+     "path_xy_ref": [
+      [
+       200.81749877929687,
+       739.0774780273438
+      ],
+      [
+       187.31749877929687,
+       738.0774780273438
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "73": {
+     "state": "full",
+     "source_frame": 22000,
+     "length_px": 16.084,
+     "path_xy_ref": [
+      [
+       204.1125030517578,
+       742.9275268554687
+      ],
+      [
+       196.4875030517578,
+       745.1775268554687
+      ],
+      [
+       188.3625030517578,
+       745.5525268554687
+      ]
+     ],
+     "n_clicks": 3,
+     "review_origin": "human"
+    },
+    "91": {
+     "state": "full",
+     "source_frame": 27500,
+     "length_px": 15.961,
+     "path_xy_ref": [
+      [
+       207.22750244140624,
+       748.3875244140625
+      ],
+      [
+       200.47750244140624,
+       753.0125244140625
+      ],
+      [
+       194.97750244140624,
+       758.5125244140625
+      ]
+     ],
+     "n_clicks": 3,
+     "review_origin": "human"
+    }
+   }
+  },
+  "g013": {
+   "onset": {
+    "verdict": "emerged_within",
+    "last_absent_frame": 4000,
+    "first_visible_frame": 5000,
+    "last_absent_bin": 13,
+    "first_visible_bin": 16,
+    "review_origin": "human",
+    "view": "single frames"
+   },
+   "traces": {
+    "3": {
+     "state": "no_tube",
+     "source_frame": 1000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "13": {
+     "state": "no_tube",
+     "source_frame": 4000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "23": {
+     "state": "full",
+     "source_frame": 7000,
+     "length_px": 2.25,
+     "path_xy_ref": [
+      [
+       874.327490234375,
+       182.08250427246094
+      ],
+      [
+       872.077490234375,
+       182.08250427246094
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "33": {
+     "state": "full",
+     "source_frame": 10000,
+     "length_px": 12.748,
+     "path_xy_ref": [
+      [
+       875.5324951171875,
+       182.72249450683594
+      ],
+      [
+       866.0324951171875,
+       174.22249450683594
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "43": {
+     "state": "full",
+     "source_frame": 13000,
+     "length_px": 18.292,
+     "path_xy_ref": [
+      [
+       875.7625244140626,
+       182.76250305175785
+      ],
+      [
+       868.1375244140626,
+       175.88750305175785
+      ],
+      [
+       863.2625244140626,
+       169.51250305175785
+      ]
+     ],
+     "n_clicks": 3,
+     "review_origin": "human"
+    },
+    "51": {
+     "state": "full",
+     "source_frame": 15500,
+     "length_px": 25.386,
+     "path_xy_ref": [
+      [
+       876.3975097656252,
+       182.41750488281252
+      ],
+      [
+       867.3975097656249,
+       174.5425048828125
+      ],
+      [
+       859.5225097656249,
+       163.6675048828125
+      ]
+     ],
+     "n_clicks": 3,
+     "review_origin": "human"
+    }
+   }
+  },
+  "g030": {
+   "onset": {
+    "verdict": "emerged_within",
+    "last_absent_frame": 12000,
+    "first_visible_frame": 15000,
+    "last_absent_bin": 40,
+    "first_visible_bin": 50,
+    "review_origin": "human",
+    "view": "single frames"
+   },
+   "traces": {
+    "10": {
+     "state": "no_tube",
+     "source_frame": 3000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "25": {
+     "state": "no_tube",
+     "source_frame": 7500,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "40": {
+     "state": "no_tube",
+     "source_frame": 12000,
+     "length_px": 0.0,
+     "path_xy_ref": [],
+     "review_origin": "human"
+    },
+    "55": {
+     "state": "full",
+     "source_frame": 16500,
+     "length_px": 12.647,
+     "path_xy_ref": [
+      [
+       633.957470703125,
+       644.5424926757812
+      ],
+      [
+       634.707470703125,
+       657.1674926757812
+      ]
+     ],
+     "n_clicks": 2,
+     "review_origin": "human"
+    },
+    "70": {
+     "state": "full",
+     "source_frame": 21000,
+     "length_px": 23.588,
+     "path_xy_ref": [
+      [
+       634.6025146484375,
+       646.44248046875
+      ],
+      [
+       634.6025146484375,
+       657.19248046875
+      ],
+      [
+       636.1025146484375,
+       669.94248046875
+      ]
+     ],
+     "n_clicks": 3,
+     "review_origin": "human"
+    },
+    "85": {
+     "state": "full",
+     "source_frame": 25500,
+     "length_px": 31.526,
+     "path_xy_ref": [
+      [
+       633.9925170898438,
+       645.4875244140625
+      ],
+      [
+       633.9925170898438,
+       657.4875244140625
+      ],
+      [
+       638.4925170898438,
+       676.4875244140625
+      ]
+     ],
+     "n_clicks": 3,
+     "review_origin": "human"
+    }
+   }
+  },
+  "g029": {
+   "onset": {
+    "verdict": "emerged_within",
+    "last_absent_frame": 8000,
+    "first_visible_frame": 8050,
+    "last_absent_bin": 26,
+    "first_visible_bin": 26,
+    "review_origin": "human",
+    "view": "single frames"
+   },
+   "traces": {}
+  }
+ },
+ "retest": {
+  "grains": [],
+  "labels": {}
+ }
+}

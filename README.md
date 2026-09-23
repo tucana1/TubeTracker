@@ -19,10 +19,20 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 .venv/bin/python -m sparsetrack prepare MOVIE --out runs/sparsetrack/ld
 # benchmark labelling tool (local web page; answers saved to the labels file after every click)
 .venv/bin/python -m sparsetrack bench runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json
+# SparseTrack v1: per-grain onset and exit-to-apex length (~13 s for the sparse movie)
+.venv/bin/python -m sparsetrack analyze runs/sparsetrack/ld --out runs/sparsetrack/ld_v1 [--grains benchmark/labels/ld_v1.json]
+# score any predictions against the benchmark
+.venv/bin/python -m sparsetrack eval --labels benchmark/labels/ld_v1.json --pred runs/sparsetrack/ld_v1/predictions.json
 ```
 
-Double-clicking `Label_Sparse_Benchmark.command` does both for the sparse movie. The
-tool asks for a grain census (confirm, exclude or add grains), each grain's onset
+`analyze` traces each tube once on the end-of-movie change map, lets the grain and tube
+rotate rigidly about the grain centre, reads growth backwards along that path with a
+non-decreasing dynamic-programming front, and calls onset from the excess change just
+outside the rim at the exit. It writes `predictions.json`, `grains.csv`, `growth.csv`
+and a diagnostic image per grain. Scores so far are in `benchmark/reports/`.
+
+Double-clicking `Label_Sparse_Benchmark.command` prepares the sparse movie (first time
+only) and opens the labelling tool. The tool asks for a grain census (confirm, exclude or add grains), each grain's onset
 bracket on a whole-movie filmstrip then single bins, and exit-to-apex traces at a
 few fixed times. Answers use the `GerminationEvent` vocabulary of
 `tubetracker/annotation_schema.py`. `benchmark/labels/` is the benchmark; keep it
