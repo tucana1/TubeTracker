@@ -271,3 +271,15 @@ def test_flat_field_removes_vignetting_and_keeps_median():
     out = flat_field(vignette)
     assert abs(np.median(out) - np.median(vignette)) < 0.01  # brightness level preserved
     assert np.std(out[50:150, 50:150]) < 0.1 * np.std(vignette[50:150, 50:150])
+
+
+def test_turnbull_interval_censored_masses():
+    from math import inf
+    from sparsetrack.report import turnbull
+    # two grains emerge in (0, 10], one in (10, 20], one is right-censored after 20
+    masses = turnbull([(0, 10), (0, 10), (10, 20), (20, inf)])
+    assert [(q, p) for q, p, _ in masses] == [(0, 10), (10, 20), (20, inf)]
+    assert np.allclose([m for _, _, m in masses], [0.5, 0.25, 0.25])
+    # overlapping brackets share mass on the innermost interval
+    masses = turnbull([(0, 10), (5, 15)])
+    assert [(q, p) for q, p, _ in masses] == [(5, 10)] and np.isclose(masses[0][2], 1.0)

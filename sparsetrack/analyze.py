@@ -533,7 +533,7 @@ def _diagnostic(res: dict, fpb: int) -> np.ndarray:
 
 
 def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path | None = None,
-            params: Params | None = None, only: list[str] | None = None, log=print) -> dict:
+            params: Params | None = None, only: list[str] | None = None, video: bool = False, log=print) -> dict:
     p = params or Params()
     bins, meta = stack.load(cache_dir)
     renderer = Renderer(bins, meta)
@@ -573,5 +573,14 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             tips = (r.get("tip") or {}).get("xy") or [[None, None]] * len(r["length"]["frames"])
             for f, L, (tx, ty) in zip(r["length"]["frames"], r["length"]["px"], tips):
                 w.writerow([r["id"], f, L, tx, ty])
+    from . import report
+    isolated = [r["id"] for r in results if next((g for g in grains if g["id"] == r["id"]), {}).get("isolated", True)]
+    pop = report.write_population(pred, out_dir, set(isolated))
+    report.write_growth_curves(pred, out_dir, isolated)
+    if pop and pop.get("t50_interval"):
+        log(f"population ({pop['n']} isolated grains): half germinated by frame {pop['t50_interval'][1]:.0f}")
+    if video:
+        report.write_video(renderer, meta, pred, out_dir / "field_overlay.mp4", ids=set(isolated))
+        log(f"video -> {out_dir / 'field_overlay.mp4'}")
     log(f"{len(results)} grains in {time.time() - started:.0f} s -> {out_dir}")
     return pred

@@ -28,8 +28,9 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 `analyze` traces each tube once on the end-of-movie change map, lets the grain and tube
 rotate rigidly about the grain centre, reads growth backwards along that path with a
 non-decreasing dynamic-programming front, and calls onset from the excess change just
-outside the rim at the exit. It writes `predictions.json`, `grains.csv`, `growth.csv`
-and a diagnostic image per grain. Scores so far are in `benchmark/reports/`.
+outside the rim at the exit. It writes `predictions.json`, `grains.csv`, `growth.csv`, a diagnostic image per grain,
+`growth_curves.png` (small multiples), `population.csv`/`population.png` (interval-censored
+cumulative germination, Turnbull estimate, with T50) and, with `--video`, `field_overlay.mp4`. Scores so far are in `benchmark/reports/`.
 
 Double-clicking `Label_Sparse_Benchmark.command` prepares the sparse movie (first time
 only) and opens the labelling tool; `Label_Movie2_Heldout.command` does the same for the

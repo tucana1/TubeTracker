@@ -59,7 +59,7 @@ def cmd_bench(args) -> None:
 def cmd_analyze(args) -> None:
     from .analyze import analyze
     only = [g.strip() for g in args.only.split(",")] if args.only else None
-    analyze(args.cache, args.out, grains_path=args.grains, only=only)
+    analyze(args.cache, args.out, grains_path=args.grains, only=only, video=args.video)
 
 
 def cmd_eval(args) -> None:
@@ -103,6 +103,7 @@ def main(argv=None) -> None:
     a.add_argument("--out", required=True)
     a.add_argument("--grains", help="grain list: a benchmark labels file (human census) or grains.json")
     a.add_argument("--only", help="comma-separated grain ids")
+    a.add_argument("--video", action="store_true", help="also render field_overlay.mp4 (model tubes on the field)")
     a.set_defaults(func=cmd_analyze)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")
     e.add_argument("--labels", required=True)
