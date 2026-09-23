@@ -46,6 +46,7 @@ class Params:
     ref_bins: int = 3            # leading bins averaged as the "before" image
     late_bins: int = 3           # trailing full bins averaged as the "after" image
     map_sigma: float = 1.0
+    path_sigma: float = 1.0      # blur of the change map used as the centreline cost
     map_k: float = 5.0           # tube-map threshold = max(map_floor, map_k * background sigma)
     map_floor: float = 5.0
     min_component_px: int = 12
@@ -78,9 +79,25 @@ class Params:
     mf_half: float = 3.0         # ...+/- mf_half px across it
     mf_search: float = 15.0      # exit angle search (degrees either way)
     mf_z: float = 3.0            # onset when the calibrated score exceeds this (sustained)
+    mf_follow_rotation: bool = False  # place the stub along the rotation track (rotating tubes 6->11/22, legacy 6->4/7)
     bg_subtract: bool = True     # subtract each bin's background change before reading the path
+    # front evidence: "matched" = signed change projected on the tube's own end-state cross-section
+    # (rejects blobs, focus and uniform brightness changes; synthetic lengths 68% -> 84% in tolerance);
+    # "abs" = |change| near the path (v1); "union" = per-point max of the two: as good on synthetic,
+    # and it still reads real tubes whose look changes as they mature (g014, g022, g026 read 0 matched)
+    evidence: str = "union"
+    mk_half: float = 3.5         # matched evidence: template half-width across the path (px)
+    mk_k: float = 4.0            # threshold = pre-onset base + mk_k * per-bin control sigma...
+    mk_floor: float = 3.0        # ...but at least this
+    mk_control_px: float = 9.0   # the noise control slides the template this far off the tube
+    candidates: bool = True      # choose the centreline among branch/contact hypotheses by growth
+    cand_tips: int = 4
+    cand_nms_px: float = 10.0
+    beyond_weight: float = 0.0   # score = explained - beyond_weight * evidence left beyond the front
+    through_px: float = 12.0     # foreign-tube test: material this close to the exit...
+    through_min_px: int = 10     # ...at least this many pixels of it, changed before the front left
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
-    min_tube_px: float = 5.0     # a front that never gets this long is not a tube (unless contact-censored)
+    min_tube_px: float = 8.0     # a front that never gets this long is not a tube (unless contact-censored)
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -89,18 +106,30 @@ def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
 
 
 def local_shifts(crops: np.ndarray, centre: float, radius: float, pad: float, ref_bins: int,
-                 max_dev: float = 1.5, window: int = 3) -> np.ndarray:
-    """Residual (dx, dy) per bin of the grain relative to its own early mean."""
+                 max_dev: float = 1.5, window: int = 3, follow: bool = True) -> np.ndarray:
+    """Residual (dx, dy) per bin of the grain relative to its own early mean.
+
+    With ``follow`` the correlation window moves with the grain (centred on the previous
+    bin's estimate), so a grain can drift further than the window half-width.
+    """
     from skimage.registration import phase_cross_correlation
 
     w = int(math.ceil(radius + pad))
     c = int(round(centre))
-    sl = (slice(c - w, c + w), slice(c - w, c + w))
-    ref = _highpass(crops[:ref_bins].mean(axis=0)[sl])
+    size = crops.shape[1]
+    ref = _highpass(crops[:ref_bins].mean(axis=0)[c - w:c + w, c - w:c + w])
     raw = np.zeros((len(crops), 2))
+    prev = np.zeros(2)
     for b in range(len(crops)):
-        shift, _, _ = phase_cross_correlation(ref, _highpass(crops[b][sl]), upsample_factor=20, normalization=None)
-        raw[b] = (-shift[1], -shift[0])
+        ox, oy = (int(round(prev[0])), int(round(prev[1]))) if follow else (0, 0)
+        ox, oy = int(np.clip(ox, w - c, size - w - c)), int(np.clip(oy, w - c, size - w - c))
+        win = crops[b][c + oy - w:c + oy + w, c + ox - w:c + ox + w]
+        shift, _, _ = phase_cross_correlation(ref, _highpass(win), upsample_factor=20, normalization=None)
+        raw[b] = (ox - shift[1], oy - shift[0])
+        if b >= ref_bins:  # the reference bins define the origin
+            lo = max(ref_bins, b - window)
+            recent = raw[lo:b + 1]
+            prev = np.median(recent, axis=0) if len(recent) >= 3 else raw[b]
     med = np.array([np.median(raw[max(0, b - window):b + window + 1], axis=0) for b in range(len(raw))])
     bad = np.hypot(*(raw - med).T) > max_dev
     return np.where(bad[:, None], med, raw)
@@ -266,6 +295,42 @@ def _kymograph(diffs: np.ndarray, pts: np.ndarray, normal: np.ndarray, centre: f
     return out.reshape(len(diffs), 3, n_ang, -1).max(axis=1)
 
 
+def cross_section_template(late_minus_early: np.ndarray, pts: np.ndarray, normal: np.ndarray, across: np.ndarray,
+                           smooth: int = 2) -> np.ndarray:
+    """The tube's own end-state cross-section at every path point: zero-mean, unit-norm rows.
+
+    Rows are averaged over +/- ``smooth`` neighbouring points to cut noise.
+    """
+    q = pts[:, None, :] + across[None, :, None] * normal[:, None, :]
+    prof = cv2.remap(late_minus_early.astype(np.float32), q[..., 0].astype(np.float32), q[..., 1].astype(np.float32),
+                     cv2.INTER_LINEAR, borderValue=0)
+    if smooth > 0 and len(prof) > 2 * smooth + 1:
+        k = np.ones(2 * smooth + 1) / (2 * smooth + 1)
+        prof = np.stack([np.convolve(np.pad(prof[:, j], smooth, mode="edge"), k, "valid")
+                         for j in range(prof.shape[1])], axis=1)
+    prof = prof - prof.mean(axis=1, keepdims=True)
+    return prof / np.maximum(np.linalg.norm(prof, axis=1, keepdims=True), 1e-3)
+
+
+def matched_kymograph(signed: np.ndarray, template: np.ndarray, pts: np.ndarray, normal: np.ndarray, centre: float,
+                      across: np.ndarray, angles_deg: np.ndarray, lateral_offset: float = 0.0) -> np.ndarray:
+    """Signed change projected on the cross-section template, per (bin, angle, point).
+
+    ``lateral_offset`` slides the whole placement sideways (off the tube: a noise control).
+    """
+    rad = np.deg2rad(angles_deg)
+    cos, sin = np.cos(rad)[:, None, None], np.sin(rad)[:, None, None]
+    q = ((pts - centre)[None, :, None, :] + (across[None, None, :, None] + lateral_offset) * normal[None, :, None, :])
+    x = (centre + cos * q[..., 0] - sin * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
+    y = (centre + sin * q[..., 0] + cos * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
+    n_ang, n_pts = len(angles_deg), len(pts)
+    out = np.empty((len(signed), n_ang, n_pts), np.float32)
+    for t, d in enumerate(signed):
+        smp = cv2.remap(d, x, y, cv2.INTER_LINEAR, borderValue=0).reshape(n_ang, n_pts, len(across))
+        out[t] = np.einsum("apu,pu->ap", smp, template)
+    return out
+
+
 def wedge_signal(diffs: np.ndarray, centre: float, gr: float, exit_angles: np.ndarray, p: "Params") -> np.ndarray:
     """Per-bin excess change at the exit angle over the rim-wide median, just outside the rim."""
     phis = np.deg2rad(np.arange(0.0, 360.0, 3.0))
@@ -322,7 +387,7 @@ def exit_track_signal(diffs: np.ndarray, centre: float, gr: float, end_angle: fl
 
 
 def matched_stub_signal(signed: np.ndarray, late_minus_early: np.ndarray, pts: np.ndarray, centre: float,
-                        p: "Params") -> tuple[np.ndarray, dict]:
+                        p: "Params", theta: np.ndarray | None = None) -> tuple[np.ndarray, dict]:
     """Calibrated matched-filter score of a short stub at the exit, per bin.
 
     The template is the grain's own end-state change over the first ``mf_len`` px of its
@@ -330,6 +395,7 @@ def matched_stub_signal(signed: np.ndarray, late_minus_early: np.ndarray, pts: n
     matched. Each bin's signed change is correlated with the template at the exit (best
     of +/- ``mf_search`` degrees) and at control angles round the rim (same search);
     the score is (exit - median control) / robust sigma of the controls over the movie.
+    ``theta`` (degrees per bin) turns the whole placement with the grain's rotation track.
     """
     step = 0.5
     s_idx = np.nonzero(np.arange(len(pts)) * p.step <= p.mf_len)[0]
@@ -357,12 +423,25 @@ def matched_stub_signal(signed: np.ndarray, late_minus_early: np.ndarray, pts: n
         y = centre + math.sin(a) * rel[:, 0] + math.cos(a) * rel[:, 1]
         return x.astype(np.float32), y.astype(np.float32)
 
-    exit_maps = [placed(o) for o in exit_offsets]
-    ctrl_maps = [[placed(c + o) for o in exit_offsets] for c in ctrl_offsets]
-    mx = np.concatenate([m[0] for m in exit_maps] + [m[0] for cm in ctrl_maps for m in cm])[None, :]
-    my = np.concatenate([m[1] for m in exit_maps] + [m[1] for cm in ctrl_maps for m in cm])[None, :]
+    def maps(base):
+        exit_maps = [placed(base + o) for o in exit_offsets]
+        ctrl_maps = [[placed(base + c + o) for o in exit_offsets] for c in ctrl_offsets]
+        return (np.concatenate([m[0] for m in exit_maps] + [m[0] for cm in ctrl_maps for m in cm])[None, :],
+                np.concatenate([m[1] for m in exit_maps] + [m[1] for cm in ctrl_maps for m in cm])[None, :])
+
     n_pts, n_off = len(tmpl), len(exit_offsets)
-    scores = np.stack([cv2.remap(d, mx, my, cv2.INTER_LINEAR, borderValue=0)[0] for d in signed])
+    if theta is None:
+        mx, my = maps(0.0)
+        scores = np.stack([cv2.remap(d, mx, my, cv2.INTER_LINEAR, borderValue=0)[0] for d in signed])
+    else:
+        cache = {}
+        rows = []
+        for d, th in zip(signed, theta):
+            key = round(float(th), 1)
+            if key not in cache:
+                cache[key] = maps(key)
+            rows.append(cv2.remap(d, *cache[key], cv2.INTER_LINEAR, borderValue=0)[0])
+        scores = np.stack(rows)
     scores = scores.reshape(len(signed), -1, n_pts) @ tmpl  # (bins, placements)
     exit_score = scores[:, :n_off].max(axis=1)
     ctrl = scores[:, n_off:].reshape(len(signed), len(ctrl_offsets), n_off).max(axis=2)
@@ -395,6 +474,152 @@ def sustained_onset(signal: np.ndarray, p: "Params", threshold: float | None = N
         if above[t] and above[t:t + p.wedge_hold].mean() >= 0.8 and tail.mean() >= 0.7:
             return t, thr
     return None, thr
+
+
+def _local_maxima_tips(comp: np.ndarray, dist: np.ndarray, min_dist: int, nms_px: float, k: int) -> list:
+    """Branch ends of a component: local maxima of the geodesic distance from the rim."""
+    d = np.where(comp, dist, -1).astype(np.float32)
+    mx = cv2.dilate(d, np.ones((3, 3), np.uint8))
+    ys, xs = np.nonzero(comp & (d >= mx) & (d >= min_dist))
+    order = np.argsort(-d[ys, xs])
+    tips = []
+    for i in order:
+        y, x = int(ys[i]), int(xs[i])
+        if all(math.hypot(y - ty, x - tx) >= nms_px for ty, tx in tips):
+            tips.append((y, x))
+        if len(tips) >= k:
+            break
+    return tips
+
+
+def candidate_paths(comp: np.ndarray, ring: np.ndarray, cost: np.ndarray, gr: float, centre: float,
+                    p: "Params") -> list[np.ndarray]:
+    """Centreline hypotheses: each branch end, reached from the nearest rim contact and, for a
+    tube that wraps round and touches its grain again, from the other contacts too."""
+    far, dist = _geodesic_far(comp, ring)
+    tips = _local_maxima_tips(comp, dist, 4, p.cand_nms_px, p.cand_tips) or [far]
+    n_c, c_lab = cv2.connectedComponents((ring & comp).astype(np.uint8), connectivity=8)
+    contacts = [c_lab == c for c in range(1, n_c) if (c_lab == c).sum() >= 2]
+    out, seen = [], []
+    for tip in tips:
+        base = _cheapest_path(cost, comp, ring, tip)
+        options = [base]
+        if len(contacts) > 1:
+            for c in contacts:
+                if c[int(base[0][0]), int(base[0][1])]:
+                    continue  # the default path already starts here
+                alt = _cheapest_path(cost, comp, c, tip)
+                if len(alt) >= 1.3 * len(base) and c[int(alt[0][0]), int(alt[0][1])]:
+                    options.append(alt)
+        for path in options:
+            key = (int(path[0][0]) // 4, int(path[0][1]) // 4, tip)
+            if key in seen or len(path) < 3:
+                continue
+            seen.append(key)
+            out.append(path)
+    return out
+
+
+def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
+    """Kymograph, rotation track and growth front along one centreline hypothesis.
+
+    Also scores the hypothesis: evidence explained by monotone growth from the exit, minus
+    positive evidence the front leaves unexplained beyond it, and a penalty when the exit
+    sits on material that was already there before the front left it (a foreign tube
+    passing the rim, not one emerging from it).
+    """
+    centre, gr, reg, early, late = ctx["centre"], ctx["gr"], ctx["reg"], ctx["early"], ctx["late"]
+    n_bins = ctx["n_bins"]
+    path = path_yx[:, ::-1]  # (x, y) in crop coordinates
+    if len(path) > 7:
+        k = np.ones(5) / 5
+        path = np.stack([np.convolve(np.pad(path[:, i], 2, mode="edge"), k, "valid") for i in range(2)], axis=1)
+    v = path[0] - centre
+    v = v / (np.linalg.norm(v) + 1e-9)
+    path = np.vstack([centre + v * gr, path])
+    pts, ss = _resample(path, p.step)
+    if len(pts) < 4:
+        return None
+    flags, extra = [], {}
+    tang = np.gradient(pts, axis=0)
+    tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-9
+    normal = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
+    diffs, rg = ctx["diffs"], ctx["rg"]
+    angles = (np.arange(-p.max_angle, p.max_angle + 1e-9, p.angle_step) if p.rotate else np.zeros(1))
+    if p.evidence in ("matched", "union"):
+        signed_all = ctx["signed"]
+        across = np.arange(-p.mk_half, p.mk_half + 1e-9, 0.5)
+        template = cross_section_template(late - early, pts, normal, across)
+        kymo_all = matched_kymograph(signed_all, template, pts, normal, centre, across, angles)
+        zero = int(np.argmin(np.abs(angles)))
+        ctrl = np.concatenate([matched_kymograph(signed_all, template, pts, normal, centre, across,
+                                                 angles[zero:zero + 1], lateral_offset=off)[:, 0]
+                               for off in (-p.mk_control_px, p.mk_control_px)], axis=1)  # (bins, 2 * points)
+        ctrl_sigma = np.maximum(1.4826 * np.median(np.abs(ctrl - np.median(ctrl, axis=1, keepdims=True)), axis=1), 0.3)
+        base = kymo_all[:p.ref_bins].mean(axis=0)
+        tau_all = np.maximum(p.mk_floor, base[None] + p.mk_k * ctrl_sigma[:, None, None])  # (bins, angles, points)
+        evid_all = np.clip((kymo_all - tau_all) / tau_all, -1.0, 1.0)
+        extra["matched_control_sigma_median"] = round(float(np.median(ctrl_sigma)), 3)
+        matched_evid = evid_all
+    if p.evidence != "matched":
+        kymo_all = _kymograph(diffs, pts, normal, centre, p.lateral, angles)  # (bins, angles, points)
+        if p.bg_subtract:
+            # per-bin background change (focus / illumination drift) away from tube and grains
+            far = cv2.dilate(ctx["tube_mask"].astype(np.uint8), np.ones((13, 13), np.uint8)).astype(bool)
+            bg_mask = (rg > gr + 8) & ~ctx["blocked"] & ~far
+            bg_level = np.array([float(np.median(d[bg_mask])) if bg_mask.any() else 0.0 for d in diffs])
+            kymo_all = np.clip(kymo_all - bg_level[:, None, None], 0.0, None)
+            extra["background_change_max"] = round(float(bg_level.max()), 2)
+        base = kymo_all[:p.ref_bins].mean(axis=0)
+        noise = np.maximum(kymo_all[:p.ref_bins].std(axis=0), 0.5)
+        tau_all = np.maximum(p.evid_floor, base + p.evid_k * noise)[None]
+        evid_all = np.clip((kymo_all - tau_all) / tau_all, -1.0, 1.0)
+    if p.evidence == "union":  # either reading may carry the tube: shape-agnostic |change| or the template
+        evid_all = np.maximum(evid_all, matched_evid)
+    evid_all[:, :, ss < p.skip_px] = 0.0
+    # Rotation is judged only on points that can reveal it: >= rot_min_s along the path and
+    # clear of the rim (a rim-hugging segment slides along the rim under any rotation).
+    radius_pts = np.hypot(*(pts - centre).T)
+    informative = (ss >= p.rot_min_s) & (radius_pts >= gr + p.rot_rim_clear)
+    if p.rotate and informative.sum() >= 4:
+        rot_score = np.clip(evid_all[:, :, informative], 0.0, None).sum(axis=2)
+        theta = rotation_track(rot_score, angles, p.angle_penalty, p.max_turn, p.late_bins + 1)
+    else:
+        theta = np.zeros(n_bins)
+    ai = np.array([int(np.argmin(np.abs(angles - a))) for a in theta])
+    kymo = kymo_all[np.arange(n_bins), ai]
+    tau = tau_all[-1, ai[-1]] if tau_all.ndim == 3 else tau_all[ai[-1]]
+    evid = evid_all[np.arange(n_bins), ai]
+    front = dp_front(evid, max(1, int(round(p.vmax_px / p.step))))
+    behind = np.arange(len(pts))[None, :] < front[:, None]
+    explained = float(np.sum(np.where(behind, evid, 0.0)))
+    beyond = float(np.sum(np.where(~behind, np.clip(evid, 0.0, None), 0.0)))
+    # an exit on a structure that predates the front's departure is a foreign tube passing by
+    through = False
+    moved = np.nonzero(front >= int(round(3.0 / p.step)))[0]
+    if len(moved):
+        # a drifting grain's own edge leaves change round the rim: keep clear of it
+        margin = 3.0 + float(np.hypot(*ctx["ls"].T).max())
+        yy, xx = np.nonzero(ctx["comp"] & (np.hypot(*(np.mgrid[0:rg.shape[0], 0:rg.shape[1]][::-1] -
+                                                     pts[0][:, None, None])) <= p.through_px + margin)
+                            & (rg > gr + margin))
+        if len(yy):
+            dpath = np.min(np.hypot(xx[:, None] - pts[None, :, 0], yy[:, None] - pts[None, :, 1]), axis=1)
+            yy, xx = yy[dpath > 4.0], xx[dpath > 4.0]
+        if len(yy) >= p.through_min_px:
+            frac = (diffs[:, yy, xx] > ctx["thr"]).mean(axis=1)
+            t0 = int(moved[0])
+            early_bins = frac[max(0, t0 - 8):max(0, t0 - 2)]
+            through = bool(len(early_bins) and np.median(early_bins) >= 0.5)
+    score = explained - p.beyond_weight * beyond
+    if through:
+        score = score * 0.25 if score > 0 else score - 10.0
+    extra["rotation_deg"] = [round(float(t), 1) for t in theta]
+    if p.rotate and np.max(np.abs(theta)) >= 10:
+        flags.append(f"rotates:{np.max(np.abs(theta)):.0f}deg")
+    return {"pts": pts, "ss": ss, "theta": theta, "front": front, "kymo": kymo, "tau": tau, "evid": evid,
+            "explained": explained, "beyond": beyond, "through": through, "score": score, "flags": flags,
+            "result": extra}
 
 
 def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: Params) -> dict:
@@ -461,57 +686,36 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         keep = [l for l in range(1, n_own) if np.any(ring & (own_lab == l))]
         comp = np.isin(own_lab, keep) if keep else own
         result["flags"].append("shared_change_split")
-    far, _ = _geodesic_far(comp, ring)
-    cost = 1.0 / (change + 1.0)
-    path_yx = _cheapest_path(cost, comp, ring, far)
-    path = path_yx[:, ::-1]  # (x, y) in crop coordinates
-    if len(path) > 7:
-        k = np.ones(5) / 5
-        path = np.stack([np.convolve(np.pad(path[:, i], 2, mode="edge"), k, "valid") for i in range(2)], axis=1)
-    v = path[0] - centre
-    v = v / (np.linalg.norm(v) + 1e-9)
-    exit_pt = centre + v * gr
-    path = np.vstack([exit_pt, path])
-    pts, ss = _resample(path, p.step)
-    if len(pts) < 4:  # a one- or two-pixel path is not a tube
+    cost = 1.0 / ((change if p.path_sigma == p.map_sigma else
+                   cv2.GaussianBlur(np.abs(late - early), (0, 0), p.path_sigma)) + 1.0)
+    diffs = np.abs(reg - early[None])
+    ctx = {"reg": reg, "early": early, "late": late, "ls": ls, "late_idx": late_idx,
+           "centre": centre, "gr": gr, "rg": rg, "blocked": blocked, "tube_mask": tube_mask, "diffs": diffs,
+           "signed": (reg - early[None]).astype(np.float32), "n_bins": n_bins, "thr": thr, "comp": comp}
+    if p.candidates:
+        cands = []
+        for path_yx in candidate_paths(comp, ring, cost, gr, centre, p):
+            read = read_path(ctx, path_yx, p)
+            if read is not None:
+                cands.append(read)
+        read = max(cands, key=lambda c: c["score"]) if cands else None
+        result["path_candidates"] = [{"length_px": round(float(c["ss"][-1]), 1), "score": round(c["score"], 1),
+                                      "explained": round(c["explained"], 1), "beyond": round(c["beyond"], 1),
+                                      "through": c["through"]} for c in cands]
+        if len(cands) > 1 and read is not cands[0]:
+            result["flags"].append("path_by_growth")
+    else:
+        far, _ = _geodesic_far(comp, ring)
+        read = read_path(ctx, _cheapest_path(cost, comp, ring, far), p)
+    if read is None:  # a one- or two-pixel path is not a tube
         result["flags"].append("degenerate_path")
         result.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,
                       length={"frames": frames, "px": [0.0] * n_bins}, path=[])
         result["_diag"] = (late, change, tube_mask, None, None, None, centre)
         return result
-    # kymograph along the fixed path, tolerant of +/- lateral px of sway
-    tang = np.gradient(pts, axis=0)
-    tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-9
-    normal = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
-    diffs = np.abs(reg - early[None])
-    angles = (np.arange(-p.max_angle, p.max_angle + 1e-9, p.angle_step) if p.rotate else np.zeros(1))
-    kymo_all = _kymograph(diffs, pts, normal, centre, p.lateral, angles)  # (bins, angles, points)
-    if p.bg_subtract:
-        # per-bin background change (focus / illumination drift) away from tube and grains
-        far = cv2.dilate(tube_mask.astype(np.uint8), np.ones((13, 13), np.uint8)).astype(bool)
-        bg_mask = (rg > gr + 8) & ~blocked & ~far
-        bg_level = np.array([float(np.median(d[bg_mask])) if bg_mask.any() else 0.0 for d in diffs])
-        kymo_all = np.clip(kymo_all - bg_level[:, None, None], 0.0, None)
-        result["background_change_max"] = round(float(bg_level.max()), 2)
-    base = kymo_all[:p.ref_bins].mean(axis=0)
-    noise = np.maximum(kymo_all[:p.ref_bins].std(axis=0), 0.5)
-    tau_all = np.maximum(p.evid_floor, base + p.evid_k * noise)
-    evid_all = np.clip((kymo_all - tau_all[None]) / tau_all[None], -1.0, 1.0)
-    evid_all[:, :, ss < p.skip_px] = 0.0
-    # Rotation is judged only on points that can reveal it: >= rot_min_s along the path and
-    # clear of the rim (a rim-hugging segment slides along the rim under any rotation).
-    radius_pts = np.hypot(*(pts - centre).T)
-    informative = (ss >= p.rot_min_s) & (radius_pts >= gr + p.rot_rim_clear)
-    if p.rotate and informative.sum() >= 4:
-        rot_score = np.clip(evid_all[:, :, informative], 0.0, None).sum(axis=2)
-        theta = rotation_track(rot_score, angles, p.angle_penalty, p.max_turn, p.late_bins + 1)
-    else:
-        theta = np.zeros(n_bins)
-    ai = np.array([int(np.argmin(np.abs(angles - a))) for a in theta])
-    kymo = kymo_all[np.arange(n_bins), ai]
-    tau = tau_all[ai[-1]]
-    evid = evid_all[np.arange(n_bins), ai]
-    front = dp_front(evid, max(1, int(round(p.vmax_px / p.step))))
+    pts, ss, theta, front, kymo, tau = (read[k] for k in ("pts", "ss", "theta", "front", "kymo", "tau"))
+    result["flags"] += read["flags"]
+    result.update({k: v for k, v in read["result"].items()})
     # contact censoring: stop measuring where the path first reaches another grain's rim
     contact_idx = None
     for o in others:
@@ -534,15 +738,13 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
                          centre + math.sin(a) * r[0] + math.cos(a) * r[1]])
 
     tips = np.array([rotated(pts[max(f - 1, 0)], th) for f, th in zip(front, theta)])
-    result["rotation_deg"] = [round(float(t), 1) for t in theta]
-    if p.rotate and np.max(np.abs(theta)) >= 10:
-        result["flags"].append(f"rotates:{np.max(np.abs(theta)):.0f}deg")
     above = np.nonzero(length >= p.onset_px)[0]
     front_onset = int(above[0]) if len(above) else None
     end_angle = math.degrees(math.atan2(pts[0][1] - centre, pts[0][0] - centre))
     if p.onset_source == "matched":
         signed = (reg - early[None]).astype(np.float32)
-        z, mf_info = matched_stub_signal(signed, (late - early), pts, centre, p)
+        z, mf_info = matched_stub_signal(signed, (late - early), pts, centre, p,
+                                         theta=theta if p.mf_follow_rotation and p.rotate else None)
         result["matched_filter"] = mf_info
         wedge, exit_track = z, np.full(n_bins, end_angle)
     elif p.onset_source == "wedge_fixed":

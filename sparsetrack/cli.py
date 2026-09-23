@@ -52,9 +52,11 @@ def cmd_census(args) -> None:
 
 
 def cmd_synth(args) -> None:
-    from .synth import SynthConfig, make_movie
-    cfg = SynthConfig(seed=args.seed, encode=not args.lossless)
-    make_movie(args.cache, args.out, cfg, name=args.name or f"synth_s{args.seed}{'_lossless' if args.lossless else ''}")
+    from .synth import make_movie, preset
+    cfg = preset(args.preset, seed=args.seed, encode=not args.lossless)
+    tag = "" if args.preset == "v1" else args.preset
+    make_movie(args.cache, args.out, cfg,
+               name=args.name or f"synth{tag}_s{args.seed}{'_lossless' if args.lossless else ''}")
 
 
 def cmd_bench(args) -> None:
@@ -117,6 +119,9 @@ def main(argv=None) -> None:
     y.add_argument("--seed", type=int, default=0)
     y.add_argument("--name")
     y.add_argument("--lossless", action="store_true", help="write FFV1 (no codec artifacts) as a control")
+    y.add_argument("--preset", default="v1", choices=("v1", "v2"),
+                   help="v1: clean isolated tubes; v2: adds foreign tubes, crossings, curls, pauses/stops, "
+                        "drifting grains and docking particles")
     y.set_defaults(func=cmd_synth)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")
     e.add_argument("--labels", required=True)
