@@ -3,8 +3,9 @@
     .venv/bin/python scripts/synth_bench.py                      # default variants, suite v1
     .venv/bin/python scripts/synth_bench.py --suite v2 --breakdown --set onset_source=matched mf_z=3
 
-Synthetic movies come from `sparsetrack synth [--preset v2]` + `prepare --frames-per-bin 25
---ref-start 0` (suite v1: runs/sparsetrack/synth/s{seed}_cache + synth_s{seed}_truth.json;
+Synthetic movies come from `sparsetrack synth [--preset v2]`; their caches (`prepare
+--frames-per-bin 25 --ref-start 0`, 440 MB each) are rebuilt from the movies when missing and
+deleted after scoring unless --keep-caches (suite v1: runs/sparsetrack/synth/s{seed}_cache + synth_s{seed}_truth.json;
 suite v2/v3: v{2,3}s{seed}_cache + synthv{2,3}_s{seed}_truth.json). The onset tolerance
 there is 50 synthetic frames (= 600 source frames). Seeds 3-4 of v2, v3 and v4 are the held-out
 synthetic test: report them only for a frozen variant (--seeds 3 4).
@@ -30,6 +31,26 @@ SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "sy
           "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json")}
 
 
+def ensure_cache(cache: Path, truth_path: Path) -> bool | None:
+    """Build a missing cache from its movie (~20 s; 440 MB). True if built now, None if no movie.
+
+    Caches are not kept by default: each is rebuilt when needed and deleted after scoring.
+    """
+    if (cache / "grains.json").exists():
+        return False
+    movie = truth_path.with_name(truth_path.name.replace("_truth.json", ".mp4"))
+    if not movie.exists():
+        return None
+    import contextlib
+    import io
+    from sparsetrack import stack
+    from sparsetrack.cli import write_census
+    with contextlib.redirect_stdout(io.StringIO()):
+        stack.prepare(movie, cache, frames_per_bin=25, ref_bins=3, ref_start=0, log=lambda *a: None)
+        write_census(cache, 3, False)
+    return True
+
+
 def parse_value(v: str):
     if "," in v or v.startswith("("):  # a tuple: a,b or (a,b)
         return tuple(parse_value(x) for x in v.strip("()").split(",") if x)
@@ -45,15 +66,20 @@ def _within(err: float, truth_len: float) -> bool:
     return abs(err) <= max(2.0, 0.1 * truth_len)
 
 
-def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True) -> dict:
+def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True, keep_caches: bool = False) -> dict:
     agg = {"on_hit": 0, "on_n": 0, "on_truth": 0, "early": 0, "late": 0, "len_hit": 0, "len_n": 0,
            "abs_ok": 0, "abs_n": 0, "ctrl_fp": 0, "ctrl_n": 0, "missed": 0, "errs": [], "rows": []}
     cache_fmt, truth_fmt = SUITES[suite]
     for s in seeds:
         cache, truth_path = SYN / cache_fmt.format(s), SYN / truth_fmt.format(s)
-        if not (cache / "grains.json").exists():
+        built = ensure_cache(cache, truth_path)
+        if built is None:
+            print(f"  (no movie for {suite} seed {s}: skipped)", flush=True)
             continue
         pred = analyze(cache, f"/tmp/tt_bench/{suite}_s{s}", params=params, log=lambda *a: None)
+        if built and not keep_caches:
+            import shutil
+            shutil.rmtree(cache)
         truth = load(truth_path)
         rep = score(truth, pred, onset_tol=50)
         o, L, a = rep["onset"], rep["length_full"], rep["absences"]
@@ -135,6 +161,7 @@ if __name__ == "__main__":
     ap.add_argument("--no-legacy", action="store_true")
     ap.add_argument("--breakdown", action="store_true", help="hit rates by synthetic truth attribute")
     ap.add_argument("--dump", help="write per-grain rows (JSON) here")
+    ap.add_argument("--keep-caches", action="store_true", help="keep caches rebuilt from the movies (440 MB each)")
     ap.add_argument("--set", nargs="*", default=None, help="key=value overrides for one variant")
     args = ap.parse_args()
     variants = ([("custom " + " ".join(args.set), Params(**{k: parse_value(v) for k, v in
@@ -142,7 +169,7 @@ if __name__ == "__main__":
                 if args.set is not None else [("default", Params()),
                                               ("wedge_fixed (v1 onset)", Params(onset_source="wedge_fixed"))])
     for name, prm in variants:
-        res = run(prm, args.seeds, args.suite, legacy=not args.no_legacy)
+        res = run(prm, args.seeds, args.suite, legacy=not args.no_legacy, keep_caches=args.keep_caches)
         print(line(name, res), flush=True)
         if args.breakdown:
             print(breakdown(res), flush=True)
