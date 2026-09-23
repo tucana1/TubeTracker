@@ -43,10 +43,28 @@ class Renderer:
         # patch pixel j covers reference x in [cx - half + j, cx - half + j + 1).
         return cv2.getRectSubPix(sub, (2 * half, 2 * half), (sx - cx0 - 0.5, sy - cy0 - 0.5))
 
+    def outside(self, b: int, cx: float, cy: float, half: int, offsets: np.ndarray | None = None) -> np.ndarray:
+        """Pixels of a ``crop`` whose source position lies outside the movie frame (there the
+        crop only repeats the frame's edge row or column)."""
+        if offsets is not None:
+            cx, cy = cx + float(offsets[b][0]), cy + float(offsets[b][1])
+        dx, dy = self.shifts[b]
+        j = np.arange(2 * half, dtype=np.float64)
+        xs, ys = cx + dx - half + j + 0.5, cy + dy - half + j + 0.5
+        return ((ys < 0) | (ys >= self.height))[:, None] | ((xs < 0) | (xs >= self.width))[None, :]
+
     def mean_crop(self, b0: int, b1: int, cx: float, cy: float, half: int,
-                  offsets: np.ndarray | None = None) -> np.ndarray:
+                  offsets: np.ndarray | None = None, mark_outside: bool = False) -> np.ndarray:
+        """Mean of ``crop`` over bins b0..b1; with ``mark_outside`` pixels outside the frame in
+        any of those bins are NaN (shown hatched by ``to_display``)."""
         b0, b1 = max(0, b0), min(self.n_bins - 1, b1)
-        return np.mean([self.crop(b, cx, cy, half, offsets) for b in range(b0, b1 + 1)], axis=0)
+        img = np.mean([self.crop(b, cx, cy, half, offsets) for b in range(b0, b1 + 1)], axis=0)
+        if mark_outside:
+            out = np.zeros(img.shape, bool)
+            for b in range(b0, b1 + 1):
+                out |= self.outside(b, cx, cy, half, offsets)
+            img = np.where(out, np.nan, img)
+        return img
 
     def contrast(self, key, cx: float, cy: float, half: int, mode: str = "n",
                  offsets: np.ndarray | None = None) -> tuple[float, float]:
@@ -66,16 +84,23 @@ class Renderer:
 
     @staticmethod
     def to_display(image: np.ndarray, window: tuple[float, float], zoom: float) -> np.ndarray:
+        """8-bit display image; NaN pixels (outside the movie frame) become grey diagonal hatching."""
         lo, hi = window
+        nan = ~np.isfinite(image)
         u8 = np.clip((np.nan_to_num(image, nan=hi) - lo) / max(hi - lo, 1e-6) * 255, 0, 255).astype(np.uint8)
         if zoom != 1:
             size = (int(round(u8.shape[1] * zoom)), int(round(u8.shape[0] * zoom)))
             u8 = cv2.resize(u8, size, interpolation=cv2.INTER_CUBIC if zoom > 1 else cv2.INTER_AREA)
+            nan = cv2.resize(nan.astype(np.uint8), size, interpolation=cv2.INTER_NEAREST).astype(bool)
+        if nan.any():
+            yy, xx = np.mgrid[0:u8.shape[0], 0:u8.shape[1]]
+            hatch = np.where(((xx + yy) // 5) % 2 == 0, 120, 165).astype(np.uint8)
+            u8 = np.where(nan, hatch, u8)
         return u8
 
     def strip(self, key, cx: float, cy: float, ranges: list[tuple[int, int]], labels: list[str],
               half: int, zoom: float, cols: int, mode: str = "n", header: int = 16, gap: int = 2,
-              offsets: np.ndarray | None = None) -> np.ndarray:
+              offsets: np.ndarray | None = None, mark_outside: bool = False) -> np.ndarray:
         """Grid of tiles, one per bin range, each with a text header above the image."""
         window = self.contrast(key, cx, cy, half, mode, offsets)
         side = int(round(2 * half * zoom))
@@ -84,7 +109,7 @@ class Renderer:
         for i, ((b0, b1), label) in enumerate(zip(ranges, labels)):
             r, c = divmod(i, cols)
             top, left = r * (side + header + gap), c * (side + gap)
-            tile = self.to_display(self.mean_crop(b0, b1, cx, cy, half, offsets), window, zoom)
+            tile = self.to_display(self.mean_crop(b0, b1, cx, cy, half, offsets, mark_outside), window, zoom)
             sheet[top + header:top + header + side, left:left + side] = tile[:side, :side]
             cv2.putText(sheet, label, (left + 3, top + header - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, 0, 1,
                         cv2.LINE_AA)

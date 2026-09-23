@@ -299,7 +299,7 @@ class Bench:
         ranges = [(b, min(b + k - 1, self.n_bins - 1)) for b in range(0, self.n_bins, k)]
         labels = [f"{b0 * self.fpb}" for b0, _ in ranges]
         return png(self.renderer.strip(gid, g["x"], g["y"], ranges, labels, COARSE["half"], COARSE["zoom"],
-                                       COARSE["cols"], mode, COARSE["header"], COARSE["gap"], self.follow(gid)))
+                                       COARSE["cols"], mode, COARSE["header"], COARSE["gap"], self.follow(gid), True))
 
     def fine_png(self, gid: str, start: int, mode: str) -> bytes:
         g = self.grain(gid)
@@ -307,13 +307,13 @@ class Bench:
         ranges = [(b, b) for b in range(start, min(self.n_bins, start + FINE["n_tiles"]))]
         labels = [f"bin {b}  f{self.bin_centre(b)}" for b, _ in ranges]
         return png(self.renderer.strip(gid, g["x"], g["y"], ranges, labels, FINE["half"], FINE["zoom"],
-                                       FINE["cols"], mode, FINE["header"], FINE["gap"], self.follow(gid)))
+                                       FINE["cols"], mode, FINE["header"], FINE["gap"], self.follow(gid), True))
 
     def frame_png(self, gid: str, b: int, view: str, mode: str, smooth: int) -> bytes:
         g = self.grain(gid)
         v = TRACE_VIEWS[view]
         b0, b1 = int(b) - smooth, int(b) + smooth
-        img = self.renderer.mean_crop(b0, b1, g["x"], g["y"], v["half"], self.follow(gid))
+        img = self.renderer.mean_crop(b0, b1, g["x"], g["y"], v["half"], self.follow(gid), mark_outside=True)
         window = self.renderer.contrast(gid, g["x"], g["y"], v["half"], mode, self.follow(gid))
         return png(self.renderer.to_display(img, window, v["zoom"]))
 
@@ -321,7 +321,7 @@ class Bench:
         """Census close-up: the early (reference) or late field around a reference point."""
         rs = self.renderer.ref_start
         b0, b1 = (rs, rs + 2) if which == "early" else (self.n_bins - 4, self.n_bins - 2)
-        img = self.renderer.mean_crop(b0, b1, x, y, ZOOM["half"])
+        img = self.renderer.mean_crop(b0, b1, x, y, ZOOM["half"], mark_outside=True)
         finite = img[np.isfinite(img)]
         lo, hi = (np.percentile(finite, [0.5, 99.5]) if finite.size else (0.0, 255.0))
         return png(self.renderer.to_display(img, (float(lo), float(hi)), ZOOM["zoom"]))
