@@ -29,6 +29,27 @@ def _ring_scores(image: np.ndarray, x: float, y: float, r: float) -> tuple[float
     return base - float(ring.mean()), base - float(disc.mean())
 
 
+def rim_fit(image: np.ndarray, cx: float, cy: float, r: float, search: float = 8.0,
+            step: float = 0.5) -> tuple[float, float, float]:
+    """Best grain-centre offset near (cx, cy) for a dark rim of radius r: (dx, dy, score).
+
+    Score = mean just inside and outside the rim (+/- 3.5 px) minus the rim mean; about 0
+    where there is no grain.
+    """
+    phis = np.linspace(0, 2 * np.pi, 48, endpoint=False)
+    offs = np.arange(-search, search + 1e-9, step)
+    ox, oy = (a.ravel() for a in np.meshgrid(offs, offs))
+
+    def ring(rad):
+        mx = (cx + ox[:, None] + rad * np.cos(phis)[None]).astype(np.float32)
+        my = (cy + oy[:, None] + rad * np.sin(phis)[None]).astype(np.float32)
+        return cv2.remap(image.astype(np.float32), mx, my, cv2.INTER_LINEAR).mean(axis=1)
+
+    score = 0.5 * (ring(r - 3.5) + ring(r + 3.5)) - ring(r)
+    i = int(np.argmax(score))
+    return float(ox[i]), float(oy[i]), float(score[i])
+
+
 def flat_field(image: np.ndarray, sigma: float = 40.0) -> np.ndarray:
     """Divide out slow illumination changes (vignetting), keeping the median brightness."""
     image = image.astype(np.float64)

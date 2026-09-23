@@ -35,6 +35,7 @@ import cv2
 import numpy as np
 
 from . import __version__, stack
+from . import grains as census
 from .evaluate import PRED_SCHEMA
 from .render import Renderer
 
@@ -80,6 +81,7 @@ class Params:
     mf_search: float = 15.0      # exit angle search (degrees either way)
     mf_z: float = 3.0            # onset when the calibrated score exceeds this (sustained)
     mf_z_low: float | None = 2.0   # ...then reaching back while it stays above this (hysteresis)
+    mf_back_bins: int = 6        # ...by at most this many bins (a slow drift is not a stub)
     mf_follow_rotation: bool | str = "both"  # True: stub placed along the rotation track; "both": max of the two
     bg_subtract: bool = True     # subtract each bin's background change before reading the path
     # front evidence: "matched" = signed change projected on the tube's own end-state cross-section
@@ -99,6 +101,9 @@ class Params:
     through_min_px: int = 10     # ...at least this many pixels of it, changed before the front left
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
     min_tube_px: float = 8.0     # a front that never gets this long is not a tube (unless contact-censored)
+    settle: bool = True          # grains still arriving in the census bins are read from when they settle
+    settle_bins: int = 24
+    grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -623,13 +628,73 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
             "result": extra}
 
 
-def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: Params) -> dict:
+def grain_settling(crops: np.ndarray, centre: float, gr: float, p: "Params") -> dict:
+    """Is there a settled grain here, and from which bin?
+
+    The census reads the field's first bins; a grain still arriving then (a blurred,
+    moving blob) is found late or off-centre, and a passing piece of debris is found
+    where no grain ever settles. The rim fit per early bin tells them apart.
+    """
+    n = min(len(crops), p.settle_bins)
+    q = np.array([census.rim_fit(c, centre, centre, gr)[2] for c in crops[:n]])
+    qmed = float(np.median(q))
+    if qmed < p.grain_min_rim:
+        return {"no_grain": True, "b0": 0, "rim_median": round(qmed, 2)}
+    out = {"no_grain": False, "b0": 0, "rim_median": round(qmed, 2)}
+    if float(np.min(q[:p.ref_bins])) >= 0.4 * qmed:
+        return out
+    for b in range(1, n - 2):
+        if np.all(q[b:b + 3] >= 0.85 * qmed):  # the rim has come into focus and stays
+            out["b0"] = b
+            break
+    return out
+
+
+def _pad_front(res: dict, frames: list, b0: int) -> dict:
+    """Re-express a result computed from bin b0 on the grain's full frame list."""
+    res["length"] = {"frames": frames, "px": [0.0] * b0 + list(res["length"]["px"])}
+    if res.get("tip"):
+        res["tip"] = {"frames": frames, "xy": [res["tip"]["xy"][0]] * b0 + list(res["tip"]["xy"])}
+    if res.get("rotation_deg"):
+        res["rotation_deg"] = [res["rotation_deg"][0]] * b0 + list(res["rotation_deg"])
+    if res.get("wedge"):
+        res["wedge"]["signal"] = [0.0] * b0 + list(res["wedge"]["signal"])
+    return res
+
+
+def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: Params,
+                  _settled: bool = False) -> dict:
     fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
     n_bins = int(meta["n_bins"]) - rs  # bins before the reference (settling) are not observed
     gx, gy, gr = grain["x"], grain["y"], grain["r"]
     half = p.half
     crops = np.stack([renderer.crop(b, gx, gy, half) for b in range(rs, rs + n_bins)])
     centre = half - 0.5  # crop pixel coordinate of the grain centre
+    if p.settle and not _settled:
+        st = grain_settling(crops, centre, gr, p)
+        frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
+        if st["no_grain"]:
+            return {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": ["no_grain"], "map_threshold": 1.0,
+                    "status": "unobservable", "onset_frame": None, "onset_interval": None,
+                    "length": {"frames": frames, "px": [0.0] * n_bins}, "path": [], "rim_median": st["rim_median"],
+                    "_diag": (crops[-2], np.zeros_like(crops[0]), np.zeros(crops[0].shape, bool), None, None, None,
+                              centre)}
+        b0 = st["b0"]
+        if b0 > 0:
+            # re-find the settled grain (the census saw it arriving) and read it from bin b0 on
+            ref = crops[b0:b0 + 3].mean(axis=0)
+            w = int(gr + 30)
+            c = int(round(centre))
+            found = census.detect(ref[c - w:c + w, c - w:c + w], r_min=max(5, int(gr - 4)), r_max=int(gr + 4),
+                                  ring_min=5.0, body_min=15.0)
+            if found:
+                best = min(found, key=lambda f: math.hypot(f["x"] - w, f["y"] - w))
+                if math.hypot(best["x"] - w, best["y"] - w) <= 14:
+                    gx, gy = gx + best["x"] - w + 0.5, gy + best["y"] - w + 0.5
+            res = analyze_grain(renderer, {**meta, "ref_start": rs + b0}, {**grain, "x": gx, "y": gy}, others, p,
+                                _settled=True)
+            res["flags"].append(f"settled_from_bin:{b0}")
+            return _pad_front(res, frames, b0)
     ls = local_shifts(crops, centre, gr, p.reg_pad, p.ref_bins)
     reg = np.stack([cv2.warpAffine(c, np.float32([[1, 0, -dx], [0, 1, -dy]]), (2 * half, 2 * half),
                                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
@@ -761,7 +826,8 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     wedge_onset, wedge_thr = sustained_onset(wedge, p, threshold=p.mf_z if p.onset_source == "matched" else None)
     if wedge_onset is not None and p.onset_source == "matched" and p.mf_z_low is not None:
         # hysteresis: a confirmed stub reaches back while its score stays above the lower threshold
-        while wedge_onset > 0 and wedge[wedge_onset - 1] > p.mf_z_low:
+        confirmed = wedge_onset
+        while wedge_onset > 0 and wedge[wedge_onset - 1] > p.mf_z_low and confirmed - wedge_onset < p.mf_back_bins:
             wedge_onset -= 1
     result["onset_bins"] = {"front": front_onset, "wedge": wedge_onset}
     result["wedge"] = {"signal": [round(float(v), 2) for v in wedge], "threshold": round(wedge_thr, 2)}
