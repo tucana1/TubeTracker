@@ -8,6 +8,26 @@ grains before crossings and clumps. The research record up to 22 Sep 2026 is in
 `prototypes/LEDGER.md`; the complete pre-reset tree (all prototype generations,
 round scripts and their tests) is preserved at the git tag `snapshot-2026-09-23`.
 
+## SparseTrack (active development)
+
+`sparsetrack/` is the new sparse-field pipeline. The movies are x264 exports with a
+keyframe every 12 frames at the encoder's quality floor, so it reads keyframes only
+and works on registered averages of 25 keyframes (300 source frames per "bin").
+
+```bash
+# build the cache: keyframe bins, registration, grain census (~30-40 s for the sparse movie)
+.venv/bin/python -m sparsetrack prepare MOVIE --out runs/sparsetrack/ld
+# benchmark labelling tool (local web page; answers saved to the labels file after every click)
+.venv/bin/python -m sparsetrack bench runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json
+```
+
+Double-clicking `Label_Sparse_Benchmark.command` does both for the sparse movie. The
+tool asks for a grain census (confirm, exclude or add grains), each grain's onset
+bracket on a whole-movie filmstrip then single bins, and exit-to-apex traces at a
+few fixed times. Answers use the `GerminationEvent` vocabulary of
+`tubetracker/annotation_schema.py`. `benchmark/labels/` is the benchmark; keep it
+under version control.
+
 ## Frozen v30 movie-analysis app
 
 The v30 native review app is kept unchanged while its replacement is built. It is
@@ -39,6 +59,8 @@ LapTrack linking, tip templates, CSV export). A command-line pilot run:
 
 | Path | Contents |
 |---|---|
+| `sparsetrack/` | Keyframe-bin cache, registration, grain census, benchmark labelling tool |
+| `benchmark/labels/` | Human benchmark labels (tracked) |
 | `tubetracker/` | Upstream engine (`gui.py`, `analysis.py`, `models.py`, `views.py`) and the frozen v30 app modules |
 | `prototypes/v30_video_apex/` | Model and solver modules used by the frozen app |
 | `prototypes/timesfm_tip_forecast/grain_detect.py` | Radial grain detector used by the frozen app |

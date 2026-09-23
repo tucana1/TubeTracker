@@ -37,6 +37,8 @@ tubetracker = "tubetracker.gui:main"
 [tool.setuptools]
 py-modules = ["TubeTracker", "tubetracker_resources"]
 packages = [
+  "sparsetrack",
+  "sparsetrack.bench",
   "tubetracker",
   "tubetracker_assets",
   "tubetracker_assets.tip_templates",
@@ -44,6 +46,7 @@ packages = [
 include-package-data = true
 
 [tool.setuptools.package-data]
+"sparsetrack.bench" = ["static/*"]
 tubetracker_assets = ["logo.png"]
 "tubetracker_assets.tip_templates" = ["*.json", "*.png"]
 
