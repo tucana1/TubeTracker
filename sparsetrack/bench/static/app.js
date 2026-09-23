@@ -119,45 +119,77 @@ function render() {
 }
 
 // ---------------------------------------------------------------- 1. grain census
+const RING = { included: "#4ade80", excluded: "#f87171", user: "#38bdf8", selected: "#facc15" };
 function renderCensus() {
   help(`Check that every pollen grain is circled. <b>Click a circle</b> to exclude it (clump member,
     edge, not a grain) or open it. <b>Click an uncircled grain</b> to add it. The early view is the
     registered start of the movie; the late view shows the end. Keys: <kbd>E</kbd> early/late.`);
   const c = $("#content");
+  const dot = (col, t) => `<span class="legend"><i style="border-color:${col}"></i>${t}</span>`;
   c.innerHTML = `<div><button class="act ${S.fieldWhich === "early" ? "on" : ""}" id="fe">Early (no tubes)</button>
     <button class="act ${S.fieldWhich === "late" ? "on" : ""}" id="fl">Late (end of movie)</button>
-    <span class="muted">${included().length} grains included · ${S.st.order.length - included().length} excluded</span></div>
+    <span class="muted">${included().length} grains included · ${S.st.order.length - included().length} excluded</span>
+    ${dot(RING.included, "included")}${dot(RING.excluded, "excluded ✕")}${dot(RING.user, "added by you")}${dot(RING.selected, "selected")}</div>
     <div class="wrap"><canvas id="field"></canvas></div>`;
   $("#fe").onclick = () => { S.fieldWhich = "early"; render(); };
   $("#fl").onclick = () => { S.fieldWhich = "late"; render(); };
+  S._field = S._field || {};
+  const cached = S._field[S.fieldWhich];
+  if (cached) return drawField();
   const img = new Image();
-  img.onload = () => {
-    const cv = $("#field"); cv.width = img.width; cv.height = img.height;
-    const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0);
-    const s = img.width / S.st.movie.width;
-    for (const gid of S.st.order) {
-      const g = S.st.grains[gid];
-      ctx.beginPath(); ctx.arc(g.x * s, g.y * s, g.r * s + 3, 0, 2 * Math.PI);
-      ctx.setLineDash(g.excluded ? [3, 3] : []);
-      ctx.strokeStyle = g.excluded ? "#9ca3af" : g.source === "user" ? "#2563eb" : "#16a34a";
-      ctx.lineWidth = gid === S.gid ? 3 : 1.5; ctx.stroke();
-      ctx.setLineDash([]); ctx.fillStyle = ctx.strokeStyle; ctx.font = "11px sans-serif";
-      ctx.fillText(gid, g.x * s + g.r * s + 4, g.y * s - g.r * s);
-    }
-    cv.onclick = (e) => {
-      const x = e.offsetX / s, y = e.offsetY / s;
-      let best = null, bd = 1e9;
-      for (const gid of S.st.order) {
-        const g = S.st.grains[gid]; const d = Math.hypot(g.x - x, g.y - y);
-        if (d < bd) { bd = d; best = gid; }
-      }
-      if (best && bd <= S.st.grains[best].r + 6 / s) return grainMenu(e.pageX, e.pageY, best);
-      if (confirm(`Add a grain centred at (${x.toFixed(0)}, ${y.toFixed(0)})?`)) {
-        post("/api/grain", { x, y }).then(refresh).then(render);
-      }
-    };
-  };
+  img.onload = () => { S._field[S.fieldWhich] = img; drawField(); };
   img.src = `/api/img/field?which=${S.fieldWhich}`;
+}
+function drawField() {
+  const img = (S._field || {})[S.fieldWhich], cv = $("#field");
+  if (!img || !cv) return;
+  cv.width = img.width; cv.height = img.height;
+  const ctx = cv.getContext("2d"); ctx.drawImage(img, 0, 0);
+  const s = img.width / S.st.movie.width;
+  // every mark is drawn twice: a dark halo, then the colour, so it stands out on the light
+  // background and on the dark grains alike
+  const ring = (x, y, r, color, width, dash) => {
+    ctx.setLineDash(dash || []);
+    ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI);
+    ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = width + 3; ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.stroke();
+    ctx.setLineDash([]);
+  };
+  const cross = (x, y, d, color) => {
+    for (const [w, col] of [[5, "rgba(0,0,0,0.7)"], [2.5, color]]) {
+      ctx.beginPath(); ctx.moveTo(x - d, y - d); ctx.lineTo(x + d, y + d);
+      ctx.moveTo(x + d, y - d); ctx.lineTo(x - d, y + d);
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.stroke();
+    }
+  };
+  for (const gid of S.st.order) {
+    const g = S.st.grains[gid];
+    const x = g.x * s, y = g.y * s, r = g.r * s + 5;
+    const color = g.excluded ? RING.excluded : g.source === "user" ? RING.user : RING.included;
+    ring(x, y, r, color, 2.5, g.excluded ? [5, 4] : null);
+    if (g.excluded) cross(x, y, r * 0.55, RING.excluded);
+    if (gid === S.gid) ring(x, y, r + 6, RING.selected, 3.5);
+    ctx.font = gid === S.gid ? "bold 13px sans-serif" : "bold 11px sans-serif";
+    ctx.lineJoin = "round"; ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(0,0,0,0.8)";
+    ctx.strokeText(gid, x + r + 4, y - r + 2);
+    ctx.fillStyle = gid === S.gid ? RING.selected : color; ctx.fillText(gid, x + r + 4, y - r + 2);
+  }
+  cv.onclick = (e) => {
+    const x = e.offsetX / s, y = e.offsetY / s;
+    let best = null, bd = 1e9;
+    for (const gid of S.st.order) {
+      const g = S.st.grains[gid]; const d = Math.hypot(g.x - x, g.y - y);
+      if (d < bd) { bd = d; best = gid; }
+    }
+    if (best && bd <= S.st.grains[best].r + 8 / s) {
+      if (S.gid !== best) { S.timers[S.gid] = spent(); S.gid = best; S.openedAt = Date.now(); resetGrainState(); }
+      renderChrome(); drawField();
+      return grainMenu(e.pageX, e.pageY, best);
+    }
+    if (confirm(`Add a grain centred at (${x.toFixed(0)}, ${y.toFixed(0)})?`)) {
+      post("/api/grain", { x, y }).then(refresh).then(render);
+    }
+  };
 }
 function grainMenu(px, py, gid) {
   const g = S.st.grains[gid]; const m = $("#menu");

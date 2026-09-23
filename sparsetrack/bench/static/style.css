@@ -23,17 +23,25 @@ button.act.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
 button.act.on { background: #1e40af; color: #fff; border-color: #1e40af; }
 .wrap { position: relative; display: inline-block; user-select: none; }
 .wrap img, .wrap canvas { display: block; cursor: crosshair; image-rendering: auto; }
-.box { position: absolute; pointer-events: none; border: 3px solid transparent; }
-.box.visible { border-color: #16a34a; }
-.box.absent { border-color: #f97316; }
-.box.between { background: rgba(250, 204, 21, 0.18); border-color: rgba(250, 204, 21, 0.7); }
-.box.prior { border-color: #60a5fa; border-style: dashed; }
+/* tile marks: a thick outline outside the image (nothing inside is hidden), a white inner edge so it
+   reads on dark and light tiles alike, and a solid label over the tile's header */
+.box { position: absolute; pointer-events: none; box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.95); }
+.box::after { position: absolute; top: -17px; right: -4px; padding: 0 6px; border-radius: 3px;
+  font: 700 11px/15px -apple-system, "Helvetica Neue", Arial, sans-serif; color: #fff; white-space: nowrap; }
+.box.visible { outline: 5px solid #15803d; outline-offset: 1px; }
+.box.visible::after { content: "✓ first visible"; background: #15803d; }
+.box.absent { outline: 5px solid #c2410c; outline-offset: 1px; }
+.box.absent::after { content: "✗ last absent"; background: #c2410c; }
+.box.between { background: rgba(250, 204, 21, 0.30); outline: 3px dashed #a16207; outline-offset: 1px; box-shadow: none; }
+.box.between::after { content: "?"; background: #a16207; }
+.box.prior { outline: 4px dashed #1d4ed8; outline-offset: 1px; }
+.box.prior::after { content: "saved"; background: #1d4ed8; }
 .row { display: flex; gap: 16px; align-items: flex-start; }
 .side { min-width: 250px; max-width: 320px; }
 .side h3 { margin: 4px 0 6px; font-size: 14px; }
 .chips span { display: inline-block; padding: 2px 7px; margin: 0 4px 4px 0; border-radius: 10px; background: #e5e7eb; font-size: 12px; cursor: pointer; }
-.chips span.done { background: #bbf7d0; }
-.chips span.cur { outline: 2px solid #2563eb; }
+.chips span.done { background: #15803d; color: #fff; }
+.chips span.cur { outline: 3px solid #1d4ed8; outline-offset: 1px; font-weight: 700; }
 table { border-collapse: collapse; background: #fff; }
 td, th { border-bottom: 1px solid #e5e7eb; padding: 4px 8px; text-align: left; font-size: 13px; }
 tr.click:hover { background: #eff6ff; cursor: pointer; }
@@ -41,3 +49,6 @@ tr.click:hover { background: #eff6ff; cursor: pointer; }
 .menu.hidden { display: none; }
 .menu button { display: block; width: 100%; text-align: left; margin: 2px 0; }
 .muted { color: #6b7280; }
+.legend { margin-left: 14px; font-size: 13px; color: #374151; white-space: nowrap; }
+.legend i { display: inline-block; width: 12px; height: 12px; border: 3px solid; border-radius: 50%;
+  vertical-align: -2px; margin-right: 5px; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.7), inset 0 0 0 1.5px rgba(0, 0, 0, 0.7); }
