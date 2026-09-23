@@ -79,7 +79,7 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
     grains = {gid: g for gid, g in labels["grains"].items()
               if not g.get("excluded") and (subset == "all" or g.get("isolated", True))}
     matched = match_grains({"grains": grains}, pred.get("grains", []), radius=float(pred.get("match_radius_px", 12.0)))
-    rows, onset_err, full_err, absences, partial_ok = [], [], [], [], []
+    rows, onset_err, full_err, absences, partial_ok, contact_n = [], [], [], [], [], []
     confusion: dict[str, dict[str, int]] = {}
     for gid in sorted(grains):
         lab = labels["labels"].get(gid, {})
@@ -98,6 +98,9 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
                 row.update(pred_onset=p["onset_frame"], onset_error=d)
         for key, tr in sorted((lab.get("traces") or {}).items(), key=lambda kv: int(kv[0])):
             if tr["state"] == "unsure" or p is None:
+                continue
+            if tr.get("contact"):  # touching another tube/grain: scored apart from the sparse metric
+                contact_n.append(1)
                 continue
             frame = tr.get("source_frame") or int(key) * labels["frames_per_bin"] + labels["frames_per_bin"] // 2
             model = length_at(p, frame)
@@ -135,6 +138,7 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
                         "bias": float(np.mean(e)) if len(e) else None},
         "length_partial": {"n": len(partial_ok), "consistent": int(sum(partial_ok))},
         "absences": {"n": len(absences), "correct": int(sum(absences))},
+        "traces_in_contact_skipped": len(contact_n),
         "rows": rows,
     }
 

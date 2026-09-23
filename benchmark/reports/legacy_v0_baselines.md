@@ -35,7 +35,7 @@
 ## sparsetrack-v1 0.1.0 — isolated grains (7/7 matched)
 
 - Onset: 5/7 within ±600 frames of the human bracket (of 7 human 'emerged during movie'); median |error| 50, mean 179; early 1, late 1
-- Length (FULL traces): 14/20 within max(2 px, 10%); median |error| 1.16 px, bias 0.11 px
+- Length (FULL traces): 14/20 within max(2 px, 10%); median |error| 1.16 px, bias 0.06 px
 - PARTIAL traces consistent: 0/0; absences correct: 15/16
 - Germination calls (human → predicted): {"emerged_within": {"emerged_within": 7}}
 
@@ -46,6 +46,6 @@
 | g025 | emerged_within | emerged_within | (300, 6000] | 3150 | 0 | +0.5, +2.5, +1.8, +0.5 |
 | g029 | emerged_within | emerged_within | (8000, 8050] | 13350 | 5300 |  |
 | g030 | emerged_within | emerged_within | (12000, 15000] | 13950 | 0 | -12.7, -1.6, -0.5 |
-| g034 | emerged_within | emerged_within | (7000, 12000] | 3450 | -3550 | +2.3, +3.5, +0.9, +1.0 |
+| g034 | emerged_within | emerged_within | (7000, 12000] | 3450 | -3550 | +2.3, +3.0, +0.4, +1.0 |
 | g037 | emerged_within | emerged_within | (8500, 9000] | 8850 | 0 | -0.8, -1.1, +0.4 |
 

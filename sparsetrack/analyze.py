@@ -68,6 +68,8 @@ class Params:
     # onset detector: "wedge_fixed" (end-state exit angle; best on the 7 legacy grains, 5/7),
     # "wedge" (exit angle tracked back from the end; 2/7, drifts onto rim noise), "front" (1/7)
     onset_source: str = "wedge_fixed"
+    bg_subtract: bool = True     # subtract each bin's background change before reading the path
+    contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -114,6 +116,31 @@ def _geodesic_far(mask: np.ndarray, seeds: np.ndarray) -> tuple[tuple[int, int],
                     dist[yy, xx] = d + 1
                     q.append((yy, xx))
     return far, dist
+
+
+def geodesic_owner(mask: np.ndarray, seeds: list[np.ndarray]) -> np.ndarray:
+    """Label each ``mask`` pixel with the index of the seed set nearest *through the mask*.
+
+    Multi-source breadth-first search (8-connected); -1 where no seed reaches.
+    """
+    h, w = mask.shape
+    owner = np.full((h, w), -1, np.int32)
+    q = deque()
+    for k, s in enumerate(seeds):
+        for y, x in zip(*np.nonzero(s & mask)):
+            if owner[y, x] < 0:
+                owner[y, x] = k
+                q.append((y, x))
+    while q:
+        y, x = q.popleft()
+        k = owner[y, x]
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                yy, xx = y + dy, x + dx
+                if 0 <= yy < h and 0 <= xx < w and mask[yy, xx] and owner[yy, xx] < 0:
+                    owner[yy, xx] = k
+                    q.append((yy, xx))
+    return owner
 
 
 def _cheapest_path(cost: np.ndarray, mask: np.ndarray, seeds: np.ndarray, target: tuple[int, int]) -> np.ndarray:
@@ -346,10 +373,22 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     comp = lab == attached[0][1]
     if len(attached) > 1:
         result["flags"].append("second_attached_component")
+    # a change region shared with other grains is split by geodesic ownership: each pixel
+    # belongs to the grain nearest to it through the change map itself
+    rivals = []
     for o in others:
         ox, oy = o["x"] - gx + centre, o["y"] - gy + centre
-        if np.any(comp & (np.hypot(xx - ox, yy - oy) < o["r"] + 5.0)):
+        o_ring = np.abs(np.hypot(xx - ox, yy - oy) - o["r"]) <= 4.0
+        if np.any(comp & o_ring):
             result["flags"].append(f"touches:{o['id']}")
+            rivals.append(o_ring)
+    if rivals:
+        owner = geodesic_owner(comp, [ring] + rivals)
+        own = owner == 0
+        n_own, own_lab = cv2.connectedComponents(own.astype(np.uint8), connectivity=8)
+        keep = [l for l in range(1, n_own) if np.any(ring & (own_lab == l))]
+        comp = np.isin(own_lab, keep) if keep else own
+        result["flags"].append("shared_change_split")
     far, _ = _geodesic_far(comp, ring)
     cost = 1.0 / (change + 1.0)
     path_yx = _cheapest_path(cost, comp, ring, far)
@@ -369,6 +408,13 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     diffs = np.abs(reg - early[None])
     angles = (np.arange(-p.max_angle, p.max_angle + 1e-9, p.angle_step) if p.rotate else np.zeros(1))
     kymo_all = _kymograph(diffs, pts, normal, centre, p.lateral, angles)  # (bins, angles, points)
+    if p.bg_subtract:
+        # per-bin background change (focus / illumination drift) away from tube and grains
+        far = cv2.dilate(tube_mask.astype(np.uint8), np.ones((13, 13), np.uint8)).astype(bool)
+        bg_mask = (rg > gr + 8) & ~blocked & ~far
+        bg_level = np.array([float(np.median(d[bg_mask])) if bg_mask.any() else 0.0 for d in diffs])
+        kymo_all = np.clip(kymo_all - bg_level[:, None, None], 0.0, None)
+        result["background_change_max"] = round(float(bg_level.max()), 2)
     base = kymo_all[:p.ref_bins].mean(axis=0)
     noise = np.maximum(kymo_all[:p.ref_bins].std(axis=0), 0.5)
     tau_all = np.maximum(p.evid_floor, base + p.evid_k * noise)
@@ -388,6 +434,19 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     tau = tau_all[ai[-1]]
     evid = evid_all[np.arange(n_bins), ai]
     front = dp_front(evid, max(1, int(round(p.vmax_px / p.step))))
+    # contact censoring: stop measuring where the path first reaches another grain's rim
+    contact_idx = None
+    for o in others:
+        ox, oy = o["x"] - gx + centre, o["y"] - gy + centre
+        near = np.nonzero(np.hypot(pts[:, 0] - ox, pts[:, 1] - oy) <= o["r"] + p.contact_px)[0]
+        if len(near) and (contact_idx is None or near[0] < contact_idx):
+            contact_idx = int(near[0])
+    if contact_idx is not None:
+        censor = np.nonzero(front > contact_idx)[0]
+        if len(censor):
+            result["length_censored_from_frame"] = frames[int(censor[0])]
+            result["flags"].append("contact_censored")
+        front = np.minimum(front, contact_idx)
     length = np.array([ss[f - 1] if f > 0 else 0.0 for f in front])
 
     def rotated(pt, deg):
