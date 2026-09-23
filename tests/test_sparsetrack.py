@@ -204,10 +204,15 @@ def test_sustained_onset_rejects_transient_and_needs_persistence():
     sig2 = np.zeros(40)
     sig2[20:30] = 20.0          # rises then falls back: not a tube
     assert sustained_onset(sig2, p)[0] is None
+    sig3 = np.zeros(120)
+    sig3[20:60] = 20.0          # a long rise, a mid-movie dip (the exit changes look), back to the end
+    sig3[95:] = 20.0
+    assert sustained_onset(sig3, Params(persist_bins=30))[0] == 20
+    assert sustained_onset(sig3, Params(persist_bins=0))[0] != 20
 
 
 def _synthetic_growth(n_bins=40, onset_bin=12, rate=1.5, size=320, gx=160.0, gy=160.0, r=13.0, angle=200.0,
-                      seed=0):
+                      seed=0, max_len=np.inf):
     rng = np.random.default_rng(seed)
     yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
     d = np.hypot(xx - gx, yy - gy)
@@ -218,7 +223,7 @@ def _synthetic_growth(n_bins=40, onset_bin=12, rate=1.5, size=320, gx=160.0, gy=
     across = -(xx - gx) * u[1] + (yy - gy) * u[0]
     bins, lengths = [], []
     for t in range(n_bins):
-        L = max(0.0, (t - onset_bin + 1) * rate)
+        L = min(max_len, max(0.0, (t - onset_bin + 1) * rate))
         lengths.append(L)
         tube = (along > 0) & (along < L)
         img = grain.copy()
@@ -239,6 +244,15 @@ def test_analyze_grain_recovers_synthetic_onset_and_length():
     late = slice(20, len(bins))
     assert np.median(np.abs(est[late] - true[late])) < 2.0
     assert np.all(np.diff(est) >= -1e-9)
+
+
+def test_analyze_grain_rejects_a_stub_that_never_grows():
+    bins, _ = _synthetic_growth(max_len=3.0)  # a persistent 3 px bump at the rim that never elongates
+    meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
+    res = analyze_grain(Renderer(bins, meta), meta, {"id": "g001", "x": 160.0, "y": 160.0, "r": 13.0}, [],
+                        Params(half=100))
+    assert res["status"] == "no_emergence_by_end"
+    assert max(res["length"]["px"]) == 0.0
 
 
 def test_score_counts_onset_and_length_hits():

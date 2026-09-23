@@ -49,3 +49,20 @@
 | g034 | emerged_within | emerged_within | (7000, 12000] | 3450 | -3550 | +2.3, +3.0, +0.4, +1.0 |
 | g037 | emerged_within | emerged_within | (8500, 9000] | 8850 | 0 | -0.8, -1.1, +0.4 |
 
+## sparsetrack-v1 0.2.0 — isolated grains (7/7 matched)
+
+- Onset: 6/7 within ±600 frames of the human bracket (of 7 human 'emerged during movie'); median |error| 0, mean -171; early 1, late 0
+- Length (FULL traces): 14/20 within max(2 px, 10%); median |error| 1.16 px, bias 0.06 px
+- PARTIAL traces consistent: 0/0; absences correct: 15/16
+- Germination calls (human → predicted): {"emerged_within": {"emerged_within": 7}}
+
+| grain | human | predicted | bracket | pred onset | onset err | FULL errors (px) |
+|---|---|---|---|---|---|---|
+| g013 | emerged_within | emerged_within | (4000, 5000] | 4650 | 0 | +5.8, +1.2, +1.2, +0.1 |
+| g014 | emerged_within | emerged_within | (10000, 13000] | 12450 | 0 | +0.2, -3.2 |
+| g025 | emerged_within | emerged_within | (300, 6000] | 5250 | 0 | +0.5, +2.5, +1.8, +0.5 |
+| g029 | emerged_within | emerged_within | (8000, 8050] | 7650 | -350 |  |
+| g030 | emerged_within | emerged_within | (12000, 15000] | 12150 | 0 | -12.7, -1.6, -0.5 |
+| g034 | emerged_within | emerged_within | (7000, 12000] | 9450 | 0 | +2.3, +3.0, +0.4, +1.0 |
+| g037 | emerged_within | emerged_within | (8500, 9000] | 7650 | -850 | -0.8, -1.1, +0.4 |
+

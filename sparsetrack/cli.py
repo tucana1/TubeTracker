@@ -51,6 +51,12 @@ def cmd_census(args) -> None:
     write_census(Path(args.cache), args.ref_bins, args.flatfield)
 
 
+def cmd_synth(args) -> None:
+    from .synth import SynthConfig, make_movie
+    cfg = SynthConfig(seed=args.seed, encode=not args.lossless)
+    make_movie(args.cache, args.out, cfg, name=args.name or f"synth_s{args.seed}{'_lossless' if args.lossless else ''}")
+
+
 def cmd_bench(args) -> None:
     from .bench.server import serve
     serve(args.cache, args.labels, port=args.port, open_browser=not args.no_browser, annotator=args.annotator)
@@ -105,6 +111,13 @@ def main(argv=None) -> None:
     a.add_argument("--only", help="comma-separated grain ids")
     a.add_argument("--video", action="store_true", help="also render field_overlay.mp4 (model tubes on the field)")
     a.set_defaults(func=cmd_analyze)
+    y = sub.add_parser("synth", help="synthetic movie with exact truth from a prepared cache's real field")
+    y.add_argument("cache")
+    y.add_argument("--out", required=True)
+    y.add_argument("--seed", type=int, default=0)
+    y.add_argument("--name")
+    y.add_argument("--lossless", action="store_true", help="write FFV1 (no codec artifacts) as a control")
+    y.set_defaults(func=cmd_synth)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")
     e.add_argument("--labels", required=True)
     e.add_argument("--pred", required=True, nargs="+")

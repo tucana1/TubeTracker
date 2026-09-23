@@ -6,4 +6,4 @@ keyframe. Every stage here therefore reads keyframes only and works on
 registered averages of consecutive keyframes ("bins").
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

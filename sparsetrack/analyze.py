@@ -69,11 +69,18 @@ class Params:
     wedge_k: float = 5.0         # onset threshold = base + wedge_k * robust sigma (floor below)
     wedge_floor: float = 1.5
     wedge_hold: int = 8          # the rise must hold in >= 80% of the next wedge_hold bins
-    # onset detector: "wedge_fixed" (end-state exit angle; best on the 7 legacy grains, 5/7),
+    persist_bins: int = 30       # ...and in >= 70% of the next persist_bins bins (0 = to the end)
+    # onset detector: "matched" (stub matched filter, below; synthetic 42/71 in tolerance vs 17/71,
+    # legacy 5/7), "wedge_fixed" (excess change at the end-state exit angle; legacy 5/7),
     # "wedge" (exit angle tracked back from the end; 2/7, drifts onto rim noise), "front" (1/7)
-    onset_source: str = "wedge_fixed"
+    onset_source: str = "matched"
+    mf_len: float = 4.0          # matched-filter stub: first mf_len px of the path...
+    mf_half: float = 3.0         # ...+/- mf_half px across it
+    mf_search: float = 15.0      # exit angle search (degrees either way)
+    mf_z: float = 3.0            # onset when the calibrated score exceeds this (sustained)
     bg_subtract: bool = True     # subtract each bin's background change before reading the path
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
+    min_tube_px: float = 5.0     # a front that never gets this long is not a tube (unless contact-censored)
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -314,18 +321,78 @@ def exit_track_signal(diffs: np.ndarray, centre: float, gr: float, end_angle: fl
     return w[np.arange(n_bins), track], phis_deg[track]
 
 
-def sustained_onset(signal: np.ndarray, p: "Params") -> tuple[int | None, float]:
-    """First bin where ``signal`` rises above its pre-emergence noise and stays there."""
-    base = signal[:p.wedge_base_bins]
-    mu = float(np.median(base))
-    sigma = max(1.4826 * float(np.median(np.abs(base - mu))), 0.25)
-    thr = mu + max(p.wedge_floor, p.wedge_k * sigma)
+def matched_stub_signal(signed: np.ndarray, late_minus_early: np.ndarray, pts: np.ndarray, centre: float,
+                        p: "Params") -> tuple[np.ndarray, dict]:
+    """Calibrated matched-filter score of a short stub at the exit, per bin.
+
+    The template is the grain's own end-state change over the first ``mf_len`` px of its
+    path (signed, +/- ``mf_half`` px across), so dark and bright-cored tubes are both
+    matched. Each bin's signed change is correlated with the template at the exit (best
+    of +/- ``mf_search`` degrees) and at control angles round the rim (same search);
+    the score is (exit - median control) / robust sigma of the controls over the movie.
+    """
+    step = 0.5
+    s_idx = np.nonzero(np.arange(len(pts)) * p.step <= p.mf_len)[0]
+    stub = pts[s_idx]
+    tang = np.gradient(stub, axis=0) if len(stub) > 1 else np.array([[1.0, 0.0]])
+    tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-9
+    normal = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
+    across = np.arange(-p.mf_half, p.mf_half + 1e-9, step)
+    grid = (stub[:, None, :] + across[None, :, None] * normal[:, None, :]).reshape(-1, 2)  # template points
+    tmpl = cv2.remap(late_minus_early.astype(np.float32), grid[None, :, 0].astype(np.float32),
+                     grid[None, :, 1].astype(np.float32), cv2.INTER_LINEAR)[0]
+    tmpl = tmpl - tmpl.mean()
+    norm = float(np.linalg.norm(tmpl))
+    info = {"template_norm": round(norm, 2)}
+    if norm < 1e-3:
+        return np.zeros(len(signed)), info
+    tmpl /= norm
+    rel = grid - centre
+    exit_offsets = np.arange(-p.mf_search, p.mf_search + 1e-9, 3.0)
+    ctrl_offsets = [a for a in range(45, 360, 45)]
+
+    def placed(angle_deg):
+        a = math.radians(angle_deg)
+        x = centre + math.cos(a) * rel[:, 0] - math.sin(a) * rel[:, 1]
+        y = centre + math.sin(a) * rel[:, 0] + math.cos(a) * rel[:, 1]
+        return x.astype(np.float32), y.astype(np.float32)
+
+    exit_maps = [placed(o) for o in exit_offsets]
+    ctrl_maps = [[placed(c + o) for o in exit_offsets] for c in ctrl_offsets]
+    mx = np.concatenate([m[0] for m in exit_maps] + [m[0] for cm in ctrl_maps for m in cm])[None, :]
+    my = np.concatenate([m[1] for m in exit_maps] + [m[1] for cm in ctrl_maps for m in cm])[None, :]
+    n_pts, n_off = len(tmpl), len(exit_offsets)
+    scores = np.stack([cv2.remap(d, mx, my, cv2.INTER_LINEAR, borderValue=0)[0] for d in signed])
+    scores = scores.reshape(len(signed), -1, n_pts) @ tmpl  # (bins, placements)
+    exit_score = scores[:, :n_off].max(axis=1)
+    ctrl = scores[:, n_off:].reshape(len(signed), len(ctrl_offsets), n_off).max(axis=2)
+    base = np.median(ctrl, axis=1)
+    resid = ctrl - base[:, None]
+    sigma = max(1.4826 * float(np.median(np.abs(resid - np.median(resid)))), 1e-3)
+    info["control_sigma"] = round(sigma, 3)
+    return (exit_score - base) / sigma, info
+
+
+def sustained_onset(signal: np.ndarray, p: "Params", threshold: float | None = None) -> tuple[int | None, float]:
+    """First bin where ``signal`` rises above its pre-emergence noise and stays there.
+
+    ``threshold`` (absolute) is used for already-calibrated scores; otherwise the
+    threshold comes from the first ``wedge_base_bins`` bins.
+    """
+    if threshold is None:
+        base = signal[:p.wedge_base_bins]
+        mu = float(np.median(base))
+        sigma = max(1.4826 * float(np.median(np.abs(base - mu))), 0.25)
+        thr = mu + max(p.wedge_floor, p.wedge_k * sigma)
+    else:
+        thr = float(threshold)
     above = signal > thr
     n = len(signal)
     if above[-min(10, n):].mean() < 0.5:  # a tube never retracts: the exit stays changed to the end
         return None, thr
     for t in range(n):
-        if above[t] and above[t:t + p.wedge_hold].mean() >= 0.8 and above[t:].mean() >= 0.7:
+        tail = above[t:t + p.persist_bins] if p.persist_bins > 0 else above[t:]
+        if above[t] and above[t:t + p.wedge_hold].mean() >= 0.8 and tail.mean() >= 0.7:
             return t, thr
     return None, thr
 
@@ -406,6 +473,12 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     exit_pt = centre + v * gr
     path = np.vstack([exit_pt, path])
     pts, ss = _resample(path, p.step)
+    if len(pts) < 4:  # a one- or two-pixel path is not a tube
+        result["flags"].append("degenerate_path")
+        result.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,
+                      length={"frames": frames, "px": [0.0] * n_bins}, path=[])
+        result["_diag"] = (late, change, tube_mask, None, None, None, centre)
+        return result
     # kymograph along the fixed path, tolerant of +/- lateral px of sway
     tang = np.gradient(pts, axis=0)
     tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-9
@@ -467,13 +540,18 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     above = np.nonzero(length >= p.onset_px)[0]
     front_onset = int(above[0]) if len(above) else None
     end_angle = math.degrees(math.atan2(pts[0][1] - centre, pts[0][0] - centre))
-    if p.onset_source == "wedge_fixed":
+    if p.onset_source == "matched":
+        signed = (reg - early[None]).astype(np.float32)
+        z, mf_info = matched_stub_signal(signed, (late - early), pts, centre, p)
+        result["matched_filter"] = mf_info
+        wedge, exit_track = z, np.full(n_bins, end_angle)
+    elif p.onset_source == "wedge_fixed":
         wedge = wedge_signal(diffs, centre, gr, np.full(n_bins, end_angle), p)
         exit_track = np.full(n_bins, end_angle)
     else:
         wedge, exit_track = exit_track_signal(diffs, centre, gr, end_angle, p)
     result["exit_angle_deg"] = [round(float(a), 1) for a in exit_track]
-    wedge_onset, wedge_thr = sustained_onset(wedge, p)
+    wedge_onset, wedge_thr = sustained_onset(wedge, p, threshold=p.mf_z if p.onset_source == "matched" else None)
     result["onset_bins"] = {"front": front_onset, "wedge": wedge_onset}
     result["wedge"] = {"signal": [round(float(v), 2) for v in wedge], "threshold": round(wedge_thr, 2)}
     b = front_onset if p.onset_source == "front" else wedge_onset
@@ -492,6 +570,10 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     elif b > 0:
         length[:b] = 0.0  # no tube before its own onset
         tips[:b] = rotated(pts[0], 0.0)
+    if b is not None and length[-1] < p.min_tube_px and "contact_censored" not in result["flags"]:
+        result["flags"].append("front_too_short")
+        status, onset, interval = "no_emergence_by_end", None, None
+        length[:] = 0.0
     to_ref = lambda xy: [round(float(xy[0] - centre + gx), 2), round(float(xy[1] - centre + gy), 2)]
     result.update(status=status, onset_frame=onset, onset_interval=interval,
                   length={"frames": frames, "px": [round(float(v), 2) for v in length]},
