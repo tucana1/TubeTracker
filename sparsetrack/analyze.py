@@ -53,7 +53,11 @@ class Params:
     evid_k: float = 4.0          # kymograph threshold = max(evid_floor, base + evid_k * noise)
     evid_floor: float = 5.0
     lateral: float = 1.0         # sample +/- this many px across the path
-    vmax_px: float = 4.0         # maximum front advance per bin
+    vmax_px: float = 4.0         # maximum front advance per bin (and the floor of the automatic cap)
+    vmax_auto: bool = True       # raise it for movies whose tubes grow faster per bin (probe first)
+    vmax_factor: float = 2.0     # cap = factor x the movie's fast growth per bin...
+    vmax_cap: float = 16.0       # ...at most this
+    vmax_probe: int = 10         # isolated grains sampled for the probe
     skip_px: float = 1.5         # evidence this close to the exit is ignored (rim band)
     onset_px: float = 2.0        # onset when the front passes this far beyond the exit
     step: float = 0.5            # path sampling (px)
@@ -941,6 +945,29 @@ def _diagnostic(res: dict, fpb: int) -> np.ndarray:
     return np.concatenate([band, sheet], axis=0)
 
 
+def growth_scale(renderer: Renderer, meta: dict, grains: list[dict], p: "Params", log=print) -> float | None:
+    """Fast growth per bin in this movie: the median over a sample of isolated grains of the
+    90th percentile of their 3-bin front advance, read with a generous speed cap. None when
+    too few tubes to tell."""
+    from dataclasses import replace
+    sample = [g for g in grains if g.get("isolated", True) and not g.get("border")]
+    sample = sample[:: max(1, len(sample) // p.vmax_probe)][:p.vmax_probe]
+    probe = replace(p, vmax_px=p.vmax_cap, vmax_auto=False)
+    rates = []
+    for g in sample:
+        res = analyze_grain(renderer, meta, g, [o for o in grains if o["id"] != g["id"]], probe)
+        L = np.asarray(res.get("length", {}).get("px") or [], float)
+        if res.get("status") != "emerged_within" or len(L) < 8 or L[-1] < 2 * p.min_tube_px:
+            continue
+        adv = (L[3:] - L[:-3]) / 3.0
+        adv = adv[adv > 0.05]
+        if len(adv) >= 5:
+            rates.append(float(np.percentile(adv, 90)))
+    if len(rates) < 3:
+        return None
+    return float(np.median(rates))
+
+
 def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path | None = None,
             params: Params | None = None, only: list[str] | None = None, video: bool = False, log=print) -> dict:
     p = params or Params()
@@ -953,6 +980,14 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
     grains = list(doc["grains"].values()) if isinstance(doc["grains"], dict) else doc["grains"]
     grains = [g for g in grains if not g.get("excluded")]
     started = time.time()
+    if p.vmax_auto:
+        from dataclasses import replace
+        scale = growth_scale(renderer, meta, grains, p, log)
+        if scale is not None:
+            vmax = float(np.clip(p.vmax_factor * scale, p.vmax_px, p.vmax_cap))
+            log(f"growth scale {scale:.2f} px/bin (90th pct, median of isolated grains): front speed cap "
+                f"{vmax:.1f} px/bin")
+            p = replace(p, vmax_px=vmax)
     results = []
     for g in grains:
         if only and g["id"] not in only:
