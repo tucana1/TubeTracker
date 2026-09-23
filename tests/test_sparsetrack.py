@@ -297,3 +297,85 @@ def test_turnbull_interval_censored_masses():
     # overlapping brackets share mass on the innermost interval
     masses = turnbull([(0, 10), (5, 15)])
     assert [(q, p) for q, p, _ in masses] == [(5, 10)] and np.isclose(masses[0][2], 1.0)
+
+
+def _grain_image(size=320, gx=160.0, gy=160.0, r=13.0):
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    return 175 - 90 * np.exp(-((np.hypot(xx - gx, yy - gy) - r) ** 2) / 3.0)
+
+
+def test_grain_settling_flags_debris_and_a_landing_grain():
+    from sparsetrack.analyze import grain_settling
+    rng = np.random.default_rng(0)
+    p = Params(half=100)
+    empty = np.stack([175 + rng.normal(0, 0.5, (200, 200)) for _ in range(30)]).astype(np.float32)
+    assert grain_settling(empty, 99.5, 13.0, p)["no_grain"]
+    still = np.stack([_grain_image(200, 99.5, 99.5) + rng.normal(0, 0.5, (200, 200)) for _ in range(30)])
+    assert grain_settling(still.astype(np.float32), 99.5, 13.0, p) == {"no_grain": False, "b0": 0,
+                                                                        "rim_median": pytest.approx(
+                                                                            grain_settling(still.astype(np.float32),
+                                                                                           99.5, 13.0, p)["rim_median"])}
+    landing = still.copy()
+    landing[0] = np.roll(_grain_image(200, 99.5, 99.5), 30, axis=1)  # still gliding in: elsewhere
+    landing[1] = 0.5 * (landing[0] + still[1])                        # a blur on its way
+    st = grain_settling(landing.astype(np.float32), 99.5, 13.0, p)
+    assert not st["no_grain"] and st["b0"] == 2
+
+
+def test_path_candidates_keep_the_grains_own_tube_over_a_late_foreign_one():
+    bins, _ = _synthetic_growth(n_bins=40, onset_bin=6, rate=1.2)
+    yy, xx = np.mgrid[0:320, 0:320].astype(np.float64)
+    # a longer foreign tube touching the rim at 20 degrees appears only at bin 32
+    a = np.deg2rad(20.0)
+    along = (xx - 160) * np.cos(a) + (yy - 160) * np.sin(a) - 13.5
+    across = -(xx - 160) * np.sin(a) + (yy - 160) * np.cos(a)
+    foreign = np.where((along > 0) & (along < 90), -25 * np.exp(-across ** 2 / 3.0), 0.0)
+    bins = bins.astype(np.float32)
+    bins[32:] += foreign.astype(np.float32)
+    meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
+    res = analyze_grain(Renderer(bins, meta), meta, {"id": "g001", "x": 160.0, "y": 160.0, "r": 13.0}, [],
+                        Params(half=100))
+    ex, ey = res["exit_xy"]
+    exit_deg = np.degrees(np.arctan2(ey - 160.0, ex - 160.0)) % 360
+    assert abs(exit_deg - 200.0) < 20  # the own tube's exit, not the foreign one's at 20 degrees
+    assert res["status"] == "emerged_within"
+
+
+def test_cross_section_template_rows_are_zero_mean_unit_norm():
+    from sparsetrack.analyze import cross_section_template
+    yy, xx = np.mgrid[0:320, 0:320].astype(np.float64)
+    line = -20 * np.exp(-((yy - 160) ** 2) / 3.4) * ((xx > 50) & (xx < 130))  # a dark tube along y = 160
+    pts = np.stack([np.linspace(120, 60, 40), np.full(40, 160.0)], axis=1)
+    normal = np.tile([0.0, 1.0], (40, 1))
+    t = cross_section_template(line, pts, normal, np.arange(-3.5, 3.6, 0.5))
+    assert t[:, 7].mean() < 0  # the centre of a dark tube is negative
+    assert np.allclose(t.mean(axis=1), 0, atol=1e-5) and np.allclose(np.linalg.norm(t, axis=1), 1, atol=1e-4)
+
+
+def test_synthetic_presets_render_every_phenomenon(tmp_path):
+    from sparsetrack.synth import Scene, preset
+    rng = np.random.default_rng(3)
+    size, n_bins = 420, 4
+    field = np.full((size, size), 180.0)
+    centres = [(70 + 95 * (i % 4), 70 + 95 * (i // 4)) for i in range(12)]
+    for cx, cy in centres:
+        field = np.minimum(field, _grain_image(size, cx, cy, 11.0))
+    bins = np.stack([field + rng.normal(0, 0.5, field.shape) for _ in range(n_bins)]).astype(np.float16)
+    np.save(tmp_path / "bins.npy", bins)
+    (tmp_path / "meta.json").write_text(json.dumps({
+        "schema": stack.SCHEMA, "frames_per_bin": 300, "n_bins": n_bins, "shifts": [[0.0, 0.0]] * n_bins,
+        "movie": {"name": "t.mp4", "size_bytes": 1, "n_frames": 1200, "width": size, "height": size}}))
+    census = annotate_layout([{"x": float(cx), "y": float(cy), "r": 11.0, "ring_contrast": 40.0} for cx, cy in centres],
+                             (size, size))
+    (tmp_path / "grains.json").write_text(json.dumps({"grains": census}))
+    for name in ("v1", "v2", "v3", "v4"):
+        cfg = preset(name, n_frames=80, frames_per_bin=5, onset_bins=(1.0, 4.0), rate_px_per_bin=(3.0, 6.0),
+                     n_debris=1, seed=1, **({} if name == "v1" else dict(p_move=0.2, p_dock=0.5)),
+                     **(dict(p_anchor=0.3, p_arrive=0.3, p_stub=0.3, p_evolve=1.0) if name in ("v3", "v4") else {}),
+                     **(dict(p_sway=1.0) if name == "v4" else {}))
+        scene = Scene(tmp_path, cfg)
+        frames = [scene.render(k) for k in range(0, 80, 7)]
+        assert all(f.shape == (size, size) and f.dtype == np.uint8 for f in frames)
+        truth = scene.truth(name)
+        assert truth["labels"] and all(g["id"] in truth["labels"] for g in truth["grains"].values())
+        assert float(np.abs(frames[-1].astype(float) - frames[0]).max()) > 20  # tubes were drawn

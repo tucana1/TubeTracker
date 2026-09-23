@@ -19,18 +19,51 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 .venv/bin/python -m sparsetrack prepare MOVIE --out runs/sparsetrack/ld
 # benchmark labelling tool (local web page; answers saved to the labels file after every click)
 .venv/bin/python -m sparsetrack bench runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json
-# SparseTrack v1: per-grain onset and exit-to-apex length (~13 s for the sparse movie)
-.venv/bin/python -m sparsetrack analyze runs/sparsetrack/ld --out runs/sparsetrack/ld_v1 [--grains benchmark/labels/ld_v1.json]
+# per-grain onset and exit-to-apex length (~40 s for the sparse movie)
+.venv/bin/python -m sparsetrack analyze runs/sparsetrack/ld --out runs/sparsetrack/ld_v0_3 [--grains benchmark/labels/ld_v1.json]
 # score any predictions against the benchmark
-.venv/bin/python -m sparsetrack eval --labels benchmark/labels/ld_v1.json --pred runs/sparsetrack/ld_v1/predictions.json
+.venv/bin/python -m sparsetrack eval --labels benchmark/labels/ld_v1.json --pred runs/sparsetrack/ld_v0_3/predictions.json
+# synthetic movie with exact truth on the real field (x264-encoded like the real movies), then its cache
+.venv/bin/python -m sparsetrack synth runs/sparsetrack/ld --out runs/sparsetrack/synth --seed 0 --preset v2
+.venv/bin/python -m sparsetrack prepare runs/sparsetrack/synth/synthv2_s0.mp4 --out runs/sparsetrack/synth/v2s0_cache --frames-per-bin 25 --ref-start 0
+# score parameter variants on the synthetic seeds (by failure class) and the legacy real grains
+.venv/bin/python scripts/synth_bench.py --suite v2 --breakdown --set evidence=matched
 ```
 
-`analyze` traces each tube once on the end-of-movie change map, lets the grain and tube
-rotate rigidly about the grain centre, reads growth backwards along that path with a
-non-decreasing dynamic-programming front, and calls onset from the excess change just
-outside the rim at the exit. It writes `predictions.json`, `grains.csv`, `growth.csv`, a diagnostic image per grain,
-`growth_curves.png` (small multiples), `population.csv`/`population.png` (interval-censored
-cumulative germination, Turnbull estimate, with T50) and, with `--video`, `field_overlay.mp4`. Scores so far are in `benchmark/reports/`.
+`analyze` works per grain, whole-movie and offline:
+- **Registration and settling.** Local registration follows the grain as it drifts.
+  Grains still landing in the census bins are read from when they settle, and
+  detections with no grain rim are reported unobservable.
+- **Path.** Candidate centrelines are traced on the end-of-movie change map, one per
+  branch end and rim contact. The one kept is the candidate whose monotone growth from
+  the exit explains the most evidence, weighted by how ridge-like its end-state
+  cross-section is.
+- **Length.** Growth is read backwards along that path with a non-decreasing
+  dynamic-programming front. The grain and tube may rotate rigidly. The evidence is
+  |change| combined with the change projected on the tube's own end-state cross-section.
+- **Onset.** Onset is called by a matched stub filter at the exit (end-state exit and
+  rotation track), with hysteresis.
+
+It writes:
+- `predictions.json`, `grains.csv`, `growth.csv` and a diagnostic image per grain;
+- `growth_curves.png` (small multiples);
+- `population.csv`/`population.png` (interval-censored cumulative germination, Turnbull
+  estimate, with T50);
+- `index.html`, a review gallery with the grains whose flags ask for a second look
+  marked;
+- with `--video`, `field_overlay.mp4`.
+
+Scores so far are in `benchmark/reports/`.
+
+The synthetic presets:
+- **v1:** clean isolated tubes.
+- **v2:** adds foreign tubes from clumps, crossings, curls, pauses and stops, drifting
+  grains and docking particles.
+- **v3:** adds tubes that start dark and turn bright-cored, tubes stuck to the substrate,
+  landing grains and fat stubs.
+- **v4:** adds sideways sway.
+
+Seeds 3-4 of v2-v4 are held out.
 
 Double-clicking `Label_Sparse_Benchmark.command` prepares the sparse movie (first time
 only) and opens the labelling tool; `Label_Movie2_Heldout.command` does the same for the

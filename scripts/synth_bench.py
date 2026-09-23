@@ -6,7 +6,7 @@
 Synthetic movies come from `sparsetrack synth [--preset v2]` + `prepare --frames-per-bin 25
 --ref-start 0` (suite v1: runs/sparsetrack/synth/s{seed}_cache + synth_s{seed}_truth.json;
 suite v2/v3: v{2,3}s{seed}_cache + synthv{2,3}_s{seed}_truth.json). The onset tolerance
-there is 50 synthetic frames (= 600 source frames). Seeds 3-4 of v2 and v3 are the held-out
+there is 50 synthetic frames (= 600 source frames). Seeds 3-4 of v2, v3 and v4 are the held-out
 synthetic test: report them only for a frozen variant (--seeds 3 4).
 """
 
@@ -27,7 +27,7 @@ from sparsetrack.evaluate import load, score  # noqa: E402
 SYN = REPO / "runs/sparsetrack/synth"
 LEGACY_IDS = ["g025", "g014", "g037", "g034", "g013", "g030", "g029"]
 SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json"),
-          "v3": ("v3s{}_cache", "synthv3_s{}_truth.json")}
+          "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json")}
 
 
 def parse_value(v: str):
@@ -111,6 +111,7 @@ def breakdown(r: dict) -> str:
         "stuck to substrate": lambda t: t.get("anchored") is True,
         "landing grain": lambda t: t.get("arriving") is True,
         "fat stub": lambda t: t.get("stub") is True,
+        "sways": lambda t: t.get("sways_px", 0) > 0,
     }
     out = [f"{'group':22s} {'onset in tol':>14s} {'len in tol':>12s} {'med |len err|':>14s} {'controls ok':>12s}"]
     for name, sel in groups.items():

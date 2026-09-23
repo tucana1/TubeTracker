@@ -7,6 +7,8 @@
 - ``write_population`` / ``write_growth_curves``: CSV tables and their charts.
 - ``write_video``: the registered field with every grain's tube drawn at its reported
   length, bin by bin (H.264 through ffmpeg).
+- ``write_gallery``: one HTML page, a card per grain (diagnostic panels, calls, flags),
+  with the grains whose flags ask for a second look marked.
 
 Everything here reports model output; nothing is human-verified.
 """
@@ -228,3 +230,69 @@ def write_video(renderer, meta: dict, pred: dict, out_path: str | Path, fps: int
     finally:
         proc.stdin.close()
         proc.wait()
+
+
+# flags whose grains deserve a human look before their numbers are used: on synthetic v2/v3
+# every grain carrying one of these was wrong somewhere (base rate 70%), rotation >= 40 deg 92%
+REVIEW_FLAGS = ("settled_from_bin", "onset_moved_to_front", "onset_from_front", "contact_censored", "no_grain",
+                "front_too_short", "degenerate_path", "tube_map_without_onset")
+
+
+def review_reasons(res: dict) -> list[str]:
+    out = [f for f in res.get("flags", []) if f.startswith(REVIEW_FLAGS)]
+    rot = [f for f in res.get("flags", []) if f.startswith("rotates:")]
+    if rot and float(rot[0].split(":")[1].rstrip("deg")) >= 40:  # the rotation track hit its range
+        out.append(rot[0])
+    return out
+
+
+def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = None) -> Path:
+    """index.html next to diagnostics/: every grain's panels (end state + path, change map,
+    kymograph + front) with its calls; grains with review flags first within each group."""
+    import html
+    out_dir = Path(out_dir)
+    grains = pred["grains"]
+    fpb = pred.get("frames_per_bin", 300)
+
+    def card(r):
+        reasons = review_reasons(r)
+        iv = r.get("onset_interval") or [None, None]
+        onset = (f"({iv[0]}, {iv[1]}]" if iv[0] is not None else
+                 ("before the movie" if r["status"] == "emerged_at_start" else "—"))
+        rows = [("status", r["status"]), ("onset (frames)", onset),
+                ("final length", f"{r.get('final_length_px', 0) or 0:.1f} px"),
+                ("path", f"{r.get('path_length_px', 0) or 0:.1f} px")]
+        table = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(str(v))}</td></tr>" for k, v in rows)
+        flags = " ".join(f"<span class='flag{' review' if f in reasons else ''}'>{html.escape(f)}</span>"
+                         for f in r.get("flags", []))
+        mark = "<span class='mark'>check</span>" if reasons else ""
+        return (f"<section class='card{' needs' if reasons else ''}' id='{html.escape(r['id'])}'>"
+                f"<h2>{html.escape(r['id'])} {mark}</h2>"
+                f"<img loading='lazy' src='diagnostics/{html.escape(r['id'])}.png' alt='diagnostics for {html.escape(r['id'])}'>"
+                f"<table>{table}</table><p>{flags}</p></section>")
+
+    iso = [r for r in grains if isolated is None or r["id"] in isolated]
+    rest = [r for r in grains if isolated is not None and r["id"] not in isolated]
+    key = lambda r: (not review_reasons(r), r["id"])
+    n_check = sum(bool(review_reasons(r)) for r in iso)
+    body = (f"<h1>SparseTrack review — {html.escape(str(pred.get('movie', {}).get('name', '')))}</h1>"
+            f"<p class='sub'>{html.escape(pred.get('method', ''))} · {len(iso)} isolated grains, {n_check} marked "
+            f"<b>check</b> (their flags ask for a second look) · {fpb} frames per bin · panels: end state with the "
+            f"traced path, end-state change map, kymograph (time down, arclength right) with the growth front. "
+            f"Model output, not human-verified.</p>"
+            f"<h2 class='group'>Isolated grains</h2><div class='grid'>{''.join(card(r) for r in sorted(iso, key=key))}</div>")
+    if rest:
+        body += f"<h2 class='group'>Clumped / edge grains</h2><div class='grid'>{''.join(card(r) for r in sorted(rest, key=key))}</div>"
+    css = ("body{font:14px/1.4 -apple-system,system-ui,sans-serif;color:#0b0b0b;background:#fcfcfb;margin:24px}"
+           "h1{font-size:20px;margin:0 0 4px}.sub{color:#52514e;margin:0 0 16px;max-width:1100px}"
+           ".group{font-size:16px;margin:20px 0 8px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:12px}"
+           ".card{border:1px solid #e1e0d9;border-radius:6px;padding:10px;background:#fff}.card.needs{border-color:#c3c2b7}"
+           ".card h2{font-size:15px;margin:0 0 6px}.card img{width:100%;image-rendering:pixelated;border-radius:3px}"
+           "table{border-collapse:collapse;margin:6px 0}th{text-align:left;color:#52514e;font-weight:500;padding:1px 10px 1px 0}"
+           ".flag{display:inline-block;font-size:12px;color:#52514e;border:1px solid #e1e0d9;border-radius:4px;padding:0 5px;margin:2px 2px 0 0}"
+           ".flag.review{color:#0b0b0b;border-color:#898781}"
+           ".mark{font-size:12px;font-weight:600;border:1px solid #0b0b0b;border-radius:4px;padding:0 5px;margin-left:6px}")
+    path = out_dir / "index.html"
+    path.write_text(f"<!doctype html><html lang='en'><meta charset='utf-8'><title>SparseTrack review</title>"
+                    f"<style>{css}</style><body>{body}</body></html>")
+    return path

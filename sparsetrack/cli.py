@@ -119,7 +119,7 @@ def main(argv=None) -> None:
     y.add_argument("--seed", type=int, default=0)
     y.add_argument("--name")
     y.add_argument("--lossless", action="store_true", help="write FFV1 (no codec artifacts) as a control")
-    y.add_argument("--preset", default="v1", choices=("v1", "v2", "v3"),
+    y.add_argument("--preset", default="v1", choices=("v1", "v2", "v3", "v4"),
                    help="v1: clean isolated tubes; v2: adds foreign tubes, crossings, curls, pauses/stops, "
                         "drifting grains and docking particles")
     y.set_defaults(func=cmd_synth)

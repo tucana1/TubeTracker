@@ -81,6 +81,9 @@ class SynthConfig:
     p_arrive: float = 0.0                # a grain still landing during the first bins (the census sees a blur)
     arrive_px: tuple = (20.0, 60.0)
     arrive_bins: tuple = (1.5, 5.0)
+    p_sway: float = 0.0                  # the tube sways sideways over time (more further from its base)
+    sway_px: tuple = (2.0, 8.0)
+    sway_base_px: tuple = (15.0, 40.0)   # ...reaching full amplitude this far along
     p_stub: float = 0.0                  # a short fat tube that stops early
     stub_len: tuple = (8.0, 14.0)
     stub_width: tuple = (1.8, 2.5)
@@ -91,16 +94,19 @@ def preset(name: str, **kw) -> SynthConfig:
     on the real sparse movie - foreign tubes from clumps, touching and crossing tubes, curls,
     growth that pauses or stops, width changes, drifting grains and docking particles. ``v3``:
     also tubes that start dark and turn bright-cored, tubes stuck to the substrate while their
-    grain drifts, grains still landing in the first bins, and short fat stubs."""
+    grain drifts, grains still landing in the first bins, and short fat stubs. ``v4``: also
+    sideways sway of the tube over time."""
     if name == "v1":
         return SynthConfig(**kw)
     v2 = dict(foreign_sources=True, p_free=0.35, p_curl=0.25, width=(0.8, 1.3), p_stop=0.35, pauses=0.7,
               rate_jitter=0.25, p_move=0.2, p_dock=0.15)
     if name == "v2":
         return SynthConfig(**{**v2, **kw})
+    v3 = {**v2, **dict(p_move=0.12, p_evolve=0.6, p_anchor=0.15, p_arrive=0.08, p_stub=0.08)}
     if name == "v3":  # + tubes whose look changes with age, tubes stuck to the substrate, landing grains, stubs
-        return SynthConfig(**{**v2, **dict(p_move=0.12, p_evolve=0.6, p_anchor=0.15, p_arrive=0.08, p_stub=0.08),
-                              **kw})
+        return SynthConfig(**{**v3, **kw})
+    if name == "v4":  # + sideways sway of the tube (measured on real tubes: 2-8 px against the end state)
+        return SynthConfig(**{**v3, **dict(p_sway=0.7), **kw})
     raise ValueError(f"unknown synthetic preset {name!r}")
 
 
@@ -138,7 +144,25 @@ class Tube:
     evolve_tau: float = 0.0                      # frames for a bright-cored tube to lose its young dark look
     anchor: np.ndarray = field(default=None)     # (n_frames, 2) grain drift for a tube stuck to the substrate
     bend: float = 0.0                            # ...only this much of its base follows the grain
+    sway: np.ndarray = field(default=None)       # (n_frames,) sideways displacement at full amplitude (px)
+    sway_base: float = 20.0
     _anchor_maps: dict = field(default_factory=dict)
+    _sway_maps: dict = field(default_factory=dict)
+
+    def swayed_maps(self, k: int, xx: np.ndarray, yy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """(arclength, distance) maps of the tube displaced sideways, more so further from its base."""
+        key = int(round(self.sway[k] * 4))  # 0.25 px steps
+        if key not in self._sway_maps:
+            s = np.arange(len(self.path)) * 0.25
+            tang = np.gradient(self.path, axis=0)
+            tang /= np.linalg.norm(tang, axis=1, keepdims=True) + 1e-9
+            normal = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
+            w = np.clip(s / max(self.sway_base, 1e-6), 0.0, 1.0)[:, None]
+            bent = self.path + w * normal * (key / 4.0)
+            d, idx = cKDTree(bent).query(np.stack([xx.ravel(), yy.ravel()], 1))
+            self._sway_maps[key] = ((idx * 0.25).reshape(xx.shape).astype(np.float32),
+                                    d.reshape(xx.shape).astype(np.float32))
+        return self._sway_maps[key]
 
     def anchored_maps(self, k: int, xx: np.ndarray, yy: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """(arclength, distance) maps of the tube with its base bent towards the drifted grain."""
@@ -338,6 +362,13 @@ class Scene:
             if cfg.p_evolve > 0 and t.bright and rng.random() < cfg.p_evolve:
                 t.evolve_tau = float(rng.uniform(*cfg.evolve_bins) * fpb)
                 t.info["evolves"] = True
+            if cfg.p_sway > 0 and rng.random() < cfg.p_sway:
+                walk = cv2.GaussianBlur(np.cumsum(rng.normal(0, 1, cfg.n_frames)).reshape(1, -1), (0, 0),
+                                        15 * fpb).ravel()
+                walk -= walk[-1]  # no sway at the end: the traced end state
+                t.sway = walk / (np.abs(walk).max() + 1e-9) * rng.uniform(*cfg.sway_px)
+                t.sway_base = float(rng.uniform(*cfg.sway_base_px))
+                t.info["sways_px"] = round(float(np.abs(t.sway).max()), 2)
             if rng.random() < cfg.p_rotate:
                 steps = rng.normal(0, 1, cfg.n_frames).cumsum()
                 steps = cv2.GaussianBlur(steps.reshape(1, -1), (0, 0), 200).ravel()
@@ -390,6 +421,9 @@ class Scene:
                 start = float(rng.uniform(5 * fpb, cfg.n_frames * 0.9))
                 self.docks.append((g, phi, rad, sp, al, start))
         for t in self.tubes:
+            if t.sway is not None and (t.rot is not None or t.grain["id"] in self.moves):
+                t.sway = None  # sway is rendered only on tubes that neither rotate nor drift
+                t.info.pop("sways_px", None)
             if t.grain["id"] in self.anchored:
                 t.anchor, t.bend, t.rot = self.moves[t.grain["id"]], float(rng.uniform(*cfg.bend_px)), None
                 t.info["anchored"] = True
@@ -410,6 +444,9 @@ class Scene:
             drift = t.move if t.move is not None else t.anchor
             if drift is not None:  # ...and a drifting one wherever its grain goes
                 m = int(math.ceil(np.abs(drift).max())) + 2
+                lo, hi = lo - m, hi + m
+            if t.sway is not None:
+                m = int(math.ceil(np.abs(t.sway).max())) + 2
                 lo, hi = lo - m, hi + m
             lo = np.maximum(lo, 0)
             hi = np.minimum(hi, [self.w - 1, self.h - 1])
@@ -449,6 +486,8 @@ class Scene:
             mv = t.move is not None and bool(np.any(np.abs(t.move[k]) > 1e-3))
             if t.anchor is not None and bool(np.any(np.abs(t.anchor[k]) > 0.25)):
                 ss, dd = t.anchored_maps(k, xx, yy)
+            elif t.sway is not None and abs(t.sway[k]) > 0.125 and not (rot or mv):
+                ss, dd = t.swayed_maps(k, xx, yy)
             elif rot or mv:
                 # look up the unmoved, unrotated tube at each pixel
                 a = math.radians(-t.rot[k]) if rot else 0.0
