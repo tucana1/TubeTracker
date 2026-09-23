@@ -32,7 +32,10 @@ outside the rim at the exit. It writes `predictions.json`, `grains.csv`, `growth
 and a diagnostic image per grain. Scores so far are in `benchmark/reports/`.
 
 Double-clicking `Label_Sparse_Benchmark.command` prepares the sparse movie (first time
-only) and opens the labelling tool. The tool asks for a grain census (confirm, exclude or add grains), each grain's onset
+only) and opens the labelling tool; `Label_Movie2_Heldout.command` does the same for the
+held-out movie 2 (vignetting-corrected census; its first ~9 settling bins are skipped as
+the "before" reference). `sparsetrack census CACHE [--flatfield]` re-runs grain detection
+(it renumbers grains, so only before labelling starts). The tool asks for a grain census (confirm, exclude or add grains), each grain's onset
 bracket on a whole-movie filmstrip then single bins, and exit-to-apex traces at a
 few fixed times. Answers use the `GerminationEvent` vocabulary of
 `tubetracker/annotation_schema.py`. `benchmark/labels/` is the benchmark; keep it

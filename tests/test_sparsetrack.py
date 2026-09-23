@@ -252,3 +252,22 @@ def test_score_counts_onset_and_length_hits():
     rep = score(labels, pred, onset_tol=600)
     assert rep["onset"]["hits"] == 1 and rep["onset"]["late"] == 0
     assert rep["length_full"]["within_tolerance"] == 1 and rep["absences"]["correct"] == 1
+
+
+def test_settled_start_skips_initial_settling():
+    rng = np.random.default_rng(5)
+    base = rng.normal(170, 5, (64, 64))
+    bins = []
+    for t in range(40):
+        drift = 6.0 * np.exp(-t / 3.0)  # large early motion that dies away
+        bins.append(np.roll(base, int(round(drift * (t % 2 * 2 - 1))), axis=1) + rng.normal(0, 0.3, base.shape))
+    assert 3 <= stack.settled_start(np.stack(bins), stride=1) <= 12
+
+
+def test_flat_field_removes_vignetting_and_keeps_median():
+    from sparsetrack.grains import flat_field
+    yy, xx = np.mgrid[0:200, 0:200].astype(np.float64)
+    vignette = 170 - 0.3 * xx  # dark right side
+    out = flat_field(vignette)
+    assert abs(np.median(out) - np.median(vignette)) < 1e-6
+    assert np.std(out[50:150, 50:150]) < 0.1 * np.std(vignette[50:150, 50:150])

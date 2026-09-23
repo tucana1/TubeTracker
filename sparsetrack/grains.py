@@ -29,9 +29,18 @@ def _ring_scores(image: np.ndarray, x: float, y: float, r: float) -> tuple[float
     return base - float(ring.mean()), base - float(disc.mean())
 
 
+def flat_field(image: np.ndarray, sigma: float = 40.0) -> np.ndarray:
+    """Divide out slow illumination changes (vignetting), keeping the median brightness."""
+    image = image.astype(np.float64)
+    background = cv2.GaussianBlur(image, (0, 0), sigma)
+    return image / np.maximum(background, 1.0) * float(np.median(image))
+
+
 def detect(reference: np.ndarray, r_min: int = 9, r_max: int = 18, ring_min: float = 10.0,
-           body_min: float = 25.0) -> list[dict]:
+           body_min: float = 25.0, flatfield: bool = False) -> list[dict]:
     """Detect grains as dark-rimmed (or dark-filled) circles; returns dicts sorted row-major."""
+    if flatfield:
+        reference = flat_field(reference)
     blur = cv2.GaussianBlur(to_uint8(reference), (0, 0), 1.2)
     found = []
     for param2 in (18, 13):

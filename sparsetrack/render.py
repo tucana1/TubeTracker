@@ -19,6 +19,7 @@ class Renderer:
         self.shifts = np.asarray(meta["shifts"], dtype=np.float64)
         self.n_bins = int(meta["n_bins"])
         self.height, self.width = bins.shape[1:]
+        self.ref_start = int(meta.get("ref_start", 0))
         self._contrast: dict[tuple, tuple[float, float]] = {}
 
     def crop(self, b: int, cx: float, cy: float, half: int) -> np.ndarray:
@@ -45,7 +46,7 @@ class Renderer:
         """Display window for one grain, fixed across all its tiles."""
         cache_key = (key, half, mode)
         if cache_key not in self._contrast:
-            early = self.mean_crop(0, 2, cx, cy, half)
+            early = self.mean_crop(self.ref_start, self.ref_start + 2, cx, cy, half)
             late = self.mean_crop(self.n_bins - 4, self.n_bins - 2, cx, cy, half)
             if mode == "h":  # high contrast: narrow window around the background level
                 bg = float(np.median(early))
@@ -84,7 +85,8 @@ class Renderer:
 
     def field(self, which: str = "early", scale: float = 0.75) -> np.ndarray:
         """Whole registered field (mean of three bins) at ``scale``."""
-        bins = [0, 1, 2] if which == "early" else [self.n_bins - 4, self.n_bins - 3, self.n_bins - 2]
+        rs = self.ref_start
+        bins = [rs, rs + 1, rs + 2] if which == "early" else [self.n_bins - 4, self.n_bins - 3, self.n_bins - 2]
         acc = np.zeros((self.height, self.width), np.float64)
         for b in bins:
             dx, dy = self.shifts[b]

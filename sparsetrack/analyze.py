@@ -1,19 +1,23 @@
 """SparseTrack v1: per-grain germination onset and tube length from a bin cache.
 
-For each grain, whole-movie and offline:
+For each grain, whole-movie and offline (bins before the cache's settled reference
+start are treated as unobserved):
 
 1. Crop the grain from every bin (global registration), then refine a per-bin
    residual shift on the grain itself.
 2. Tube map: blurred ``|late - early|`` change, grain bodies masked (the rim band is
-   kept so a tube wrapping round its own grain survives).
+   kept so a tube wrapping round its own grain survives). A change region shared
+   with other grains is split by geodesic ownership.
 3. The change component attached to the grain's rim is the tube; its tip is the
    geodesically farthest point, and the centreline is the evidence-weighted
    shortest path from the rim to it, starting at the exit on the grain circle.
-4. Kymograph of the change along that fixed path for every bin; the tube front is
-   the globally best non-decreasing path through it (dynamic programming with a
-   capped growth rate), so the reported length never shrinks and a passing blob
-   cannot extend it.
-5. Onset = first bin whose front passes ``onset_px`` beyond the exit.
+4. Kymograph of the (background-subtracted) change along that path for every bin,
+   with the grain + tube allowed to rotate rigidly about the grain centre (smooth
+   rotation track, judged on distal off-rim points, pinned at the end). The tube
+   front is the globally best non-decreasing path through it (dynamic programming,
+   capped growth rate); lengths stop where the path reaches another grain's rim.
+5. Onset = first sustained rise of the excess change just outside the rim at the
+   exit angle over its pre-emergence noise; no length is reported before onset.
 """
 
 from __future__ import annotations
@@ -327,10 +331,11 @@ def sustained_onset(signal: np.ndarray, p: "Params") -> tuple[int | None, float]
 
 
 def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: Params) -> dict:
-    n_bins, fpb = int(meta["n_bins"]), int(meta["frames_per_bin"])
+    fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
+    n_bins = int(meta["n_bins"]) - rs  # bins before the reference (settling) are not observed
     gx, gy, gr = grain["x"], grain["y"], grain["r"]
     half = p.half
-    crops = np.stack([renderer.crop(b, gx, gy, half) for b in range(n_bins)])
+    crops = np.stack([renderer.crop(b, gx, gy, half) for b in range(rs, rs + n_bins)])
     centre = half - 0.5  # crop pixel coordinate of the grain centre
     ls = local_shifts(crops, centre, gr, p.reg_pad, p.ref_bins)
     reg = np.stack([cv2.warpAffine(c, np.float32([[1, 0, -dx], [0, 1, -dy]]), (2 * half, 2 * half),
@@ -342,7 +347,7 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float64)
     rg = np.hypot(xx - centre, yy - centre)
     # pixels whose source position leaves the frame in any bin are not evidence
-    shifts = np.asarray(meta["shifts"]) + ls
+    shifts = np.asarray(meta["shifts"])[rs:] + ls
     ref_x, ref_y = gx - half + xx + 0.5, gy - half + yy + 0.5
     valid = ((ref_x + shifts[:, 0].min() >= 0) & (ref_x + shifts[:, 0].max() < renderer.width) &
              (ref_y + shifts[:, 1].min() >= 0) & (ref_y + shifts[:, 1].max() < renderer.height))
@@ -363,7 +368,7 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
                 if stats[l, cv2.CC_STAT_AREA] >= p.min_component_px and np.any(ring & (lab == l))]
     result = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": [], "map_threshold": round(thr, 2),
               "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
-    frames = [b * fpb + fpb // 2 for b in range(n_bins)]
+    frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
     if not attached:
         result.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,
                       length={"frames": frames, "px": [0.0] * n_bins}, path=[])

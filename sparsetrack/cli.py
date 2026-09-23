@@ -28,18 +28,27 @@ def cmd_prepare(args) -> None:
     if (out / "meta.json").exists() and (out / "grains.json").exists() and not args.force:
         print(f"cache already exists at {out} (use --force to rebuild)")
         return
-    meta = stack.prepare(args.movie, out, frames_per_bin=args.frames_per_bin, ref_bins=args.ref_bins)
+    ref_start = args.ref_start if args.ref_start == "auto" else int(args.ref_start)
+    stack.prepare(args.movie, out, frames_per_bin=args.frames_per_bin, ref_bins=args.ref_bins, ref_start=ref_start)
+    write_census(out, args.ref_bins, args.flatfield)
+
+
+def write_census(out: Path, n_ref: int, flatfield: bool) -> None:
     bins, meta = stack.load(out)
-    ref_bins = list(range(args.ref_bins))
+    ref_bins = list(range(meta.get("ref_start", 0), meta.get("ref_start", 0) + n_ref))
     reference = registered_mean(bins, meta["shifts"], ref_bins)
-    found = grains.detect(reference)
+    found = grains.detect(reference, flatfield=flatfield)
     (out / "grains.json").write_text(json.dumps({
-        "schema": "sparsetrack.grains.v1", "reference_bins": ref_bins,
+        "schema": "sparsetrack.grains.v1", "reference_bins": ref_bins, "flatfield": flatfield,
         "method": "Hough circles + dark-rim/body contrast on the registered reference", "grains": found},
         indent=1))
     isolated = sum(g["isolated"] for g in found)
     print(f"grains: {len(found)} detected ({isolated} isolated, "
           f"{sum(g['clump_size'] > 1 for g in found)} in clumps, {sum(g['border'] for g in found)} near the edge)")
+
+
+def cmd_census(args) -> None:
+    write_census(Path(args.cache), args.ref_bins, args.flatfield)
 
 
 def cmd_bench(args) -> None:
@@ -70,9 +79,18 @@ def main(argv=None) -> None:
     p.add_argument("movie")
     p.add_argument("--out", required=True)
     p.add_argument("--frames-per-bin", type=int, default=300)
-    p.add_argument("--ref-bins", type=int, default=3, help="leading bins averaged as the reference")
+    p.add_argument("--ref-bins", type=int, default=3, help="bins averaged as the 'before' reference")
+    p.add_argument("--ref-start", default="auto",
+                   help="first reference bin, or 'auto' = first bin after the field has settled")
     p.add_argument("--force", action="store_true")
+    p.add_argument("--flatfield", action="store_true", help="correct vignetting before grain detection")
     p.set_defaults(func=cmd_prepare)
+    c = sub.add_parser("census", help="re-run grain detection on an existing cache (renumbers grains: "
+                                      "do this before labelling starts)")
+    c.add_argument("cache")
+    c.add_argument("--ref-bins", type=int, default=3)
+    c.add_argument("--flatfield", action="store_true")
+    c.set_defaults(func=cmd_census)
     b = sub.add_parser("bench", help="open the benchmark labelling tool")
     b.add_argument("cache")
     b.add_argument("--labels", required=True)

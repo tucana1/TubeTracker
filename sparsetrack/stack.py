@@ -65,8 +65,25 @@ def _highpass(image: np.ndarray, sigma: float = 8.0) -> np.ndarray:
     return image - cv2.GaussianBlur(image, (0, 0), sigma)
 
 
+def settled_start(bins: np.ndarray, factor: float = 2.5, hold: int = 5, stride: int = 4) -> int:
+    """First bin after which consecutive-bin change stays below ``factor`` x its typical level.
+
+    Grains that are still sinking or drifting into focus at the start of a recording make
+    the first bins useless as a "before" reference.
+    """
+    sub = np.asarray(bins[:, ::stride, ::stride], np.float32)
+    d = np.array([np.mean(np.abs(sub[i + 1] - sub[i])) for i in range(len(sub) - 1)])
+    if len(d) < 2 * hold:
+        return 0
+    limit = factor * float(np.median(d[len(d) // 4:]))
+    for b in range(len(d) - hold):
+        if np.all(d[b:b + hold] < limit):
+            return int(b)
+    return 0
+
+
 def estimate_shifts(bins: np.ndarray, ref_bins: int = 3, max_dev: float = 2.5, window: int = 3,
-                    upsample: int = 40) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+                    upsample: int = 40, ref_start: int = 0) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Per-bin (dx, dy) of each bin relative to the reference, robust to outliers.
 
     Upsampled-DFT cross-correlation of high-passed frames (scikit-image), which on
@@ -78,7 +95,7 @@ def estimate_shifts(bins: np.ndarray, ref_bins: int = 3, max_dev: float = 2.5, w
     """
     from skimage.registration import phase_cross_correlation
 
-    ref = _highpass(np.asarray(bins[:ref_bins], dtype=np.float64).mean(axis=0))
+    ref = _highpass(np.asarray(bins[ref_start:ref_start + ref_bins], dtype=np.float64).mean(axis=0))
     raw = np.zeros((len(bins), 2))
     for b in range(len(bins)):
         shift, _, _ = phase_cross_correlation(ref, _highpass(np.asarray(bins[b], dtype=np.float64)),
@@ -97,8 +114,11 @@ def movie_identity(path: str | Path) -> dict:
 
 
 def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, ref_bins: int = 3,
-            log=print) -> dict:
-    """Build the cache for ``movie`` in ``out_dir`` and return its metadata."""
+            ref_start: int | str = "auto", log=print) -> dict:
+    """Build the cache for ``movie`` in ``out_dir`` and return its metadata.
+
+    ``ref_start`` = first bin of the "before" reference, or "auto" (first settled bin).
+    """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     started = time.time()
@@ -109,7 +129,12 @@ def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, r
                         (info.height, info.width), out_dir / "bins.npy")
     log(f"binned into {len(counts)} bins of {frames_per_bin} frames in {time.time() - started:.0f} s")
     bins = np.load(out_dir / "bins.npy", mmap_mode="r")
-    shifts, raw, outlier = estimate_shifts(bins, ref_bins=ref_bins)
+    if ref_start == "auto":
+        ref_start = settled_start(bins)
+    ref_start = int(ref_start)
+    log(f"reference: bins {ref_start}-{ref_start + ref_bins - 1} "
+        f"(frames {ref_start * frames_per_bin}-{(ref_start + ref_bins) * frames_per_bin - 1})")
+    shifts, raw, outlier = estimate_shifts(bins, ref_bins=ref_bins, ref_start=ref_start)
     jumps = [int(b) for b in np.flatnonzero(np.hypot(*np.diff(shifts, axis=0).T) > 3.0) + 1]
     log(f"registration: {int(outlier.sum())} outlier shift(s) replaced; jumps > 3 px at bins {jumps}")
     meta = {
@@ -123,6 +148,7 @@ def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, r
         "n_bins": int(len(counts)),
         "keyframes_per_bin": counts.tolist(),
         "ref_bins": ref_bins,
+        "ref_start": ref_start,
         "shifts": np.round(shifts, 3).tolist(),
         "raw_shifts": np.round(raw, 3).tolist(),
         "shift_outlier_bins": [int(b) for b in np.flatnonzero(outlier)],

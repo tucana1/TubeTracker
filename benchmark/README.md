@@ -7,6 +7,7 @@ Human labels that every method is scored on. Methods are compared with
 |---|---|
 | `labels/ld_v1.json` | The sparse-movie benchmark, written by the labelling tool (`Label_Sparse_Benchmark.command`): grain census, onset bracket per grain, exit-to-apex traces at fixed times, blind retest. Judged on registered 300-frame averages. |
 | `labels/ld_v1.journal.jsonl` | Append-only log of every answer (recovery and audit). |
+| `labels/m2_v1.json` | Held-out labels for *Pollen tube movie 2 7-14-26* (`Label_Movie2_Heldout.command`): grains isolated at germination, onset + traces up to first contact. **Never used for tuning**; scored once per frozen SparseTrack version. |
 | `labels/legacy_v0.json` | The 7 pre-reset human onset brackets and 20 traces / 16 absences, converted by `scripts/build_legacy_benchmark.py`. Judged on single compressed frames, and the older methods were tuned on them: a development reference, not the benchmark. |
 | `reports/` | Generated score reports (never retype numbers from them by hand). |
 
