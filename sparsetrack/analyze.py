@@ -108,6 +108,8 @@ class Params:
     through_min_px: int = 10     # ...at least this many pixels of it, changed before the front left
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
     min_tube_px: float = 8.0     # a front that never gets this long is not a tube (unless contact-censored)
+    front_lead_px: float = 12.0  # if the front is already this long at the stub's onset...
+    run_min_px: float = 0.5      # ...onset = start of the growth run (> this per 3 bins) that led there
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
     settle_bins: int = 24
     grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
@@ -910,6 +912,16 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     if b is None and front_onset is not None and p.onset_source != "front":
         b = front_onset
         result["flags"].append("onset_from_front")
+    elif b is not None and p.front_lead_px > 0 and length[b] >= p.front_lead_px:
+        # The stub was confirmed only once the front was already long: the tube was there before.
+        # Go back to the start of the growth run that led there, stopping at a plateau (a pore
+        # bulge or rim change can hold the front a few px out long before the tube emerges).
+        t = b
+        while t > 2 and length[t - 1] > p.onset_px and length[t] - length[t - 3] > p.run_min_px:
+            t -= 1
+        if t < b:
+            b = t
+            result["flags"].append("onset_moved_to_front")
     if b is None:
         status, onset, interval = "no_emergence_by_end", None, None
         result["flags"].append("tube_map_without_onset")
