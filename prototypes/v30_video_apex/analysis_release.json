@@ -1,0 +1,35 @@
+{
+  "id": "rev14-native-review-v1",
+  "files": {
+    "movie": {
+      "path": "/Users/joshjiang/Downloads/test1lowdensjoshua-28c-hz.mp4 .mp4",
+      "sha256": "5c8c9ef2f41c62871740666a7ade004e05f4d1e0efe1db5818ffa9644e7d2117"
+    },
+    "movie2": {
+      "path": "/Users/joshjiang/Downloads/Pollen tube movie 2 7-14-26.mp4",
+      "sha256": "6f286d8abbec2497384d564004705102e9fb734167eab1fd5c4e083b791765d6"
+    },
+    "cap": {
+      "path": "/Users/joshjiang/Documents/TubeTracker/runs/prototypes/v30/rev14_native_local_gain8_refine/step-1200.pt",
+      "sha256": "21f58969ce85b035eaa7af3ed5018d285a875f2d7e3e860a5712e5b2fdd37c3c"
+    },
+    "body": {
+      "path": "/Users/joshjiang/Documents/TubeTracker/runs/prototypes/v30/rev14_body_low_lr/step-1600.pt",
+      "sha256": "1d4519ef3a6b19d4bbb2325f9baf70692eb12388994cb42b1ab5b3c5b3517966"
+    },
+    "snapshot": {
+      "path": "/Users/joshjiang/Documents/TubeTracker/runs/prototypes/v30/snap27_rev14/snapshot_manifest.json",
+      "sha256": "a1cc862e52749dd39ee966c474a9e16e01cea16c1d243efd52506b2b353a9d85"
+    },
+    "owners": {
+      "path": "/Users/joshjiang/Documents/TubeTracker/runs/prototypes/v30/rev11own_verify/owners.json",
+      "sha256": "9b0f9e6c467a0edb207c3182f9cef8bf0e9c0f75fabd8d77938e3d16277a206a"
+    }
+  },
+  "owner_ids": [
+    "own-ld-0001",
+    "own-ld-0002",
+    "own-ld-0003"
+  ],
+  "experimental_note": "Experimental automatic proposals. Cap rejection, body fit and whole-route validation have not passed. Review uncertain tubes; full measurements require supported complete paths."
+}

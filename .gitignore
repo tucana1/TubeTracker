@@ -9,3 +9,5 @@ dist/
 data/raw/*
 !data/raw/.gitkeep
 runs/
+Test Videos/
+test videos/

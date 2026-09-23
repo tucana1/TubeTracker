@@ -1,8 +1,0 @@
-#!/bin/zsh
-
-eval "$(conda shell.zsh activate tt_voys_brown)"
-
-cd "$(dirname "$(find ~/ -type f -name TubeTracker.py -print -quit | head -1)")"
-
-python TubeTracker.py
-exit

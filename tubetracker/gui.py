@@ -46,6 +46,7 @@ class Tracker_GUI(wx.Frame):
 		self.screen_size = self.size_for("tt4")
 		self.save_name = 'Enter output name'
 		self.output_directory = None
+		self.loaded_source_frame_indices = []
 		self.panel_lt = wx.Panel(self, pos=self.position_for("pnl1"), size=self.size_for("pnl1"))
 		wx.StaticBox(self.panel_lt, label='Image Parameters', pos=self.position_for("ly1"), size=self.size_for("ly1"))
 		self.rotate_input = wx.CheckBox(self.panel_lt, label = "Rotate images", pos = self.position_for("cb_b1"))
@@ -167,9 +168,6 @@ class Tracker_GUI(wx.Frame):
 		self.tc17_lab = wx.StaticText(self.panel_rb, label=str(self.tracker.tip_max_step), style=wx.ALIGN_LEFT, pos = self.position_for("tc17l"))
 		self.tc17 = wx.Slider(self.panel_rb, value=int(100*self.tracker.tip_max_step), minValue=1, maxValue=100, style=wx.SL_HORIZONTAL, pos=self.position_for("tc17"), size=self.size_for("tc11y"))
 		self.tc17.Bind(wx.EVT_SLIDER, self.on_tip_max_step)
-		wx.StaticText(self.panel_rb, label="Smoothing gap:", style=wx.ALIGN_LEFT, pos = self.position_for("st27x"))
-		self.tc17x = wx.TextCtrl(self.panel_rb, value=str(self.tracker.flaten_gap), size = self.size_for("tc17"), pos = self.position_for("tc17x"))
-		self.tc17x.Bind(wx.EVT_TEXT, self.on_flaten_gap)
 		b5 = wx.Button(self.panel_rb, label = "Track Tips", size = self.size_for("b5"), pos = self.position_for("b5"))
 		b5.Bind(wx.EVT_BUTTON, self.on_track_elongation)
 		self.panel_mb = wx.Panel(self, pos=self.position_for("pnl4"), size=self.size_for("pnl4"))
@@ -237,7 +235,7 @@ class Tracker_GUI(wx.Frame):
 		open_item = file_menu.Append(wx.ID_ANY, "Open Video or Images...")
 		output_item = file_menu.Append(wx.ID_ANY, "Choose Output Folder...")
 		file_menu.AppendSeparator()
-		export_csv_item = file_menu.Append(wx.ID_ANY, "Export Coordinates CSV")
+		export_csv_item = file_menu.Append(wx.ID_ANY, "Export Track CSVs")
 		save_item = file_menu.Append(wx.ID_ANY, "Save All Results")
 		menu_bar.Append(file_menu, "File")
 
@@ -250,7 +248,7 @@ class Tracker_GUI(wx.Frame):
 
 		self.Bind(wx.EVT_MENU, self.on_data_directory, open_item)
 		self.Bind(wx.EVT_MENU, self.on_choose_output_directory, output_item)
-		self.Bind(wx.EVT_MENU, self.on_export_coordinates, export_csv_item)
+		self.Bind(wx.EVT_MENU, self.on_export_tracks, export_csv_item)
 		self.Bind(wx.EVT_MENU, self.on_save, save_item)
 		self.Bind(wx.EVT_MENU, self.on_reset_tracking, reset_tracking_item)
 		self.Bind(wx.EVT_MENU, self.on_restart_analysis, restart_analysis_item)
@@ -424,6 +422,7 @@ class Tracker_GUI(wx.Frame):
 		self.tracker.valid_tips = []
 		self.tracker.file_names = None
 		self.tracker.all_detections = []
+		self.loaded_source_frame_indices = []
 		self.first_use = True
 		self.img_to_display = 0
 		self.screen_control.frame = 0
@@ -1025,12 +1024,8 @@ class Tracker_GUI(wx.Frame):
 			xy = (105, 85)
 		elif item == "tc17":
 			xy = (150, 85)
-		elif item == "st27x":
-			xy = (20, 115)
-		elif item == "tc17x":
-			xy = (150, 115)
 		elif item == "b5":
-			xy = (35, 150)
+			xy = (35, 120)
 		elif item == "pnl7":
 			xy = (1228, 660)
 		elif item == "ly6":
@@ -1264,14 +1259,34 @@ class Tracker_GUI(wx.Frame):
 						if dlg.ShowModal() == wx.ID_CANCEL:
 							return
 						cap = cv.VideoCapture(dlg.GetPath())
-						k=-1
-						temp = []
-						while(True):
-							k+=1
+						frame_count = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
+						if frame_count > 1000:
+							with wx.NumberEntryDialog(
+								self,
+								"This video contains {:,} frames. Choose how many evenly spaced frames to load. The original frame numbers will be retained with this analysis session.".format(frame_count),
+								"Frames to analyze:",
+								"Large Video",
+								240,
+								20,
+								min(frame_count, 1000),
+							) as sample_dialog:
+								if sample_dialog.ShowModal() == wx.ID_CANCEL:
+									cap.release()
+									return
+								sample_count = sample_dialog.GetValue()
+							source_indices = np.linspace(
+								0, frame_count - 1, sample_count, dtype=int
+							).tolist()
+						else:
+							source_indices = list(range(frame_count))
+						self.loaded_source_frame_indices = []
+						for k in source_indices:
+							cap.set(cv.CAP_PROP_POS_FRAMES, k)
 							ret, frame = cap.read()
 							if ret == False:
-								break
-							if k == 0:
+								continue
+							self.loaded_source_frame_indices.append(k)
+							if len(self.tracker.file_names) == 0:
 								h, w, l = frame.shape
 								if self.rotate_input.GetValue() == True:
 									self.tracker.img_rp = Point(x = self.screen_size[0]/h, y = self.screen_size[1]/w)
@@ -1283,6 +1298,7 @@ class Tracker_GUI(wx.Frame):
 								cv.imwrite(xx, cv.resize(cv.rotate(frame, cv.ROTATE_90_COUNTERCLOCKWISE), self.screen_size))
 							else:
 								cv.imwrite(xx, cv.resize(frame, self.screen_size))
+						cap.release()
 				else:
 					with wx.DirDialog(self, "Choose Images Directory:", style = wx.DD_DEFAULT_STYLE|wx.DD_DIR_MUST_EXIST|wx.DD_CHANGE_DIR) as dlg:
 						if dlg.ShowModal() == wx.ID_CANCEL:
@@ -1300,6 +1316,7 @@ class Tracker_GUI(wx.Frame):
 								cv.imwrite(xx, cv.resize(cv.rotate(cv.imread(pth), cv.ROTATE_90_CLOCKWISE), self.screen_size))
 							else:
 								cv.imwrite(xx, cv.resize(cv.imread(pth), self.screen_size))
+						self.loaded_source_frame_indices = list(range(len(temp_path)))
 				self.tracker.gv3 = []
 				self.tracker.gv11 = []
 				self.tracker.all_detections = []
@@ -1334,6 +1351,8 @@ class Tracker_GUI(wx.Frame):
 		"""Run automated grain detection for the loaded sequence."""
 		if self.tracker.file_names != None:
 			self.tracker.find_grains()
+			self.chb15.SetValue(True)
+			self.update_screen()
 		self.reset_focus()
 
 	def on_find_tips(self, e):
@@ -1351,6 +1370,8 @@ class Tracker_GUI(wx.Frame):
 			else:
 				print("finding tips via Template Match")
 				self.tracker.find_tips_tm()
+			self.chb13.SetValue(True)
+			self.update_screen()
 		self.reset_focus()
 
 	def on_forward(self, e):
@@ -1607,18 +1628,22 @@ class Tracker_GUI(wx.Frame):
 		self.update_output_status("Saved all results to " + str(output_directory))
 		self.reset_focus()
 
-	def on_export_coordinates(self, e):
-		"""Write the tidy track coordinate and biological-time CSV."""
+	def on_export_tracks(self, e):
+		"""Write detailed frame-level and one-row-per-track CSV exports."""
 		if len(self.tracker.valid_tracks) == 0:
-			wx.MessageBox("Track tips before exporting coordinates.", "Export Coordinates", wx.OK | wx.ICON_INFORMATION, self)
+			wx.MessageBox("Track tips before exporting results.", "Export Tracks", wx.OK | wx.ICON_INFORMATION, self)
 			return
 		output_directory = self.ensure_output_directory()
 		if output_directory is None:
 			return
-		path = output_directory / (self.normalized_output_name() + ".coordinates.csv")
-		with path.open("w", newline="") as handle:
+		base_name = self.normalized_output_name()
+		detail_path = output_directory / (base_name + ".track_details.csv")
+		summary_path = output_directory / (base_name + ".track_summary.csv")
+		with detail_path.open("w", newline="") as handle:
 			csv.writer(handle).writerows(self.tracker.coordinate_rows())
-		self.update_output_status("Exported coordinates to " + str(path))
+		with summary_path.open("w", newline="") as handle:
+			csv.writer(handle).writerows(self.tracker.track_summary_rows())
+		self.update_output_status("Exported track details and summary to " + str(output_directory))
 
 	def on_save_name(self, e):
 		"""Update the base name used for exported files."""
@@ -1646,10 +1671,6 @@ class Tracker_GUI(wx.Frame):
 		self.tc17_lab.SetLabel('{}'.format(val))
 		self.reset_focus()
 
-	def on_flaten_gap(self, e):
-		"""Update the trajectory smoothing interval."""
-		self.tracker.flaten_gap = int(self.tc17x.GetValue())
-
 	def on_track_elongation(self, e):
 		"""Link tip detections into trajectories and review interpolated tips."""
 		if self.tracker.file_names == None:
@@ -1670,6 +1691,8 @@ class Tracker_GUI(wx.Frame):
 						for tip in self.tracker.filled_in_tips:
 							tip.is_tip = True
 							self.tracker.valid_tips[tip.gv6].append(tip)
+				self.chb14.SetValue(True)
+				self.update_screen()
 		self.reset_focus()
 
 	def on_track_germination(self, e):
@@ -1697,6 +1720,7 @@ class Tracker_GUI(wx.Frame):
 				else:
 					print("Tracking Germination via Area Change")
 					self.tracker.track_germination_via_area()
+			self.chb15.SetValue(True)
 			self.update_screen()
 		self.reset_focus()
 
@@ -1704,6 +1728,7 @@ class Tracker_GUI(wx.Frame):
 		"""Recompute foreground segmentation for every loaded frame."""
 		if self.tracker.all_detections != []:
 			self.tracker.all_detections.remove_bg_and_locate_rois(bg_threshold = self.tracker.bg_threshold, blur_radius = self.tracker.filter_radius)
+			self.tracker.clear_tube_length_cache()
 			self.update_screen()
 		self.reset_focus()
 
@@ -1711,6 +1736,7 @@ class Tracker_GUI(wx.Frame):
 		"""Recompute foreground segmentation for only the displayed frame."""
 		if self.tracker.all_detections != []:
 			self.tracker.all_detections.remove_bg_and_locate_rois(bg_threshold = self.tracker.bg_threshold, frame = self.screen_control.frame, blur_radius = self.tracker.filter_radius)
+			self.tracker.clear_tube_length_cache()
 			self.update_screen()
 		self.reset_focus()
 
@@ -1746,14 +1772,22 @@ class Tracker_GUI(wx.Frame):
 
 	def update_screen(self):
 		"""Render the selected frame mode and synchronize frame indicators."""
-		if self.tracker.file_names != None:
-			if self.chb11.GetValue() == True:
-				self.screen.display(self.tracker.all_detections.get_raw_colored_frame(self.img_to_display))
-			elif self.chb10.GetValue() == True:
-				self.screen.display(self.tracker.all_detections.get_noiseless_frame(self.img_to_display))
+		if self.tracker.file_names:
+			detections = self.tracker.all_detections
+			if hasattr(detections, "img_list_input"):
+				if self.chb11.GetValue() == True:
+					self.screen.display(detections.get_raw_colored_frame(self.img_to_display))
+				elif self.chb10.GetValue() == True:
+					self.screen.display(detections.get_noiseless_frame(self.img_to_display))
+				else:
+					self.screen.display(detections.img_list_input[self.img_to_display])
+				frame_count = detections.img_list_length
 			else:
-				self.screen.display(self.tracker.all_detections.img_list_input[self.img_to_display])
-			self.st12.SetLabel(str(self.screen_control.frame + 1) + "/" + str(self.tracker.all_detections.img_list_length))
+				frame = cv.imread(self.tracker.file_names[self.img_to_display])
+				if frame is not None:
+					self.screen.display(frame)
+				frame_count = len(self.tracker.file_names)
+			self.st12.SetLabel(str(self.screen_control.frame + 1) + "/" + str(frame_count))
 			self.screen_control.Refresh()
 
 

@@ -261,8 +261,8 @@ class Track:
 		self.add_rois(boxes)
 		if fill_holes == True:
 			self.fill_missing_frames()
-		self.gv4 = ["track." + self.id + " length ()"]
-		self.gv5 = ["track." + self.id + " length ()"]
+		self.gv4 = ["track." + self.id + " cumulative tip movement ()"]
+		self.gv5 = ["track." + self.id + " cumulative tip movement ()"]
 
 	def add_roi(self, box):
 		"""Insert an ROI into the trajectory while preserving frame order."""
@@ -309,8 +309,8 @@ class Track:
 				times = int(box2.gv6 - self.gv1[0].gv6)
 				gv4.append([times, length])
 				gv5.append([box2.gv6, length])
-			self.gv4 = ["track." + self.id + " length (" + disp_u + ")"]
-			self.gv5 = ["track." + self.id + " length (" + disp_u + ")"]
+			self.gv4 = ["track." + self.id + " cumulative tip movement (" + disp_u + ")"]
+			self.gv5 = ["track." + self.id + " cumulative tip movement (" + disp_u + ")"]
 			for i in range(num_frames):
 				k = ""
 				for pt in gv4:
@@ -396,12 +396,12 @@ class Track:
 				for i in range(nbox):
 					df = i+1
 					frame = box1.gv6 + df
-					boxes.append(ROI(x_l = int(box1.gv1.x + df*mxl), y_t = int(box1.gv1.y + df*myt), x_r = int(box1.gv2.x + df*mxr), y_b = int(box1.gv2.y + df*myb), frame = frame, group = box1.group, filled_in = True))
+					boxes.append(ROI(x_l = int(box1.gv1.x + df*mxl), y_t = int(box1.gv1.y + df*myt), x_r = int(box1.gv2.x + df*mxr), y_b = int(box1.gv2.y + df*myb), frame = frame, group = box1.group, filled_in = True, detection_method = "interpolated"))
 		self.add_rois(boxes)
 		if up_to_frame > self.last_frame():
 			b = []
 			for i in range(self.last_frame(), up_to_frame, 1):
-				b.append(ROI(x_l = self.gv1[-1].gv1.x, y_t = self.gv1[-1].gv1.y, x_r = self.gv1[-1].gv2.x, y_b = self.gv1[-1].gv2.y, frame = i, group = self.gv1[-1].group, filled_in = True))
+				b.append(ROI(x_l = self.gv1[-1].gv1.x, y_t = self.gv1[-1].gv1.y, x_r = self.gv1[-1].gv2.x, y_b = self.gv1[-1].gv2.y, frame = i, group = self.gv1[-1].group, filled_in = True, detection_method = "interpolated"))
 			if len(b) > 0:
 				self.add_rois(b)
 		if ret:

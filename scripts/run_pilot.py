@@ -39,6 +39,19 @@ def parse_args():
     )
     parser.add_argument("--pixel-size", type=float, default=1.0)
     parser.add_argument("--distance-unit", default="pxl")
+    parser.add_argument("--start-frame", type=int, default=0)
+    parser.add_argument(
+        "--end-frame",
+        type=int,
+        default=0,
+        help="Last source frame to include; 0 means the final video frame.",
+    )
+    parser.add_argument(
+        "--frame-step",
+        type=int,
+        default=1,
+        help="Analyze every Nth source frame to bound memory use.",
+    )
     parser.add_argument("--max-frames", type=int, default=0)
     parser.add_argument("--rotate", action="store_true")
     parser.add_argument("--screen-width", type=int, default=1000)
@@ -60,7 +73,6 @@ def parse_args():
     parser.add_argument("--gap-closing", type=int, default=10)
     parser.add_argument("--min-points-per-track", type=int, default=10)
     parser.add_argument("--min-overlap", type=float, default=0.10)
-    parser.add_argument("--smoothing-gap", type=int, default=4)
     parser.add_argument(
         "--germination-method",
         choices=("tip-overlap", "area-change"),
@@ -116,29 +128,50 @@ def software_state():
     return state
 
 
-def load_video(path, screen_size, max_frames, rotate):
-    """Read, optionally rotate, and resize video frames for an analysis run."""
+def load_video(
+    path,
+    screen_size,
+    max_frames,
+    rotate,
+    start_frame=0,
+    end_frame=0,
+    frame_step=1,
+):
+    """Read a bounded source-frame sequence and resize it for analysis."""
     cap = cv.VideoCapture(str(path))
     if not cap.isOpened():
         raise RuntimeError(f"OpenCV could not open {path}")
+    frame_count = int(cap.get(cv.CAP_PROP_FRAME_COUNT))
     metadata = {
-        "frame_count_reported": int(cap.get(cv.CAP_PROP_FRAME_COUNT)),
+        "frame_count_reported": frame_count,
         "playback_fps": float(cap.get(cv.CAP_PROP_FPS)),
         "original_width": int(cap.get(cv.CAP_PROP_FRAME_WIDTH)),
         "original_height": int(cap.get(cv.CAP_PROP_FRAME_HEIGHT)),
     }
+    source_end = (
+        frame_count - 1 if end_frame <= 0 else min(end_frame, frame_count - 1)
+    )
+    source_indices = []
     frames = []
-    while max_frames <= 0 or len(frames) < max_frames:
+    source_frame = start_frame
+    while source_frame <= source_end and (max_frames <= 0 or len(frames) < max_frames):
+        cap.set(cv.CAP_PROP_POS_FRAMES, source_frame)
         ok, frame = cap.read()
         if not ok:
             break
         if rotate:
             frame = cv.rotate(frame, cv.ROTATE_90_COUNTERCLOCKWISE)
         frames.append(cv.resize(frame, screen_size))
+        source_indices.append(source_frame)
+        source_frame += frame_step
     cap.release()
     if not frames:
         raise RuntimeError(f"No frames could be read from {path}")
     metadata["frames_analyzed"] = len(frames)
+    metadata["source_frame_indices"] = source_indices
+    metadata["source_start_frame"] = source_indices[0]
+    metadata["source_end_frame"] = source_indices[-1]
+    metadata["source_frame_step"] = frame_step
     return frames, metadata
 
 
@@ -161,7 +194,14 @@ def sample_fields(args, sample_id):
     ]
 
 
-def write_grain_summary(path, tracker, args, sample_id):
+def source_frame_for(source_frames, analysis_frame):
+    """Map an analysis-frame index back to its original video frame."""
+    if analysis_frame < 0 or analysis_frame >= len(source_frames):
+        return -1
+    return source_frames[int(analysis_frame)]
+
+
+def write_grain_summary(path, tracker, args, sample_id, source_frames):
     """Write one QC-aware germination and burst row per detected grain."""
     header = [
         "sample_id",
@@ -169,16 +209,19 @@ def write_grain_summary(path, tracker, args, sample_id):
         "biological_replicate",
         "imaging_session",
         "grain_id",
-        "detection_frame",
-        "detection_time",
+        "detection_analysis_frame",
+        "detection_source_frame",
+        f"detection_time_{args.time_unit}",
         "germinated",
-        "germination_frame",
-        "germination_time",
+        "germination_analysis_frame",
+        "germination_source_frame",
+        f"germination_time_{args.time_unit}",
         "germination_p_value",
         "detection_method",
         "germination_method",
         "burst_candidate",
-        "burst_candidate_frame",
+        "burst_candidate_analysis_frame",
+        "burst_candidate_source_frame",
         "burst_candidate_confidence",
         "associated_track_id",
         "qc_status",
@@ -187,6 +230,15 @@ def write_grain_summary(path, tracker, args, sample_id):
         writer = csv.writer(handle)
         writer.writerow(header)
         for grain in tracker.valid_grains:
+            detection_source_frame = source_frame_for(
+                source_frames, grain.first_frame()
+            )
+            germination_source_frame = source_frame_for(
+                source_frames, grain.ger_frame
+            )
+            burst_source_frame = source_frame_for(
+                source_frames, grain.burst_candidate_frame
+            )
             status = "pass"
             if not grain.is_germinated:
                 status = "review_not_germinated"
@@ -197,15 +249,20 @@ def write_grain_summary(path, tracker, args, sample_id):
                 + [
                     grain.id,
                     grain.first_frame(),
-                    grain.first_frame() * args.time_per_frame,
+                    detection_source_frame,
+                    detection_source_frame * args.time_per_frame,
                     grain.is_germinated,
                     grain.ger_frame,
-                    grain.ger_frame * args.time_per_frame if grain.ger_frame >= 0 else -1,
+                    germination_source_frame,
+                    germination_source_frame * args.time_per_frame
+                    if germination_source_frame >= 0
+                    else -1,
                     grain.ger_p_value,
                     grain.detection_method,
                     grain.germination_method,
                     grain.is_burst_candidate,
                     grain.burst_candidate_frame,
+                    burst_source_frame,
                     grain.burst_candidate_confidence,
                     grain.burst_candidate_track_id,
                     status,
@@ -213,68 +270,80 @@ def write_grain_summary(path, tracker, args, sample_id):
             )
 
 
-def write_track_summary(path, tracker, args, sample_id, frame_count):
-    """Write calibrated tip coordinates, cumulative movement, and growth rates."""
-    track_to_grain = {}
-    for grain in tracker.valid_grains:
-        track = tracker.associate_grain_to_track(grain)
-        if track is not None and track.id not in track_to_grain:
-            track_to_grain[track.id] = grain.id
-
+def write_track_details(path, tracker, args, sample_id, source_frames):
+    """Write every retained tip point and its trajectory-based measurements."""
+    rows = tracker.coordinate_rows()
+    core_header = rows[0]
     header = [
         "sample_id",
         "genotype",
         "biological_replicate",
         "imaging_session",
-        "grain_id",
-        "track_id",
-        "frame",
+    ] + core_header[:2] + [
+        "analysis_frame",
+        "source_frame",
         f"time_{args.time_unit}",
-        "centroid_x_original_px",
-        "centroid_y_original_px",
-        "cumulative_length_px",
-        f"cumulative_length_{args.distance_unit}",
-        f"growth_rate_{args.distance_unit}_per_{args.time_unit}",
-        "detection_method",
-    ]
+    ] + core_header[4:]
     with path.open("w", newline="") as handle:
         writer = csv.writer(handle)
         writer.writerow(header)
-        for track in tracker.valid_tracks:
-            track.calculate_metrics(
-                coef=tracker.img_rp,
-                disp=args.pixel_size,
-                disp_u=args.distance_unit,
-                num_frames=frame_count,
-                time_p_frame=args.time_per_frame,
+        for row in rows[1:]:
+            source_frame = source_frame_for(source_frames, row[2])
+            current_time = source_frame * args.time_per_frame
+            writer.writerow(
+                sample_fields(args, sample_id)
+                + row[:3]
+                + [source_frame, current_time]
+                + row[4:]
             )
-            previous_time = None
-            previous_length = None
-            for row in track.gv3:
-                current_time = row[4]
-                current_length = row[6]
-                growth_rate = ""
-                if previous_time is not None and current_time > previous_time:
-                    growth_rate = (current_length - previous_length) / (
-                        current_time - previous_time
-                    )
-                writer.writerow(
-                    sample_fields(args, sample_id)
-                    + [
-                        track_to_grain.get(track.id, ""),
-                        row[0],
-                        row[1],
-                        row[4],
-                        row[2],
-                        row[3],
-                        row[5],
-                        row[6],
-                        growth_rate,
-                        row[7],
-                    ]
-                )
-                previous_time = current_time
-                previous_length = current_length
+
+
+def write_track_summary(path, tracker, args, sample_id, source_frames):
+    """Write one final cumulative-movement summary row per accepted track."""
+    rows = tracker.track_summary_rows()
+    with path.open("w", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "sample_id",
+                "genotype",
+                "biological_replicate",
+                "imaging_session",
+            ]
+            + [
+                "grain_id",
+                "track_id",
+                "start_analysis_frame",
+                "start_source_frame",
+                "end_analysis_frame",
+                "end_source_frame",
+                f"start_time_{args.time_unit}",
+                f"end_time_{args.time_unit}",
+                f"duration_{args.time_unit}",
+            ]
+            + rows[0][7:]
+        )
+        for row in rows[1:]:
+            start_source_frame = source_frame_for(source_frames, row[2])
+            end_source_frame = source_frame_for(source_frames, row[3])
+            start_time = start_source_frame * args.time_per_frame
+            end_time = end_source_frame * args.time_per_frame
+            writer.writerow(
+                sample_fields(args, sample_id)
+                + [
+                    row[0],
+                    row[1],
+                    row[2],
+                    start_source_frame,
+                    row[3],
+                    end_source_frame,
+                    start_time,
+                    end_time,
+                    end_time - start_time,
+                ]
+                + row[7:]
+            )
+    return rows
 
 
 def validate_args(args):
@@ -283,12 +352,16 @@ def validate_args(args):
         raise SystemExit("--time-per-frame must be greater than zero")
     if args.pixel_size <= 0:
         raise SystemExit("--pixel-size must be greater than zero")
+    if args.start_frame < 0:
+        raise SystemExit("--start-frame cannot be negative")
+    if args.end_frame > 0 and args.end_frame < args.start_frame:
+        raise SystemExit("--end-frame must be at or after --start-frame")
+    if args.frame_step <= 0:
+        raise SystemExit("--frame-step must be greater than zero")
     if not 0 < args.acceptance_ratio <= 1:
         raise SystemExit("--acceptance-ratio must be in (0, 1]")
     if not 0 < args.min_overlap <= 1:
         raise SystemExit("--min-overlap must be in (0, 1]")
-    if args.smoothing_gap >= args.min_points_per_track:
-        raise SystemExit("--smoothing-gap must be smaller than --min-points-per-track")
 
 
 def main():
@@ -320,7 +393,13 @@ def main():
     try:
         screen_size = (args.screen_width, args.screen_height)
         frames, video_metadata = load_video(
-            video, screen_size, args.max_frames, args.rotate
+            video,
+            screen_size,
+            args.max_frames,
+            args.rotate,
+            start_frame=args.start_frame,
+            end_frame=args.end_frame,
+            frame_step=args.frame_step,
         )
         source_width = video_metadata["original_width"]
         source_height = video_metadata["original_height"]
@@ -336,7 +415,7 @@ def main():
         tracker.img_ratio = (tracker.img_rp.x + tracker.img_rp.y) / 2
         tracker.pxl_dis = args.pixel_size
         tracker.dis_unit = args.distance_unit
-        tracker.time_p_frame = args.time_per_frame
+        tracker.time_p_frame = args.time_per_frame * args.frame_step
         tracker.time_unit = args.time_unit
         tracker.bg_threshold = args.background_cutoff
         tracker.filter_radius = args.blur_radius
@@ -353,7 +432,6 @@ def main():
         tracker.tip_gap_closing = args.gap_closing
         tracker.min_tip_per_trk = args.min_points_per_track
         tracker.tip_max_step = args.min_overlap
-        tracker.flaten_gap = args.smoothing_gap
         tracker.ger_confirm_frames = args.confirmation_frames
         tracker.aceptance_ratio = args.acceptance_ratio
         tracker.enable_burst_candidates = args.burst_candidates
@@ -415,19 +493,45 @@ def main():
             )
 
         write_grain_summary(
-            output_dir / "pilot.grains.csv", tracker, args, sample_id
-        )
-        write_track_summary(
-            output_dir / "pilot.tracks.csv",
+            output_dir / "pilot.grains.csv",
             tracker,
             args,
             sample_id,
-            len(frames),
+            video_metadata["source_frame_indices"],
+        )
+        write_track_details(
+            output_dir / "pilot.track_details.csv",
+            tracker,
+            args,
+            sample_id,
+            video_metadata["source_frame_indices"],
+        )
+        track_summary_rows = write_track_summary(
+            output_dir / "pilot.track_summary.csv",
+            tracker,
+            args,
+            sample_id,
+            video_metadata["source_frame_indices"],
         )
         tip_count = sum(len(tips) for tips in tracker.valid_tips)
         germinated_count = sum(
             1 for grain in tracker.valid_grains if grain.is_germinated
         )
+        trajectory_qc_counts = {}
+        image_qc_counts = {}
+        trajectory_qc_index = track_summary_rows[0].index(
+            "trajectory_length_qc_status"
+        )
+        image_qc_index = track_summary_rows[0].index(
+            "final_image_centerline_qc_status"
+        )
+        for row in track_summary_rows[1:]:
+            trajectory_status = row[trajectory_qc_index]
+            image_status = row[image_qc_index]
+            trajectory_qc_counts[trajectory_status] = (
+                trajectory_qc_counts.get(trajectory_status, 0) + 1
+            )
+            image_qc_counts[image_status] = image_qc_counts.get(image_status, 0) + 1
         summary = {
             "sample_id": sample_id,
             "frames_analyzed": len(frames),
@@ -442,6 +546,10 @@ def main():
             "track_count": len(tracker.valid_tracks),
             "tracking_engine": tracker.tracking_engine,
             "burst_candidate_count": len(tracker.burst_candidates),
+            "clean_trajectory_length_count": trajectory_qc_counts.get("ok", 0),
+            "trajectory_length_qc": trajectory_qc_counts,
+            "clean_image_centerline_count": image_qc_counts.get("ok", 0),
+            "image_centerline_qc": image_qc_counts,
             "review_required": {
                 "not_germinated": sum(
                     1 for grain in tracker.valid_grains if not grain.is_germinated

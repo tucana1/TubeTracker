@@ -1,6 +1,7 @@
 """Image processing, detection linking, event scoring, and result export."""
 
 import csv
+from heapq import heappop, heappush
 import math
 from random import randint
 import statistics as stat
@@ -239,7 +240,6 @@ class Tracker:
 		self.min_tip_side = 18
 		self.filter_radius = 10
 		self.filled_in_tips = []
-		self.flaten_gap = 4
 		self.aceptance_ratio = 0.5
 		self.ger_confirm_frames = 8
 		self.burst_candidates = []
@@ -247,6 +247,12 @@ class Tracker:
 		self.burst_candidates_evaluated = False
 		self.burst_score_threshold = 0.5
 		self.burst_end_margin = 3
+		self.tube_background_sigma = 15
+		self.tube_min_component_area = 12
+		self.tube_length_search_radius = 180
+		self.tube_connection_gap = 15
+		self._tube_skeleton_cache = {}
+		self._tube_length_cache = {}
 		self.burst_area_spike_ratio = 1.6
 		self.tracking_engine = "laptrack"
 
@@ -328,6 +334,56 @@ class Tracker:
 				))
 			groups.append(group)
 		return groups
+
+	def stitch_track_fragments(self, groups, max_gap_frames, prediction_tolerance):
+		"""Join fragments when recent velocity predicts a compatible future start."""
+		fragments = [sorted(group, key=lambda roi: roi.gv6) for group in groups if group]
+		while True:
+			candidates = []
+			for source_index, source in enumerate(fragments):
+				if len(source) < 2:
+					continue
+				previous, current = source[-2], source[-1]
+				frame_delta = current.gv6 - previous.gv6
+				if frame_delta <= 0:
+					continue
+				velocity_x = (current.gv3.x - previous.gv3.x)/frame_delta
+				velocity_y = (current.gv3.y - previous.gv3.y)/frame_delta
+				for target_index, target in enumerate(fragments):
+					if source_index == target_index:
+						continue
+					gap = target[0].gv6 - current.gv6
+					if gap <= 1 or gap - 1 > max_gap_frames:
+						continue
+					predicted_x = current.gv3.x + velocity_x*gap
+					predicted_y = current.gv3.y + velocity_y*gap
+					prediction_error = math.hypot(
+						target[0].gv3.x - predicted_x,
+						target[0].gv3.y - predicted_y,
+					)
+					if prediction_error > prediction_tolerance:
+						continue
+					connector_x = target[0].gv3.x - current.gv3.x
+					connector_y = target[0].gv3.y - current.gv3.y
+					velocity_norm = math.hypot(velocity_x, velocity_y)
+					connector_norm = math.hypot(connector_x, connector_y)
+					if velocity_norm > 0 and connector_norm > 0:
+						direction_cosine = (
+							velocity_x*connector_x + velocity_y*connector_y
+						)/(velocity_norm*connector_norm)
+						if direction_cosine < 0.5:
+							continue
+					candidates.append((prediction_error, source_index, target_index))
+			if not candidates:
+				break
+			_, source_index, target_index = min(candidates)
+			target = fragments[target_index]
+			target[0].detection_method = (
+				target[0].detection_method + "+trajectory_assisted"
+			)
+			fragments[source_index] = fragments[source_index] + target
+			fragments.pop(target_index)
+		return fragments
 
 	def draw_results(self , tracks = True):
 		"""Render track paths or grain states onto copies of source frames."""
@@ -436,6 +492,7 @@ class Tracker:
 
 	def find_grains(self):
 		"""Detect circular pollen grains and link observations across frames."""
+		self.clear_tube_length_cache()
 		size_cutoff = 1.3
 		self.valid_grains = []
 		self.gv3 = []
@@ -460,9 +517,10 @@ class Tracker:
 			circles = cv.HoughCircles(self.all_detections.img_list_gray_noiseless[k], cv.HOUGH_GRADIENT, 1, int(0.75*(self.max_grain_radius+self.min_grain_radius)), param1=210, param2 = gr_tr, minRadius = int(self.min_grain_radius), maxRadius = int(self.max_grain_radius))
 			if circles is None:
 				continue
-			grains = np.uint16(np.around(circles))
+			grains = np.around(circles).astype(np.int32)
 			for i in grains[0, :]:
-				grain = ROI(x_l = int(i[0] - i[2]), y_t = int(i[1] - i[2]), x_r = int(i[0] + i[2]), y_b = int(i[1] + i[2]), frame = k, group = str(voys))
+				x, y, radius = (int(value) for value in i)
+				grain = ROI(x_l = x - radius, y_t = y - radius, x_r = x + radius, y_b = y + radius, frame = k, group = str(voys))
 				voys += 1
 				if grain.overlaps_any(self.all_detections.rois[k], overlap = overlap):
 					if k <= self.grain_det_stop:
@@ -697,7 +755,7 @@ class Tracker:
 			num_rows = []
 			for track in self.valid_tracks:
 				num_rows.append(track.gv2 + 2)
-			self.gv38 = [["track_id", "frame", "centroid_x", "centroid_y", "time (" + self.time_unit + ")",  "length (pixel)", "length (" + self.dis_unit + ")", "detection_method"]]
+			self.gv38 = [["track_id", "frame", "centroid_x", "centroid_y", "time (" + self.time_unit + ")", "cumulative tip movement (pixel)", "cumulative tip movement (" + self.dis_unit + ")", "detection_method"]]
 			for track in tracks:
 				for row in track.gv3:
 					self.gv38.append(row)
@@ -777,9 +835,18 @@ class Tracker:
 			"time_" + self.time_unit,
 			"centroid_x_original_px",
 			"centroid_y_original_px",
-			"cumulative_movement_px",
-			"cumulative_movement_" + self.dis_unit,
-			"growth_rate_" + self.dis_unit + "_per_" + self.time_unit,
+			"cumulative_tip_movement_px",
+			"cumulative_tip_movement_" + self.dis_unit,
+			"tip_growth_rate_" + self.dis_unit + "_per_" + self.time_unit,
+			"grain_boundary_to_tracked_tip_straight_distance_px",
+			"grain_boundary_to_tracked_tip_straight_distance_" + self.dis_unit,
+			"trajectory_based_tube_length_px",
+			"trajectory_based_tube_length_" + self.dis_unit,
+			"trajectory_length_qc_status",
+			"image_centerline_length_px",
+			"image_centerline_length_" + self.dis_unit,
+			"image_centerline_qc_status",
+			"tip_position_status",
 			"detection_method",
 		]
 		if not self.file_names:
@@ -791,6 +858,11 @@ class Tracker:
 				track_to_grain[track.id] = grain.id
 		rows = [header]
 		for track in self.valid_tracks:
+			grain_id = track_to_grain.get(track.id, "")
+			grain = next(
+				(grain for grain in self.valid_grains if grain.id == grain_id),
+				None,
+			)
 			track.calculate_metrics(
 				coef=self.img_rp,
 				disp=self.pxl_dis,
@@ -798,14 +870,47 @@ class Tracker:
 				num_frames=len(self.file_names),
 				time_p_frame=self.time_p_frame,
 			)
+			initial_length_px = 0.0
+			if grain is not None:
+				first_tip = track.gv1[0]
+				first_grain = grain.roi_closest_to(first_tip.gv6)
+				center_distance = grain.centroid_distance(
+					first_grain, first_tip, img_ratio=self.img_rp
+				)
+				grain_radius = max(
+					first_grain.w/self.img_rp.x,
+					first_grain.h/self.img_rp.y,
+				)/2
+				initial_length_px = max(0.0, center_distance - grain_radius)
 			previous_time = None
 			previous_length = None
 			for point in track.gv3:
+				tip_roi = track.roi_closest_to(point[1])
 				growth_rate = ""
 				if previous_time is not None and point[4] > previous_time:
 					growth_rate = (point[6] - previous_length)/(point[4] - previous_time)
+				length_result = self.estimate_tube_length(grain, point[1]) if grain else None
+				straight_px = ""
+				trajectory_px = ""
+				trajectory_status = "unassociated_track"
+				if grain is not None:
+					grain_roi = grain.roi_closest_to(point[1])
+					center_distance = grain.centroid_distance(
+						grain_roi, tip_roi, img_ratio=self.img_rp
+					)
+					grain_radius = max(
+						grain_roi.w/self.img_rp.x,
+						grain_roi.h/self.img_rp.y,
+					)/2
+					straight_px = max(0.0, center_distance - grain_radius)
+					trajectory_px = initial_length_px + point[5]
+					trajectory_status = (
+						"interpolated_tip_position"
+						if tip_roi.is_filled_in
+						else "ok"
+					)
 				rows.append([
-					track_to_grain.get(track.id, ""),
+					grain_id,
 					point[0],
 					point[1],
 					point[4],
@@ -814,10 +919,259 @@ class Tracker:
 					point[5],
 					point[6],
 					growth_rate,
+					straight_px,
+					straight_px*self.pxl_dis if straight_px != "" else "",
+					trajectory_px,
+					trajectory_px*self.pxl_dis if trajectory_px != "" else "",
+					trajectory_status,
+					length_result["centerline_px"] if length_result else "",
+					length_result["centerline_calibrated"] if length_result else "",
+					length_result["status"] if length_result else "unassociated_track",
+					"interpolated" if tip_roi.is_filled_in else "detected",
 					point[7],
 				])
 				previous_time = point[4]
 				previous_length = point[6]
+		return rows
+
+	def clear_tube_length_cache(self):
+		"""Discard derived tube skeletons and length estimates after image changes."""
+		self._tube_skeleton_cache = {}
+		self._tube_length_cache = {}
+
+	def tube_skeleton(self, frame):
+		"""Return a cached skeleton of dark tube-like structures for one frame."""
+		if frame in self._tube_skeleton_cache:
+			return self._tube_skeleton_cache[frame]
+		if not hasattr(self.all_detections, "img_list_input"):
+			return None
+		if frame < 0 or frame >= self.all_detections.img_list_length:
+			return None
+		image = self.all_detections.img_list_input[frame]
+		gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+		background = cv.GaussianBlur(gray, (0, 0), self.tube_background_sigma)
+		enhanced = cv.subtract(background, gray)
+		enhanced = cv.normalize(enhanced, None, 0, 255, cv.NORM_MINMAX)
+		_, binary = cv.threshold(enhanced, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU)
+		binary = cv.morphologyEx(binary, cv.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+		count, labels, stats, _ = cv.connectedComponentsWithStats(binary)
+		cleaned = np.zeros_like(binary)
+		for label in range(1, count):
+			if stats[label, cv.CC_STAT_AREA] >= self.tube_min_component_area:
+				cleaned[labels == label] = 255
+		skeleton = cv.ximgproc.thinning(cleaned)
+		self._tube_skeleton_cache[frame] = skeleton
+		return skeleton
+
+	def estimate_tube_length(self, grain, frame):
+		"""Estimate a grain-to-tip centerline and straight distance with QC state."""
+		if grain is None:
+			return None
+		cache_key = (grain.id, int(frame))
+		if cache_key in self._tube_length_cache:
+			return self._tube_length_cache[cache_key]
+		skeleton = self.tube_skeleton(frame)
+		if skeleton is None:
+			return None
+		grain_roi = grain.roi_closest_to(frame)
+		center_x, center_y = grain_roi.gv3.x, grain_roi.gv3.y
+		half = self.tube_length_search_radius
+		x1 = max(0, center_x - half)
+		y1 = max(0, center_y - half)
+		x2 = min(skeleton.shape[1], center_x + half)
+		y2 = min(skeleton.shape[0], center_y + half)
+		crop = skeleton[y1:y2, x1:x2].copy()
+		local_center = (center_x - x1, center_y - y1)
+
+		other_grains = []
+		for candidate in self.valid_grains:
+			roi = candidate.roi_closest_to(frame)
+			left = max(0, roi.gv1.x - x1 - 1)
+			top = max(0, roi.gv1.y - y1 - 1)
+			right = min(crop.shape[1], roi.gv2.x - x1 + 1)
+			bottom = min(crop.shape[0], roi.gv2.y - y1 + 1)
+			if left < right and top < bottom:
+				crop[top:bottom, left:right] = 0
+			if candidate.id != grain.id:
+				other_grains.append(roi)
+
+		component_count, component_labels = cv.connectedComponents(crop)
+		y_grid, x_grid = np.indices(crop.shape)
+		distance_from_grain = np.hypot(
+			x_grid - local_center[0], y_grid - local_center[1]
+		)
+		grain_radius = max(grain_roi.w, grain_roi.h)/2
+		candidate_labels = []
+		for label in range(1, component_count):
+			distances = distance_from_grain[component_labels == label]
+			if len(distances) and distances.min() <= grain_radius + self.tube_connection_gap:
+				candidate_labels.append(label)
+
+		best = None
+		for label in candidate_labels:
+			pixels = np.column_stack(np.where(component_labels == label))
+			start = tuple(
+				pixels[np.argmin(np.hypot(
+					pixels[:, 1] - local_center[0],
+					pixels[:, 0] - local_center[1],
+				))]
+			)
+			pixel_set = {tuple(pixel) for pixel in pixels}
+			distances = {start: 0.0}
+			parents = {}
+			queue = [(0.0, start)]
+			while queue:
+				cost, node = heappop(queue)
+				if cost != distances[node]:
+					continue
+				y, x = node
+				for dy in (-1, 0, 1):
+					for dx in (-1, 0, 1):
+						if not (dx or dy):
+							continue
+						next_node = (y + dy, x + dx)
+						if next_node not in pixel_set:
+							continue
+						step = math.sqrt(2) if dx and dy else 1.0
+						next_cost = cost + step
+						if next_cost < distances.get(next_node, float("inf")):
+							distances[next_node] = next_cost
+							parents[next_node] = node
+							heappush(queue, (next_cost, next_node))
+			end = max(distances, key=distances.get)
+			if best is None or distances[end] > best[0]:
+				best = (distances[end], start, end, parents, pixel_set)
+
+		if best is None:
+			result = {
+				"straight_px": "",
+				"straight_calibrated": "",
+				"centerline_px": "",
+				"centerline_calibrated": "",
+				"status": "no_connected_centerline",
+			}
+			self._tube_length_cache[cache_key] = result
+			return result
+
+		_, start, end, parents, pixel_set = best
+		path = [end]
+		while path[-1] != start:
+			path.append(parents[path[-1]])
+		path.reverse()
+		centerline_px = 0.0
+		for first, second in zip(path, path[1:]):
+			dx = (second[1] - first[1])/self.img_rp.x
+			dy = (second[0] - first[0])/self.img_rp.y
+			centerline_px += math.hypot(dx, dy)
+		straight_px = math.hypot(
+			(end[1] - start[1])/self.img_rp.x,
+			(end[0] - start[0])/self.img_rp.y,
+		)
+		endpoint_count = 0
+		for y, x in pixel_set:
+			degree = sum(
+				(y + dy, x + dx) in pixel_set
+				for dy in (-1, 0, 1)
+				for dx in (-1, 0, 1)
+				if dx or dy
+			)
+			endpoint_count += degree == 1
+		status = "ok"
+		if endpoint_count > 2:
+			status = "ambiguous_branch"
+		for other in other_grains:
+			other_center = (other.gv3.x - x1, other.gv3.y - y1)
+			other_radius = max(other.w, other.h)/2
+			if any(
+				math.hypot(x - other_center[0], y - other_center[1])
+				<= other_radius + self.tube_connection_gap
+				for y, x in pixel_set
+			):
+				status = "touches_other_grain"
+				break
+		if centerline_px < 5:
+			status = "too_short"
+		result = {
+			"straight_px": straight_px,
+			"straight_calibrated": straight_px*self.pxl_dis,
+			"centerline_px": centerline_px,
+			"centerline_calibrated": centerline_px*self.pxl_dis,
+			"status": status,
+		}
+		self._tube_length_cache[cache_key] = result
+		return result
+
+	def track_summary_rows(self):
+		"""Return one final cumulative-movement summary row per accepted track."""
+		header = [
+			"grain_id",
+			"track_id",
+			"start_frame",
+			"end_frame",
+			"start_time_" + self.time_unit,
+			"end_time_" + self.time_unit,
+			"duration_" + self.time_unit,
+			"observation_count",
+			"final_cumulative_tip_movement_px",
+			"final_cumulative_tip_movement_" + self.dis_unit,
+			"average_tip_growth_rate_" + self.dis_unit + "_per_" + self.time_unit,
+			"final_grain_boundary_to_tracked_tip_straight_distance_px",
+			"final_grain_boundary_to_tracked_tip_straight_distance_" + self.dis_unit,
+			"final_trajectory_based_tube_length_px",
+			"final_trajectory_based_tube_length_" + self.dis_unit,
+			"trajectory_length_qc_status",
+			"final_image_centerline_length_px",
+			"final_image_centerline_length_" + self.dis_unit,
+			"final_image_centerline_qc_status",
+			"interpolated_point_count",
+			"detection_methods",
+		]
+		details = self.coordinate_rows()
+		if len(details) == 1:
+			return [header]
+		detail_header = details[0]
+		by_track = {}
+		for values in details[1:]:
+			row = dict(zip(detail_header, values))
+			by_track.setdefault(row["track_id"], []).append(row)
+		rows = [header]
+		for track in self.valid_tracks:
+			track_rows = by_track.get(track.id, [])
+			if not track_rows:
+				continue
+			first = track_rows[0]
+			last = track_rows[-1]
+			duration = last["time_" + self.time_unit] - first["time_" + self.time_unit]
+			final_movement = last["cumulative_tip_movement_" + self.dis_unit]
+			average_rate = final_movement/duration if duration > 0 else ""
+			methods = ",".join(dict.fromkeys(row["detection_method"] for row in track_rows))
+			rows.append([
+				first["grain_id"],
+				track.id,
+				first["frame"],
+				last["frame"],
+				first["time_" + self.time_unit],
+				last["time_" + self.time_unit],
+				duration,
+				len(track_rows),
+				last["cumulative_tip_movement_px"],
+				final_movement,
+				average_rate,
+				last["grain_boundary_to_tracked_tip_straight_distance_px"],
+				last["grain_boundary_to_tracked_tip_straight_distance_" + self.dis_unit],
+				last["trajectory_based_tube_length_px"],
+				last["trajectory_based_tube_length_" + self.dis_unit],
+				(
+					"contains_interpolated_tip_positions"
+					if any(row["tip_position_status"] == "interpolated" for row in track_rows)
+					else last["trajectory_length_qc_status"]
+				),
+				last["image_centerline_length_px"],
+				last["image_centerline_length_" + self.dis_unit],
+				last["image_centerline_qc_status"],
+				sum(row["tip_position_status"] == "interpolated" for row in track_rows),
+				methods,
+			])
 		return rows
 
 	def segment_inputs(self, for_ger = True, false_color = True):
@@ -835,6 +1189,7 @@ class Tracker:
 			for img_path in self.file_names:
 				img_list.append(cv.resize(cv.imread(img_path), self.screen_size))
 			self.all_detections = Detections(img_list = img_list, bg_threshold = self.bg_threshold, blur_radius = self.filter_radius)
+			self.clear_tube_length_cache()
 
 	def tip_templates(self):
 		"""Return validated image templates for the legacy tip detector."""
@@ -847,10 +1202,6 @@ class Tracker:
 		self.filled_in_tips = []
 		self.gv31 = 1
 		self.gv32 = []
-		if self.flaten_gap >= self.min_tip_per_trk:
-			flaten_gap = self.min_tip_per_trk-1
-		else:
-			flaten_gap = self.flaten_gap
 		if len(self.valid_tips) > 0:
 			tmp = []
 			for tips_in_k in self.valid_tips:
@@ -870,25 +1221,18 @@ class Tracker:
 				gap_frames=max(0, int(self.tip_gap_closing)),
 				gap_distance=2*max_distance,
 			)
+			linked_tracks = self.stitch_track_fragments(
+				linked_tracks,
+				max_gap_frames=max(0, int(self.tip_gap_closing)),
+				prediction_tolerance=max(mean_side, 2*max_distance),
+			)
 			for cur_trk in linked_tracks:
 				if len(cur_trk)>1:
 					trk = Track(boxes = cur_trk, color = self.random_color(), ID = self.allocate_id())
 					xtr_tips = trk.fill_missing_frames(ret = True)
 					if trk.gv2 >= self.min_tip_per_trk or trk.last_frame() - trk.first_frame() >= self.min_tip_per_trk:
 						if trk.straightness_ratio() >= disp_ratio:
-							if flaten_gap > 1:
-								k=0
-								cr = []
-								while(True):
-									if k >= trk.gv2:
-										if k - flaten_gap < trk.gv2 -1:
-											cr.append(trk.gv1[trk.gv2 -1])
-										break
-									cr.append(trk.gv1[k])
-									k+= flaten_gap
-								self.valid_tracks.append(Track(boxes = cr, color = self.random_color(), ID = trk.id, fill_holes = True))
-							else:
-								self.valid_tracks.append(trk)
+							self.valid_tracks.append(trk)
 							if len(xtr_tips) > 0:
 								for tip in xtr_tips:
 									self.filled_in_tips.append(tip)

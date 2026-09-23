@@ -14,9 +14,11 @@ EXPECTED_BASELINE = {
     "grain_count": 31,
     "germinated_count": 20,
     "tip_detection_count": 662,
-    "track_count": 41,
+    "track_count": 40,
     "tracking_engine": "laptrack",
     "burst_candidate_count": 0,
+    "clean_trajectory_length_count": 1,
+    "clean_image_centerline_count": 13,
 }
 
 
@@ -42,8 +44,6 @@ def main():
             "4",
             "--gap-closing",
             "5",
-            "--smoothing-gap",
-            "2",
             "--output-dir",
             str(output_dir),
         ]
@@ -52,7 +52,8 @@ def main():
         manifest = json.loads((output_dir / "run_manifest.json").read_text())
         expected = [
             output_dir / "pilot.grains.csv",
-            output_dir / "pilot.tracks.csv",
+            output_dir / "pilot.track_details.csv",
+            output_dir / "pilot.track_summary.csv",
             output_dir / "bundled-sample.survival.raw.data.csv",
             output_dir / "bundled-sample.tracks.raw.data.csv",
         ]
@@ -64,15 +65,21 @@ def main():
                 raise SystemExit(f"Smoke test expected nonzero {key}: {summary}")
         with (output_dir / "pilot.grains.csv").open() as handle:
             grains = list(csv.DictReader(handle))
-        with (output_dir / "pilot.tracks.csv").open() as handle:
-            tracks = list(csv.DictReader(handle))
+        with (output_dir / "pilot.track_details.csv").open() as handle:
+            track_details = list(csv.DictReader(handle))
+        with (output_dir / "pilot.track_summary.csv").open() as handle:
+            track_summary = list(csv.DictReader(handle))
         if len(grains) != summary["grain_count"]:
             raise SystemExit("Grain summary row count does not match summary.json")
-        if not tracks or not any(row["grain_id"] for row in tracks):
-            raise SystemExit("Track summary did not contain grain-to-track associations")
-        rate_column = "growth_rate_pxl_per_sec"
-        if not any(row[rate_column] for row in tracks):
-            raise SystemExit("Track summary did not contain interval growth rates")
+        if not track_details or not any(row["grain_id"] for row in track_details):
+            raise SystemExit("Track details did not contain grain-to-track associations")
+        if len(track_summary) != summary["track_count"]:
+            raise SystemExit("Track summary row count does not match summary.json")
+        if track_summary and track_summary[0]["sample_id"] != "bundled-sample":
+            raise SystemExit("Track summary sample metadata header is invalid")
+        rate_column = "tip_growth_rate_pxl_per_sec"
+        if not any(row[rate_column] for row in track_details):
+            raise SystemExit("Track details did not contain interval growth rates")
         if summary["burst_candidate_count"] != 0:
             raise SystemExit("Burst candidates should be opt-in for the pilot workflow")
         actual_baseline = {
