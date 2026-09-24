@@ -108,6 +108,7 @@ class Params:
     through_px: float = 12.0     # foreign-tube test: material this close to the exit...
     through_min_px: int = 10     # ...at least this many pixels of it, changed before the front left
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
+    other_block_px: float = 2.0  # another grain's disc (radius + this) is never tube
     min_tube_px: float = 8.0     # a front that never gets this long is not a tube (unless contact-censored)
     tip_offset_px: float = 2.5   # reported length = front - this (the signal's blurred end lies beyond the apex)
     front_lead_px: float = 12.0  # if the front is already this long at the stub's onset...
@@ -757,7 +758,7 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     for o in others:
         ox, oy = o["x"] - gx + centre, o["y"] - gy + centre
         if -o["r"] - 5 < ox < 2 * half + o["r"] + 5 and -o["r"] - 5 < oy < 2 * half + o["r"] + 5:
-            blocked |= np.hypot(xx - ox, yy - oy) < o["r"] + 2.0
+            blocked |= np.hypot(xx - ox, yy - oy) < o["r"] + p.other_block_px
     bg = change[(rg > gr + 30) & ~blocked]
     bg = bg[bg < np.percentile(bg, 95)] if bg.size else bg
     sigma_bg = 1.4826 * float(np.median(np.abs(bg - np.median(bg)))) if bg.size else 1.0
