@@ -251,7 +251,8 @@ function renderZoomControls() {
   if (!el) return;
   const layout = [g.isolated ? "isolated" : "", g.clump_size > 1 ? `clump of ${g.clump_size}` : "",
                   g.border ? "near edge" : "", g.source === "user" ? "added by you" : ""].filter(Boolean).join(" · ");
-  const reasons = S.st.exclude_reasons.map((r) => `<button class="act" data-r="${r}">${r.replaceAll("_", " ")}</button>`).join("");
+  const reasons = S.st.exclude_reasons.filter((r) => r !== "not_sampled")
+    .map((r) => `<button class="act" data-r="${r}">${r.replaceAll("_", " ")}</button>`).join("");
   el.innerHTML = `<h3>${gid} <span class="muted">${layout}</span></h3>
     ${g.excluded
       ? `<p><b class="bad">excluded: ${g.exclude_reason.replaceAll("_", " ")}</b> <button class="act" data-inc="1">include again</button></p>`
@@ -267,7 +268,8 @@ function renderZoomControls() {
 }
 function grainMenu(px, py, gid) {
   const g = S.st.grains[gid]; const m = $("#menu");
-  const reasons = S.st.exclude_reasons.map((r) => `<button class="act" data-r="${r}">exclude: ${r.replaceAll("_", " ")}</button>`).join("");
+  const reasons = S.st.exclude_reasons.filter((r) => r !== "not_sampled")
+    .map((r) => `<button class="act" data-r="${r}">exclude: ${r.replaceAll("_", " ")}</button>`).join("");
   m.innerHTML = `<b>${gid}</b> ${g.excluded ? "(excluded)" : ""}<br>
     <button class="act primary" data-open="1">open onset</button>
     ${g.excluded ? `<button class="act" data-inc="1">include again</button>` : reasons}

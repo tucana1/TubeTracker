@@ -34,7 +34,7 @@ from ..render import Renderer, png
 SCHEMA = "sparsetrack.bench.v1"
 VERDICTS = ("emerged_at_start", "emerged_within", "no_emergence_by_end", "unobservable")
 TRACE_STATES = ("full", "partial", "no_tube", "unsure")
-EXCLUDE_REASONS = ("not_a_grain", "clump", "edge", "out_of_focus", "other")
+EXCLUDE_REASONS = ("not_a_grain", "clump", "edge", "out_of_focus", "other", "not_sampled")
 STATIC = Path(__file__).with_name("static")
 
 # display layouts (CSS px): coarse = whole movie, fine = single bins around a transition
@@ -67,7 +67,8 @@ def trace_bins(first_visible_bin: int, n_bins: int) -> list[int]:
 
 
 class Bench:
-    def __init__(self, cache_dir: str | Path, labels_path: str | Path, annotator: str = "investigator"):
+    def __init__(self, cache_dir: str | Path, labels_path: str | Path, annotator: str = "investigator",
+                 sample: int = 0, seed: int = 20260923):
         self.cache_dir = Path(cache_dir)
         self.bins, self.meta = stack.load(self.cache_dir)
         self.renderer = Renderer(self.bins, self.meta)
@@ -83,6 +84,8 @@ class Bench:
             self._check_movie()
         else:
             self.doc = self._new_doc()
+            if sample:
+                self._sample(sample, seed)
             self.save("create")
 
     # ---- document -----------------------------------------------------------------
@@ -103,6 +106,17 @@ class Bench:
             "labels": {},
             "retest": {"grains": [], "labels": {}},
         }
+
+    def _sample(self, n: int, seed: int) -> None:
+        """Label a random sample of isolated grains away from the edge; the rest start excluded
+        as "not_sampled" (they can be included again in the census)."""
+        pool = sorted(gid for gid, g in self.doc["grains"].items() if g.get("isolated") and not g.get("border"))
+        keep = set(random.Random(seed).sample(pool, min(n, len(pool))))
+        for gid, g in self.doc["grains"].items():
+            if gid not in keep:
+                g["excluded"], g["exclude_reason"] = True, "not_sampled"
+        self.doc["sample"] = {"n": len(keep), "seed": seed, "from": "isolated grains away from the edge",
+                              "grains": sorted(keep)}
 
     def _check_movie(self) -> None:
         a, b = self.doc.get("movie", {}), self.meta["movie"]
@@ -406,8 +420,9 @@ def make_handler(bench: Bench):
     return Handler
 
 
-def serve(cache_dir, labels_path, port: int = 8765, open_browser: bool = True, annotator: str = "investigator"):
-    bench = Bench(cache_dir, labels_path, annotator)
+def serve(cache_dir, labels_path, port: int = 8765, open_browser: bool = True, annotator: str = "investigator",
+          sample: int = 0, seed: int = 20260923):
+    bench = Bench(cache_dir, labels_path, annotator, sample, seed)
     server = ThreadingHTTPServer(("127.0.0.1", port), make_handler(bench))
     url = f"http://127.0.0.1:{server.server_address[1]}/"
     print(f"Benchmark labelling at {url}\nLabels: {bench.labels_path}\nStop with Ctrl-C.")

@@ -89,7 +89,8 @@ def cmd_run(args) -> None:
 
 def cmd_bench(args) -> None:
     from .bench.server import serve
-    serve(args.cache, args.labels, port=args.port, open_browser=not args.no_browser, annotator=args.annotator)
+    serve(args.cache, args.labels, port=args.port, open_browser=not args.no_browser, annotator=args.annotator,
+          sample=args.sample, seed=args.seed)
 
 
 def cmd_analyze(args) -> None:
@@ -133,6 +134,9 @@ def main(argv=None) -> None:
     b.add_argument("--port", type=int, default=8765)
     b.add_argument("--no-browser", action="store_true")
     b.add_argument("--annotator", default="investigator")
+    b.add_argument("--sample", type=int, default=0,
+                   help="new labels only: label a random sample of this many isolated grains (others start excluded)")
+    b.add_argument("--seed", type=int, default=20260923)
     b.set_defaults(func=cmd_bench)
     a = sub.add_parser("analyze", help="per-grain onset and tube length for a prepared movie")
     a.add_argument("cache")

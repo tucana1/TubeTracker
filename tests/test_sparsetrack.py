@@ -402,3 +402,22 @@ def test_bench_views_follow_a_drifting_grain_and_store_reference_coordinates(tmp
     rec = bench.set_trace("g001", {"bin": n_bins - 1, "state": "full", "points": [[112, 100], [122, 100]]})
     assert rec["length_px"] == 10.0
     assert abs(rec["path_xy_ref"][0][0] - (112 + off[-1][0])) < 1e-6 and rec["path_xy_view"][0] == [112.0, 100.0]
+
+
+def test_bench_sample_labels_a_fixed_random_subset(tmp_path):
+    size, n_bins = 400, 6
+    rng = np.random.default_rng(1)
+    np.save(tmp_path / "bins.npy", np.stack([np.full((size, size), 180.0) + rng.normal(0, 0.5, (size, size))
+                                             for _ in range(n_bins)]).astype(np.float16))
+    (tmp_path / "meta.json").write_text(json.dumps({
+        "schema": stack.SCHEMA, "frames_per_bin": 300, "n_bins": n_bins, "shifts": [[0.0, 0.0]] * n_bins,
+        "movie": {"name": "s.mp4", "size_bytes": 1, "n_frames": 1800, "width": size, "height": size}}))
+    grains = annotate_layout([{"x": 60.0 + 70 * (i % 5), "y": 60.0 + 70 * (i // 5), "r": 10.0} for i in range(20)],
+                             (size, size))
+    (tmp_path / "grains.json").write_text(json.dumps({"grains": grains}))
+    a = Bench(tmp_path, tmp_path / "a.json", sample=5, seed=3)
+    b = Bench(tmp_path, tmp_path / "b.json", sample=5, seed=3)
+    kept = [g for g, v in a.doc["grains"].items() if not v.get("excluded")]
+    assert len(kept) == 5 and kept == [g for g, v in b.doc["grains"].items() if not v.get("excluded")]
+    assert all(a.doc["grains"][g]["isolated"] for g in kept)
+    assert {v["exclude_reason"] for v in a.doc["grains"].values() if v.get("excluded")} == {"not_sampled"}
