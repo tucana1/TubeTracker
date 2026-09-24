@@ -116,9 +116,12 @@ def test_bench_onset_trace_persistence_and_validation(tiny_cache):
     assert t["length_px"] == 5.0 and t["path_complete"] is False and t["direct_state"] == "direct_visible"
     with pytest.raises(ValueError):
         bench.set_trace("g001", {"bin": 9, "state": "full", "points": [[40, 30]]})
+    assert bench.set_trace("g001", {"bin": 11, "state": "full", "points": [[40, 30], [44, 22]], "burst": True})["burst"]
     reopened = Bench(tiny_cache, labels)  # persisted and reloadable
     assert reopened.doc["labels"]["g001"]["onset"]["verdict"] == "no_emergence_by_end"
-    assert labels.with_suffix(".journal.jsonl").read_text().count("\n") == 4  # create, 2 onsets, 1 trace
+    traces = reopened.doc["labels"]["g001"]["traces"]
+    assert (traces["9"]["burst"], traces["11"]["burst"]) == (False, True)
+    assert labels.with_suffix(".journal.jsonl").read_text().count("\n") == 5  # create, 2 onsets, 2 traces
 
 
 def test_bench_refuses_labels_from_another_movie(tiny_cache):
@@ -139,6 +142,7 @@ def test_bench_http_roundtrip(tiny_cache):
     try:
         state = json.load(urllib.request.urlopen(base + "/api/state"))
         assert state["order"] == ["g001"] and state["n_bins"] == 12
+        assert state["trace_flags"] == ["contact", "burst"]  # the page offers B only when this lists it
         for path in ("/", "/static/app.js", "/api/img/coarse/g001", "/api/img/fine/g001?start=2",
                      "/api/img/frame/g001?bin=5&view=near", "/api/img/field?which=late"):
             assert urllib.request.urlopen(base + path).status == 200

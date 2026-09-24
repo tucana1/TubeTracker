@@ -5,7 +5,7 @@ const S = {
   st: null, view: "census", gid: null,
   step: "coarse", fineStart: 0, fv: null, la: null, coarseTile: null, consulted: new Set(),
   contrast: "n", traceIdx: 0, pts: [], traceView: "near", overlay: true, marker: true,
-  contact: false, smooth: 0, fieldWhich: "early",
+  contact: false, burst: false, smooth: 0, fieldWhich: "early",
   timers: {}, openedAt: Date.now(), retest: null, retestIdx: 0,
 };
 const EMERGED = ["emerged_within", "emerged_at_start"];
@@ -17,8 +17,13 @@ const VERDICT_TEXT = {
 // ---------------------------------------------------------------- data helpers
 async function refresh() { S.st = await (await fetch("/api/state")).json(); }
 async function post(path, body) {
-  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
-                                body: JSON.stringify(body) });
+  let r;
+  try {
+    r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(body) });
+  } catch (err) {  // no server: its Terminal window was closed, or it is restarting
+    flash("NOT SAVED: the tool is not running. Start it again, then repeat this answer.", true); throw err;
+  }
   const j = await r.json();
   if (!r.ok) { flash("NOT SAVED: " + (j.error || r.status), true); throw new Error(j.error); }
   flash("saved ✓ " + new Date().toLocaleTimeString());
@@ -46,6 +51,8 @@ function loadTrace() {
   const saved = b === undefined ? null : (label().traces || {})[String(b)];
   S.pts = saved ? (saved.path_xy_view || saved.path_xy_ref).map((p) => p.slice()) : [];
   S.contact = saved ? !!saved.contact : false;
+  // bursting is for good: a trace time not yet saved starts marked if an earlier one was burst
+  S.burst = saved ? !!saved.burst : Object.values(label().traces || {}).some((t) => t.burst && t.bin < b);
 }
 function openGrain(gid, view) {
   if (S.gid) S.timers[S.gid] = spent();
@@ -416,19 +423,21 @@ function renderTrace() {
     then follow the centreline to the apex (as many clicks as the curve needs).
     <kbd>F</kbd> full tube · <kbd>P</kbd> partial (part hidden/out of view) · <kbd>0</kbd> no tube ·
     <kbd>U</kbd> unsure · <kbd>⌫</kbd> undo point · <kbd>T</kbd> touching another tube/grain ·
+    ${canBurst() ? "<kbd>B</kbd> burst (trace up to where the wall ends; later times start marked) · " : ""}
     <kbd>W</kbd> wide/near · ${S.st.layout.trace.far ? "<kbd>X</kbd> extra wide · " : ""}<kbd>H</kbd> hide marks ·
     <kbd>C</kbd> contrast · <kbd>A</kbd> smoother ·
     <kbd>←</kbd>/<kbd>→</kbd> trace time.`);
-  const chips = p.map((bb, i) => `<span data-i="${i}" class="${tr[String(bb)] ? "done" : ""} ${i === S.traceIdx ? "cur" : ""}">f${bb * S.st.frames_per_bin + S.st.frames_per_bin / 2}${tr[String(bb)] ? " ✓" : ""}</span>`).join("");
+  const chips = p.map((bb, i) => `<span data-i="${i}" class="${tr[String(bb)] ? "done" : ""} ${i === S.traceIdx ? "cur" : ""}">f${bb * S.st.frames_per_bin + S.st.frames_per_bin / 2}${tr[String(bb)] ? (tr[String(bb)].burst ? " ✓ burst" : " ✓") : ""}</span>`).join("");
   const saved = tr[String(b)];
   c.innerHTML = `<div class="row"><div class="wrap"><canvas id="tc" width="${size}" height="${size}"></canvas></div>
     <div class="side"><h3>Trace ${S.traceIdx + 1} of ${p.length} · frame ${b * S.st.frames_per_bin + S.st.frames_per_bin / 2} (bin ${b})</h3>
     <div class="chips" id="chips">${chips}</div>
-    <p>${S.pts.length} point(s), ${traceLen().toFixed(1)} px ${saved ? `<br><span class="muted">saved: ${saved.state}, ${saved.length_px} px</span>` : ""}</p>
+    <p>${S.pts.length} point(s), ${traceLen().toFixed(1)} px ${saved ? `<br><span class="muted">saved: ${saved.state}${saved.burst ? ", burst" : ""}, ${saved.length_px} px</span>` : ""}</p>
     <button class="act primary" id="sF">F · full tube</button><button class="act" id="sP">P · partial</button><br>
     <button class="act" id="s0">0 · no tube</button><button class="act" id="sU">U · unsure</button><br>
     <button class="act" id="undo">⌫ undo</button><button class="act" id="clr">clear</button><br>
     <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
+    ${canBurst() ? `<button class="act ${S.burst ? "on" : ""}" id="tB">B · burst</button><br>` : ""}
     <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
     ${S.st.layout.trace.far ? `<button class="act ${S.traceView === "far" ? "on" : ""}" id="tX">X · extra wide</button>` : ""}
     <button class="act ${S.contrast === "h" ? "on" : ""}" id="tC">C · high contrast</button>
@@ -450,6 +459,7 @@ function renderTrace() {
   $("#undo").onclick = () => { S.pts.pop(); drawTrace(); updateCount(); };
   $("#clr").onclick = () => { S.pts = []; drawTrace(); updateCount(); };
   $("#tT").onclick = () => { S.contact = !S.contact; render(); };
+  if ($("#tB")) $("#tB").onclick = () => { S.burst = !S.burst; render(); };
   $("#tW").onclick = toggleWide;
   if ($("#tX")) $("#tX").onclick = toggleFar;
   $("#tC").onclick = () => { S.contrast = S.contrast === "h" ? "n" : "h"; render(); };
@@ -462,6 +472,7 @@ function viewCentre(V) {  // a "fit" view slides inward at the movie's edges; im
   const slide = (c, size) => Math.min(Math.max(c, V.half), size - V.half);
   return [slide(g.x, m.width), slide(g.y, m.height)];
 }
+function canBurst() { return (S.st.trace_flags || []).includes("burst"); }  // an older server would drop it
 function toggleWide() { S.traceView = S.traceView === "wide" ? "near" : "wide"; render(); }
 function toggleFar() { if (S.st.layout.trace.far) { S.traceView = S.traceView === "far" ? "wide" : "far"; render(); } }
 function traceLen() {
@@ -501,7 +512,7 @@ async function saveTrace(state) {
   if ((state === "full" || state === "partial") && S.pts.length < 2) {
     alert("Click at least the exit point and the apex before saving a traced tube."); return;
   }
-  await post(`/api/trace/${S.gid}`, { bin: b, state, points: S.pts, contact: S.contact,
+  await post(`/api/trace/${S.gid}`, { bin: b, state, points: S.pts, contact: S.contact, burst: S.burst,
                                       view: S.traceView, time_spent_s: spent() });
   await refresh();
   const tr = label().traces || {};
@@ -520,7 +531,7 @@ function renderReview() {
                    g.source === "user" ? "added" : ""].filter(Boolean).join(", ");
     const bracket = on && on.verdict === "emerged_within" ? `(${on.last_absent_frame ?? "?"}, ${on.first_visible_frame}]` : "";
     return `<tr class="click" data-g="${gid}"><td>${gid}</td><td>${flags}</td><td>${g.excluded ? g.exclude_reason : ""}</td>
-      <td>${on ? VERDICT_TEXT[on.verdict] : ""}</td><td>${bracket}</td><td>${p.length ? `${done}/${p.length}` : ""}</td>
+      <td>${on ? VERDICT_TEXT[on.verdict] : ""}</td><td>${bracket}</td><td>${p.length ? `${done}/${p.length}${Object.values(tr).some((t) => t.burst) ? " · burst" : ""}` : ""}</td>
       <td>${lab.time_spent_s ? Math.round(lab.time_spent_s) + " s" : ""}</td></tr>`;
   }).join("");
   $("#content").innerHTML = `<table><tr><th>grain</th><th>layout</th><th>excluded</th><th>onset</th><th>bracket (frames)</th><th>traces</th><th>time</th></tr>${rows}</table>`;
@@ -568,6 +579,7 @@ document.addEventListener("keydown", (e) => {
     if (map[k.toLowerCase()]) return saveTrace(map[k.toLowerCase()]);
     if (k === "Backspace") { e.preventDefault(); S.pts.pop(); drawTrace(); return updateCount(); }
     if (k === "t") { S.contact = !S.contact; return render(); }
+    if (k === "b" && canBurst()) { S.burst = !S.burst; return render(); }
     if (k === "w") return toggleWide();
     if (k === "x") return toggleFar();
     if (k === "h") { S.overlay = !S.overlay; return drawTrace(); }

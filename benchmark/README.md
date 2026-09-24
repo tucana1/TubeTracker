@@ -14,4 +14,5 @@ Human labels that every method is scored on. Methods are compared with
 Scoring (see `sparsetrack/evaluate.py`): onset error is the signed distance of the
 predicted onset frame from the human bracket (tolerance ±600 frames); FULL traces are
 scored within max(2 px, 10%); "no tube" traces count as absences; isolated grains only
-unless `--subset all`.
+unless `--subset all`. Traces flagged `contact` (touching another tube or grain) are counted
+apart; `burst` marks a tube that has burst by that trace time (recorded, not yet scored).

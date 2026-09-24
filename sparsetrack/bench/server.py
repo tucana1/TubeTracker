@@ -34,6 +34,9 @@ from ..render import Renderer, png
 SCHEMA = "sparsetrack.bench.v1"
 VERDICTS = ("emerged_at_start", "emerged_within", "no_emergence_by_end", "unobservable")
 TRACE_STATES = ("full", "partial", "no_tube", "unsure")
+# per-trace flags: touching another tube or grain; the tube has burst by this time (the old engine's
+# is_bursted/burst_frame, here bracketed by the trace times)
+TRACE_FLAGS = ("contact", "burst")
 EXCLUDE_REASONS = ("not_a_grain", "clump", "edge", "out_of_focus", "other", "not_sampled")
 STATIC = Path(__file__).with_name("static")
 
@@ -171,7 +174,8 @@ class Bench:
             "shifts": self.meta["shifts"], "order": self.order(), "grains": grains,
             "labels": labels, "retest": self.doc["retest"], "trace_plan": plan,
             "layout": {"coarse": COARSE, "fine": FINE, "trace": TRACE_VIEWS, "zoom": ZOOM},
-            "verdicts": VERDICTS, "trace_states": TRACE_STATES, "exclude_reasons": EXCLUDE_REASONS,
+            "verdicts": VERDICTS, "trace_states": TRACE_STATES, "trace_flags": TRACE_FLAGS,
+            "exclude_reasons": EXCLUDE_REASONS,
             "progress": {"grains": len(todo), "onset_done": onset_done,
                          "traces_needed": traces_needed, "traces_done": traces_done},
             "labels_path": str(self.labels_path),
@@ -241,6 +245,7 @@ class Bench:
                              "no_tube": "no_tube_visible", "unsure": "not_directly_visible"}[state],
             "length_px": round(length, 2),
             "contact": bool(body.get("contact", False)),
+            "burst": bool(body.get("burst", False)),
             "view": body.get("view", "near"),
             "annotator": self.annotator, "review_origin": "human",
             "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
