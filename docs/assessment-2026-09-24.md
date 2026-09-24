@@ -21,15 +21,16 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
    0.4.
    - 95% bootstrap intervals over grains: onset 29–64%, lengths 43–69%.
    - Even the gain from 0.2 to 0.4 is borderline (paired: onset +6 grains, 95% CI 0 to +12).
-   - Held-out movie 2, the labels you are making now, is the first honest number. Score the frozen 0.4.0 on it once
-     before changing anything else.
+   - Held-out movie 2, the labels you are making now, is the first honest number. Score the frozen 0.4.0 on it once,
+     and 0.4.3 (the long-tube fix, section 3.3) once, before changing anything else.
 3. **The labelling tool is good, with one fixable validity problem.** Every one of the 32 Session A onset brackets is
    exactly one bin wide, because the tool defaults "last absent" to the bin before. Yet your blind retest moved
    first-visible by 8, 19 and 5 bins on three of seven grains. The benchmark therefore treats human onsets as far more
    precise than they are. For movie 2, shift-click an honest last-absent bin whenever the transition is not crisp.
 4. **The direction: learned evidence, physics decoding, human review.**
-   - Keep SparseTrack's decoder: candidate paths, the monotone growth-front DP and the onset logic. It encodes the
-     biology the ledger established.
+   - Keep a physics decoder: tip growth only (lengths never shrink), onset, contact censoring. It encodes the biology
+     the ledger established. On synthetic movies a simpler per-bin decoder did better than SparseTrack's end-state
+     decoder, and far better when tubes burst (section 5). `ld_v1` decides between the two.
    - Replace its hand-built change evidence with a small network trained on SparseTrack's own codec-exact synthetic
      movies. They give unlimited, exact labels.
    - Put a model-prefilled review-and-correct step, built into the labelling tool, in front of the final numbers.
@@ -46,6 +47,8 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
      SparseTrack's decoder it ranges from −3 to +43. On the four movies nothing had touched until the end, lengths went
      from 59% to 72%, and to 77% with the per-bin decoder.
    - Onsets do not improve beyond noise.
+   - When tubes burst and vanish, lengths measured before each burst stay in tolerance 71% of the time with the per-bin
+     decoder, against 43–47% through SparseTrack's decoder.
    - On real footage it has never seen, it is tube-specific: near zero on grain bodies.
    - Whether it transfers to your movies takes one command on your Mac (appendix B), scored on `ld_v1`.
 6. **The biggest single lever may be the microscope, not the code.** The movies are ~14 fps x264 at a QP-30 quality
@@ -58,8 +61,9 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
 2. Freeze 0.4.3 with the long-tube fix (section 3.3), then score 0.4.0 and 0.4.3 on movie 2, once each.
 3. Answer the five questions in section 6.
 4. Run the learned-evidence test on `ld` (appendix B).
-5. Build prototype v1: SparseTrack 0.4, a review loop, physical units and one-click run/export. That is about a week
-   of work, and useful to the lab immediately for sparse movies.
+5. Build prototype v1's review-and-correct loop in the labelling tool. `pipeline.py` already writes the rest for any
+   movie: a review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV, in µm and
+   minutes once question 1 is answered.
 
 ---
 
@@ -304,9 +308,10 @@ Looser tolerances for 0.4.0:
 ### 4.2 Recommended architecture: learned evidence → physics decoder → human review
 
 ```
-registered bins ──► [1] learned evidence ──► [2] SparseTrack decoder ──► [3] review & correct ──► results
- (bin, before,        per-bin P(tube),        candidate paths, monotone     prefilled in the         CSV, curves,
-  after crops)        P(tip), later P(burst)  DP front, onset, censoring   labelling tool           population
+registered bins ──► [1] learned evidence ──► [2] physics decoder   ──► [3] review & correct ──► results
+ (bin, before,        per-bin P(tube),        per-bin reading or the  prefilled in the         CSV, curves,
+  after crops)        P(tip), later P(burst)  end-state path; growth  labelling tool           population
+                                              only, onset, censoring
 ```
 
 1. **Learned evidence.** A small U-Net (0.49 M parameters) reads the same three images SparseTrack uses: the bin, the
@@ -316,9 +321,13 @@ registered bins ──► [1] learned evidence ──► [2] SparseTrack decoder
      tube cross-sections, contrast maturation, sway, drift, docking particles and the real x264 settings. This gives
      unlimited training data with exact labels.
    - After that it is fine-tuned on the 127 real `ld` traces, and later on review corrections.
-2. **SparseTrack's decoder, unchanged.** Candidate paths, rotation and swing, the monotone DP front, onset and contact
-   censoring. These carry the biology.
-   - On synthetic movies, a simpler per-bin decoder reading the same evidence did slightly better (section 5).
+2. **A physics decoder.** Either of two decoders, both with growth only, onset and contact censoring. These carry
+   the biology.
+   - SparseTrack's decoder traces candidate paths on the end state, rotates and swings them, and runs the monotone DP
+     front.
+   - The per-bin decoder (`reach.py`) measures the tube region's length in every bin, then makes it monotone.
+   - On synthetic movies the per-bin decoder did better with learned evidence: +56 lengths on twelve held-out movies,
+     and far better when tubes burst (section 5).
    - `pipeline.py` scores both on `ld_v1`, so real footage decides between them.
 3. **Review and correct.** The labelling tool, opened in a "review" mode on the model's predictions. Grains are ordered
    by flags and path coverage. Each is confirmed or fixed with the same onset-bracket and trace gestures, and every fix
@@ -375,18 +384,22 @@ problem.
 | When | Deliverable | Gate |
 |---|---|---|
 | Now | Finish movie-2 labels; freeze 0.4.3 (long-tube fix); score 0.4.0 and 0.4.3 once each | First held-out numbers, with bootstrap intervals |
-| Week 1 | **Prototype v1:** SparseTrack 0.4 plus review mode in the labelling tool, physical units, one-click run/export (macOS and Windows), growth-arrest frame from the DP plateau, shown for review (on synthetic movies a plateau rule finds under half of arrests within ±3 bins), burst candidates flagged for review | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
+| Week 1 | **Prototype v1:** SparseTrack 0.4 (or learned evidence with the per-bin decoder, if `ld_v1` confirms it) plus a review-and-correct mode in the labelling tool, physical units and one-click run/export (macOS and Windows). `pipeline.py` already writes the review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV in µm and minutes. Show the growth-arrest frame and burst candidates for review only: on synthetic movies an arrest read off the length curve lands within ±3 bins less than half the time | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
 | Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then fine-tune on the `ld` traces; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
-| Weeks 3–4 | **Decoder v2, the per-bin decoder.** With a tube-probability map for every bin, read length where the tube *is* in each bin (`reach.py`: medial-axis length through P > 0.5, made monotone over bins) instead of rotating one end-state path. On twelve held-out synthetic movies it takes learned evidence from 71% to 73% of lengths in tolerance (61% for SparseTrack as it is), and it removes the drifting-grain weakness. A hybrid with SparseTrack's decoder did not help. `pipeline.py` already scores it | Beats SparseTrack's decoder on `ld_v1`, then holds on movie 2 |
-| Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts. Movie 2's burst answers are the first real burst labels, bracketed by trace times | Burst frame within ±2 bins on held-out reviews |
+| Weeks 3–4 | **Decoder v2, the per-bin decoder (built, in `pipeline.py`).** It reads length where the tube *is* in each bin (`reach.py`: medial-axis length through P > 0.5, made monotone over bins) instead of rotating one end-state path. On twelve held-out synthetic movies it takes learned evidence from 71% to 73% of lengths in tolerance (61% for SparseTrack as it is). It removes the drifting-grain weakness and holds up when tubes burst (71% against 43–47%). A hybrid with SparseTrack's decoder did not help | Beats SparseTrack's decoder on `ld_v1`, then holds on movie 2 |
+| Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts. Movie 2's burst answers are the first real burst labels, bracketed by trace times. The per-bin decoder's burst safeguard protects lengths but cannot time bursts (5 of 28 within ±2 bins) | Burst frame within ±2 bins on held-out reviews |
 | Weeks 4–8 | Dense fields: instance-aware evidence (which grain owns each tube pixel), learned with synthetic foreign tubes and crossings (v2+ presets); ownership decided by birth time and geodesic reach | Contact-censored fraction halves without losing isolated-grain accuracy |
 | Ongoing | Acquisition protocol for new experiments; a new held-out movie every 2–3 frozen versions | — |
 
 ### 4.6 Process: how to avoid another 490 hypotheses
 
-1. **Keep one scoreboard.** It holds the dev (`ld_v1`), held-out (movie 2) and synthetic held-out (v5 seeds 3, 4, 6, 7 and 8) scores,
-   each with paired bootstrap intervals. A change counts only if it clears noise on the dev set and does not regress
-   the synthetic held-out.
+1. **Keep one scoreboard.** It holds, each with paired bootstrap intervals:
+   - the dev score (`ld_v1`);
+   - the held-out score (movie 2);
+   - the synthetic scores: development v5 seeds 5 and 16–21, held-out 3, 4, 6, 7, 8 and 13–15, untouched test 22–25.
+
+   A change counts only if it clears noise on the dev set and does not regress the synthetic held-out. One synthetic
+   movie, or even five, cannot settle an effect of a few points; compare on eight or more.
 2. **Never tune on held-out data.** Score each frozen version once. Retire a held-out movie after two or three
    versions and label a fresh one (30 grains ≈ 1 hour).
 3. **Grow the benchmark rather than the code.** Thirty more labelled grains shrink the intervals more than any
@@ -408,12 +421,23 @@ problem.
   geometry (`truth.py`, unit-tested against what the renderer draws).
 - **Model.** A 0.49 M-parameter U-Net. It reads the same three registered images as SparseTrack (bin, before, after)
   and outputs P(tube already built) and P(tip). It trained for 5,000 steps on 4 CPU cores in about 30 minutes.
-  **No real labels were used.**
+  **No real labels were used.** This is model v1. Model v2 (ten training movies, below) is used from "More synthetic
+  data" on, and is the one shipped in `prototypes/learned_evidence/models/`.
 - **Evaluation data.**
   - Held-out synthetic movies, preset v5 (sway, rotation, drift, contrast maturation, blurred tips, docking
     particles, touching and crossing tubes): seed 3 for Test 1, seeds 3, 4, 6, 7 and 8 for Test 2. They were never
     used for training or for any choice.
+  - Model v2 was later chosen over v1 on those five movies. So three movies nothing had touched (seeds 13–15) were
+    added, then six development movies (16–21) and four untouched test movies (22–25) for the decoder work.
   - A separate development seed 5, used for the two integration choices below.
+- **The section, in order:**
+  1. Test 1, evidence alone.
+  2. Test 2, end to end (v1).
+  3. More synthetic data (v2).
+  4. Replication on fresh movies.
+  5. Decoder v2.
+  6. Bursting tubes.
+  7. Real footage.
 - **Three evidence sources through the same decoder.**
   - SparseTrack's own evidence (0.4.2 defaults).
   - Learned evidence.
@@ -442,7 +466,7 @@ probability cache.
 | Evidence → SparseTrack 0.4.2 decoder | Onsets within ±2 bins | Lengths within max(2 px, 10%) | Median length error | Bias | Control false positives | Germinations missed |
 |---|---|---|---|---|---|---|
 | SparseTrack's own evidence (baseline) | 79/112 | 623/1024 (61%) | 2.12 px | −3.4 px | 5/23 | 6 |
-| **Learned evidence** | 82/112 | **699/1014 (69%)** | **1.62 px** | −2.2 px | **2/23** | 12 |
+| **Learned evidence (v1)** | 82/112 | **699/1014 (69%)** | **1.62 px** | −2.2 px | **2/23** | 12 |
 | Perfect evidence (exact truth; ceiling) | 102/112 | 760/1014 (75%) | 1.33 px | −0.8 px | 2/23 | 8 |
 
 **Paired over the 135 grains (learned − baseline):**
