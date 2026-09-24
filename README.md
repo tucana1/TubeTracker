@@ -22,9 +22,9 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 # benchmark labelling tool (local web page; answers saved to the labels file after every click)
 .venv/bin/python -m sparsetrack bench runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json
 # per-grain onset and exit-to-apex length (~40 s for the sparse movie)
-.venv/bin/python -m sparsetrack analyze runs/sparsetrack/ld --out runs/sparsetrack/ld_v0_3 [--grains benchmark/labels/ld_v1.json]
+.venv/bin/python -m sparsetrack analyze runs/sparsetrack/ld --out runs/sparsetrack/ld_A [--grains benchmark/labels/ld_v1.json]
 # score any predictions against the benchmark
-.venv/bin/python -m sparsetrack eval --labels benchmark/labels/ld_v1.json --pred runs/sparsetrack/ld_v0_3/predictions.json
+.venv/bin/python -m sparsetrack eval --labels benchmark/labels/ld_v1.json --pred runs/sparsetrack/ld_A/predictions.json
 # synthetic movie with exact truth on the real field (x264-encoded like the real movies), then its cache
 .venv/bin/python -m sparsetrack synth runs/sparsetrack/ld --out runs/sparsetrack/synth --seed 0 --preset v2
 .venv/bin/python -m sparsetrack prepare runs/sparsetrack/synth/synthv2_s0.mp4 --out runs/sparsetrack/synth/v2s0_cache --frames-per-bin 25 --ref-start 0

@@ -69,6 +69,9 @@ class Params:
     rot_min_s: float = 6.0       # rotation judged only on path points at least this far along...
     rot_rim_clear: float = 4.0   # ...and at least this far outside the grain rim
     rot_refine: bool = True      # second pass: rotation judged only on the tube the first front found
+    # the far tube swings about its base far more than grains turn: human traces showed the base
+    # angle changing by a median 3.6 deg while the rotation track (about the grain centre) wandered
+    rot_pivot: str = "exit"      # rigid turn about the grain "centre", or swing about the tube's "exit"
     rot_refine_px: float = 10.0  # ...plus this far beyond it
     wedge_r: tuple = (1.0, 6.0)  # onset wedge: radii beyond the rim (px)
     wedge_halfwidth: float = 12.0  # degrees either side of the exit angle
@@ -299,12 +302,13 @@ def _kymograph(diffs: np.ndarray, pts: np.ndarray, normal: np.ndarray, centre: f
     """
     rad = np.deg2rad(angles_deg)
     cos, sin = np.cos(rad)[:, None], np.sin(rad)[:, None]
-    rel = pts - centre
+    cx, cy = (float(centre[0]), float(centre[1])) if np.ndim(centre) else (centre, centre)  # rotation pivot
+    rel = pts - [cx, cy]
     maps = []
     for off in (-lateral, 0.0, lateral):
         q = rel + off * normal
-        x = centre + cos * q[None, :, 0] - sin * q[None, :, 1]
-        y = centre + sin * q[None, :, 0] + cos * q[None, :, 1]
+        x = cx + cos * q[None, :, 0] - sin * q[None, :, 1]
+        y = cy + sin * q[None, :, 0] + cos * q[None, :, 1]
         maps.append((x, y))
     mx = np.concatenate([m[0] for m in maps]).astype(np.float32)
     my = np.concatenate([m[1] for m in maps]).astype(np.float32)
@@ -338,9 +342,10 @@ def matched_kymograph(signed: np.ndarray, template: np.ndarray, pts: np.ndarray,
     """
     rad = np.deg2rad(angles_deg)
     cos, sin = np.cos(rad)[:, None, None], np.sin(rad)[:, None, None]
-    q = ((pts - centre)[None, :, None, :] + (across[None, None, :, None] + lateral_offset) * normal[None, :, None, :])
-    x = (centre + cos * q[..., 0] - sin * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
-    y = (centre + sin * q[..., 0] + cos * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
+    cx, cy = (float(centre[0]), float(centre[1])) if np.ndim(centre) else (centre, centre)  # rotation pivot
+    q = ((pts - [cx, cy])[None, :, None, :] + (across[None, None, :, None] + lateral_offset) * normal[None, :, None, :])
+    x = (cx + cos * q[..., 0] - sin * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
+    y = (cy + sin * q[..., 0] + cos * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
     n_ang, n_pts = len(angles_deg), len(pts)
     out = np.empty((len(signed), n_ang, n_pts), np.float32)
     for t, d in enumerate(signed):
@@ -574,11 +579,13 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
     normal = np.stack([-tang[:, 1], tang[:, 0]], axis=1)
     diffs, rg = ctx["diffs"], ctx["rg"]
     angles = (np.arange(-p.max_angle, p.max_angle + 1e-9, p.angle_step) if p.rotate else np.zeros(1))
+    # the tube swings about its own exit (the base stays put) or turns with its grain
+    pivot = pts[0].copy() if p.rot_pivot == "exit" else centre
     if p.evidence in ("matched", "union"):
         signed_all = ctx["signed"]
         across = np.arange(-p.mk_half, p.mk_half + 1e-9, 0.5)
         template = cross_section_template(late - early, pts, normal, across)
-        kymo_all = matched_kymograph(signed_all, template, pts, normal, centre, across, angles)
+        kymo_all = matched_kymograph(signed_all, template, pts, normal, pivot, across, angles)
         zero = int(np.argmin(np.abs(angles)))
         ctrl = np.concatenate([matched_kymograph(signed_all, template, pts, normal, centre, across,
                                                  angles[zero:zero + 1], lateral_offset=off)[:, 0]
@@ -590,7 +597,7 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
         extra["matched_control_sigma_median"] = round(float(np.median(ctrl_sigma)), 3)
         matched_evid = evid_all
     if p.evidence != "matched":
-        kymo_all = _kymograph(diffs, pts, normal, centre, p.lateral, angles)  # (bins, angles, points)
+        kymo_all = _kymograph(diffs, pts, normal, pivot, p.lateral, angles)  # (bins, angles, points)
         if p.bg_subtract:
             # per-bin background change (focus / illumination drift) away from tube and grains
             far = cv2.dilate(ctx["tube_mask"].astype(np.uint8), np.ones((13, 13), np.uint8)).astype(bool)
@@ -668,6 +675,7 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
     if p.rotate and np.max(np.abs(theta)) >= 10:
         flags.append(f"rotates:{np.max(np.abs(theta)):.0f}deg")
     return {"pts": pts, "ss": ss, "theta": theta, "front": front, "kymo": kymo, "tau": tau, "evid": evid,
+            "pivot": pivot,
             "explained": explained, "beyond": beyond, "through": through, "ridge": ridge, "score": score,
             "flags": flags, "result": extra}
 
@@ -858,11 +866,13 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         front = np.minimum(front, contact_idx)
     length = np.array([ss[f - 1] if f > 0 else 0.0 for f in front])
 
+    piv = np.broadcast_to(np.asarray(read.get("pivot", centre), float), (2,))
+
     def rotated(pt, deg):
         a = math.radians(deg)
-        r = pt - centre
-        return np.array([centre + math.cos(a) * r[0] - math.sin(a) * r[1],
-                         centre + math.sin(a) * r[0] + math.cos(a) * r[1]])
+        r = pt - piv
+        return np.array([piv[0] + math.cos(a) * r[0] - math.sin(a) * r[1],
+                         piv[1] + math.sin(a) * r[0] + math.cos(a) * r[1]])
 
     tips = np.array([rotated(pts[max(f - 1, 0)], th) for f, th in zip(front, theta)])
     above = np.nonzero(length >= p.onset_px)[0]
