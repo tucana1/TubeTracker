@@ -14,7 +14,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .model import UNet
+from .model import UNet, best_device
 
 
 def load_shards(patterns: list[str]) -> dict[str, np.ndarray]:
@@ -47,7 +47,7 @@ def augment(x: torch.Tensor, body: torch.Tensor, tip: torch.Tensor, g: torch.Gen
 
 def losses(logits: torch.Tensor, body: torch.Tensor, tip: torch.Tensor) -> dict[str, torch.Tensor]:
     lb, lt = logits[:, 0], logits[:, 1]
-    bce = F.binary_cross_entropy_with_logits(lb, body, pos_weight=torch.tensor(2.0))
+    bce = F.binary_cross_entropy_with_logits(lb, body, pos_weight=torch.tensor(2.0, device=lb.device))
     p = torch.sigmoid(lb)
     dice = 1.0 - (2 * (p * body).sum() + 1.0) / (p.sum() + body.sum() + 1.0)
     tip_l = (F.binary_cross_entropy_with_logits(lt, tip, reduction="none") * (1.0 + 10.0 * tip)).mean()
@@ -66,6 +66,7 @@ def main(argv=None):
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--threads", type=int, default=0)
     ap.add_argument("--crop", type=int, default=64, help="random training sub-crop (0 = whole sample)")
+    ap.add_argument("--device", default=None, help="cpu, mps or cuda (default: best available)")
     args = ap.parse_args(argv)
     if args.threads:
         torch.set_num_threads(args.threads)
@@ -77,7 +78,9 @@ def main(argv=None):
     tip_all = torch.from_numpy(data["tip"].astype(np.float32))
     val = load_shards(args.val) if args.val else None
     print(f"train samples {len(x_all)} from {len(data['files'])} shards; tube pixels {100 * body_all.mean():.1f}%")
-    net = UNet(widths=args.widths)
+    device = args.device or best_device()
+    net = UNet(widths=args.widths).to(device)
+    print(f"device {device}")
     print(f"parameters {sum(p.numel() for p in net.parameters()) / 1e6:.2f} M")
     opt = torch.optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=args.lr, total_steps=args.steps, pct_start=0.1)
@@ -86,6 +89,7 @@ def main(argv=None):
         idx = torch.randint(len(x_all), (args.batch,), generator=g)
         x, body, tip = augment(x_all[idx], body_all[idx], tip_all[idx], g, args.crop)
         net.train()
+        x, body, tip = x.to(device), body.to(device), tip.to(device)
         L = losses(net(x), body, tip)
         opt.zero_grad()
         L["total"].backward()
@@ -102,10 +106,11 @@ def main(argv=None):
                     vx = torch.from_numpy(val["x"][:512].astype(np.float32))
                     vb = torch.from_numpy(val["body"][:512].astype(np.float32))
                     vt = torch.from_numpy(val["tip"][:512].astype(np.float32))
-                    VL = losses(net(vx), vb, vt)
+                    VL = losses(net(vx.to(device)), vb.to(device), vt.to(device))
                 msg += " | val " + " ".join(f"{k} {float(v):.4f}" for k, v in VL.items())
             print(f"step {step:5d} {time.time() - started:6.0f}s  {msg}", flush=True)
-    torch.save({"state": net.state_dict(), "widths": tuple(args.widths), "args": vars(args)}, args.out)
+    torch.save({"state": {k: v.cpu() for k, v in net.state_dict().items()}, "widths": tuple(args.widths),
+                "args": vars(args)}, args.out)
     print(f"saved {args.out}")
 
 

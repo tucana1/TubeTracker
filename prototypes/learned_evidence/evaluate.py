@@ -77,6 +77,29 @@ def prob_cache(image_cache: str | Path, net, out_cache: str | Path, log=print) -
     return out_cache
 
 
+def truth_prob_cache(image_cache: str | Path, field_cache: str | Path, preset_name: str, seed: int,
+                     out_cache: str | Path, log=print) -> Path:
+    """Upper bound: the exact built-tube mask of every bin (all tubes) as the "probability"."""
+    from .truth import frame_truth
+    out_cache = Path(out_cache)
+    if (out_cache / "meta.json").exists():
+        return out_cache
+    out_cache.mkdir(parents=True, exist_ok=True)
+    bins, meta = stack.load(image_cache)
+    scene = Scene(field_cache, preset(preset_name, seed=seed))
+    fpb, nb = int(meta["frames_per_bin"]), int(meta["n_bins"])
+    out = np.lib.format.open_memmap(out_cache / "bins.npy", mode="w+", dtype=np.float16, shape=bins.shape)
+    for b in range(nb):
+        out[b] = (frame_truth(scene, b * fpb + fpb // 2)["body"] * SCALE_P).astype(np.float16)
+    out.flush()
+    del out
+    m = {**meta, "shifts": [[0.0, 0.0]] * nb, "raw_shifts": [[0.0, 0.0]] * nb, "evidence": "exact truth masks"}
+    (out_cache / "meta.json").write_text(json.dumps(m, indent=1))
+    shutil.copy(Path(image_cache) / "grains.json", out_cache / "grains.json")
+    log(f"truth cache {out_cache.name}: {nb} bins")
+    return out_cache
+
+
 @contextlib.contextmanager
 def image_registration(image_cache: str | Path):
     """While active, SparseTrack's per-grain local registration is measured on the image
@@ -105,25 +128,59 @@ def image_registration(image_cache: str | Path):
         A.analyze_grain, A.local_shifts = orig_grain, orig_shifts
 
 
-def end_to_end(image_cache: str | Path, truth_path: str | Path, net, work: str | Path,
-               learned_tip_offset: float = 0.0, log=print) -> dict:
-    work = Path(work)
-    truth = load(truth_path)
-    quiet = dict(log=lambda *a: None)
+def run_baseline(image_cache: str | Path, work: str | Path, grains_path: str | Path | None = None) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
-        base = A.analyze(image_cache, work / "baseline", params=A.Params(), **quiet)
-    pcache = prob_cache(image_cache, net, work / "prob_cache", log=log)
-    lp = A.Params(settle=False, tip_offset_px=learned_tip_offset)
+        return A.analyze(image_cache, Path(work) / "baseline", grains_path=grains_path, params=A.Params(),
+                         log=lambda *a: None)
+
+
+def run_on_prob_cache(pcache: str | Path, image_cache: str | Path, work: str | Path, tag: str,
+                      tip_offset: float = 0.0, grains_path: str | Path | None = None,
+                      onset_source: str = "front") -> dict:
+    """The unchanged SparseTrack pipeline on a probability cache (no settling: probability maps
+    have no grain rims; per-grain registration is measured on the image cache).
+
+    Onset comes from the growth front by default: SparseTrack's matched stub filter z-scores the
+    exit against control angles, and on probability maps those controls are exactly zero, so the
+    z-score explodes on noise-level values (grains called "emerged at start")."""
+    lp = A.Params(settle=False, tip_offset_px=tip_offset, onset_source=onset_source)
     with image_registration(image_cache), contextlib.redirect_stdout(io.StringIO()):
-        learned = A.analyze(pcache, work / "learned", params=lp, **quiet)
-    return {"baseline": score(truth, base, onset_tol=50), "learned": score(truth, learned, onset_tol=50),
-            "truth": truth}
+        return A.analyze(pcache, Path(work) / tag, grains_path=grains_path, params=lp, log=lambda *a: None)
+
+
+def per_grain_hits(rep: dict, onset_tol: float, len_abs: float = 2.0, len_rel: float = 0.10) -> dict[str, tuple]:
+    """grain -> (onset hit 0/1 or None, length hits, length traces) from a ``score`` report."""
+    out = {}
+    for r in rep["rows"]:
+        on = None
+        if r.get("human") == "emerged_within":
+            on = int("onset_error" in r and abs(r["onset_error"]) <= onset_tol)
+        full = r.get("full", [])
+        out[r["grain"]] = (on, sum(abs(f["error"]) <= max(len_abs, len_rel * f["human"]) for f in full), len(full))
+    return out
+
+
+def paired_bootstrap(rep_a: dict, rep_b: dict, onset_tol: float, n: int = 10000, seed: int = 0) -> dict:
+    """Difference a - b in onset hits and length hits, resampling grains (95% intervals)."""
+    a, b = per_grain_hits(rep_a, onset_tol), per_grain_hits(rep_b, onset_tol)
+    grains = sorted(set(a) & set(b))
+    on = np.array([[(a[g][0] or 0) - (b[g][0] or 0)] for g in grains], float)[:, 0]
+    ln = np.array([a[g][1] - b[g][1] for g in grains], float)
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(len(grains), size=(n, len(grains)))
+    don, dln = on[idx].sum(axis=1), ln[idx].sum(axis=1)
+    return {"grains": len(grains), "onset_diff": float(on.sum()), "onset_ci": np.percentile(don, [2.5, 97.5]).tolist(),
+            "length_diff": float(ln.sum()), "length_ci": np.percentile(dln, [2.5, 97.5]).tolist(),
+            "p_onset_not_better": float(np.mean(don <= 0)), "p_length_not_better": float(np.mean(dln <= 0))}
 
 
 # ----------------------------------------------------------------------------- oracle path
 def _sample(img: np.ndarray, xy: np.ndarray) -> np.ndarray:
-    return cv2.remap(img.astype(np.float32), xy[..., 0].astype(np.float32), xy[..., 1].astype(np.float32),
-                     cv2.INTER_LINEAR, borderValue=0)
+    """Bilinear samples of ``img`` at (..., 2) coordinates, returned with shape ``xy.shape[:-1]``."""
+    shape = xy.shape[:-1]
+    mx = np.ascontiguousarray(xy[..., 0].reshape(1, -1), dtype=np.float32)
+    my = np.ascontiguousarray(xy[..., 1].reshape(1, -1), dtype=np.float32)
+    return cv2.remap(img.astype(np.float32), mx, my, cv2.INTER_LINEAR, borderValue=0).reshape(shape)
 
 
 def oracle_tube(R: Renderer, RP: Renderer, t, fpb: int, nb: int, rs: int, p: A.Params) -> dict | None:
@@ -264,25 +321,32 @@ def main(argv=None):
     ap.add_argument("--out", required=True)
     ap.add_argument("--skip-e2e", action="store_true")
     ap.add_argument("--skip-oracle", action="store_true")
+    ap.add_argument("--upper-bound", action="store_true", help="also run SparseTrack on the exact truth masks")
     args = ap.parse_args(argv)
     net = load_model(args.model)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     report = []
-    all_rows, reps = [], {"baseline": [], "learned": []}
+    all_rows, reps = [], {}
     for spec in args.movie:
         cache, pr, seed = spec.rsplit(":", 2)
         seed = int(seed)
-        truth = Path(args.truth_dir) / f"synth_{pr}_s{seed}_truth.json"
+        truth_path = Path(args.truth_dir) / f"synth_{pr}_s{seed}_truth.json"
+        truth = load(truth_path)
+        work = out / f"{pr}s{seed}"
+        pcache = prob_cache(cache, net, work / "prob_cache")
         if not args.skip_e2e:
-            res = end_to_end(cache, truth, net, out / f"{pr}s{seed}")
-            for k in ("baseline", "learned"):
-                reps[k].append(res[k])
-                line = e2e_summary(k, res[k])
-                report.append(f"[{pr} seed {seed}] {line}")
+            runs = {"baseline": run_baseline(cache, work),
+                    "learned": run_on_prob_cache(pcache, cache, work, "learned")}
+            if args.upper_bound:
+                tcache = truth_prob_cache(cache, args.field, pr, seed, work / "truth_cache")
+                runs["perfect"] = run_on_prob_cache(tcache, cache, work, "perfect")
+            for k, pred in runs.items():
+                rep = score(truth, pred, onset_tol=50)
+                reps.setdefault(k, []).append(rep)
+                report.append(f"[{pr} seed {seed}] {e2e_summary(k, rep)}")
                 print(report[-1], flush=True)
         if not args.skip_oracle:
-            pcache = prob_cache(cache, net, out / f"{pr}s{seed}" / "prob_cache")
             all_rows += oracle(cache, pcache, args.field, pr, seed)
     if not args.skip_oracle:
         txt = oracle_summary(all_rows, {"abs": 2.5, "matched": 2.5, "union": 2.5, "learned": 0.0})

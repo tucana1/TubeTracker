@@ -46,8 +46,17 @@ def _tube_maps(scene: Scene, i: int, k: int) -> tuple[np.ndarray, np.ndarray, np
     return s, d, lo, hi
 
 
+def _last_frame(t: Tube) -> int | None:
+    for arr in (t.rot, t.move, t.anchor, t.sway, t.sched):
+        if arr is not None:
+            return len(arr) - 1
+    return None
+
+
 def tube_point(t: Tube, k: int, arclen: float) -> tuple[float, float]:
     """Frame-grid position of the point ``arclen`` px along tube ``t`` at frame ``k``."""
+    last = _last_frame(t)
+    k = min(int(k), last) if last is not None else int(k)
     idx = int(np.clip(round(arclen / 0.25), 0, len(t.path) - 1))
     x, y = (float(v) for v in t.path[idx])
     if t.anchor is not None and bool(np.any(np.abs(t.anchor[k]) > 0.25)):
@@ -79,6 +88,7 @@ def frame_truth(scene: Scene, k: int, scored_only: bool = False) -> dict:
     body = np.zeros((scene.h, scene.w), np.uint8)
     inst = np.zeros((scene.h, scene.w), np.int16)
     tips = []
+    k = min(int(k), scene.cfg.n_frames - 1)  # the last bin is partial: its centre can pass the last frame
     for i, t in enumerate(scene.tubes):
         if scored_only and not t.scored:
             continue

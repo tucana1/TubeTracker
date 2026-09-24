@@ -342,6 +342,7 @@ problem.
 | Now | Finish movie-2 labels; score 0.4.0 once, then 0.4.2 | First held-out numbers, with bootstrap intervals |
 | Week 1 | **Prototype v1:** SparseTrack 0.4 plus review mode in the labelling tool, physical units, one-click run/export (macOS and Windows), growth-arrest frame from the DP plateau, burst candidates flagged for review | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
 | Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then fine-tune on the `ld` traces; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
+| Weeks 3–4 | **Decoder v2, per-bin geometry.** With a tube-probability map for every bin, read length where the tube *is* in each bin: the geodesic reach from the exit through P > 0.5, made monotone over bins by the same DP. Stop rotating the end-state path. Section 5 shows why: even perfect evidence leaves SparseTrack's current decoder at 71–77% of lengths, and the losses are rotation, drift and curls | Beats decoder v1 on synthetic held-out *and* on `ld_v1` |
 | Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts | Burst frame within ±2 bins on held-out reviews |
 | Weeks 4–8 | Dense fields: instance-aware evidence (which grain owns each tube pixel), learned with synthetic foreign tubes and crossings (v2+ presets); ownership decided by birth time and geodesic reach | Contact-censored fraction halves without losing isolated-grain accuracy |
 | Ongoing | Acquisition protocol for new experiments; a new held-out movie every 2–3 frozen versions | — |
@@ -364,7 +365,66 @@ problem.
 
 ## 5. Experiment: does synthetic-trained evidence beat SparseTrack's evidence?
 
-*[Filled in below once the runs finish.]*
+**Setup** (code in `prototypes/learned_evidence/`, README there).
+
+- **Training data.** Five codec-exact synthetic movies from `sparsetrack synth`: preset v5 seeds 0–2, v2 seed 1 and
+  v3 seed 2. They are built on the only real field in the repository, the pre-germination frames of
+  `sample_movie.avi`. The training set is 5,600 crops, with exact per-bin truth rasterised from the generator's own
+  geometry (`truth.py`, unit-tested against what the renderer draws).
+- **Model.** A 0.49 M-parameter U-Net. It reads the same three registered images as SparseTrack (bin, before, after)
+  and outputs P(tube already built) and P(tip). It trained for 5,000 steps on 4 CPU cores in about 30 minutes.
+  **No real labels were used.**
+- **Evaluation data.**
+  - Held-out synthetic seeds 3 and 4 (preset v5: sway, rotation, drift, contrast maturation, blurred tips,
+    docking particles, touching and crossing tubes). They were never used for training or for any choice.
+  - A separate development seed 5, used for the single integration choice below.
+- **Three evidence sources through the same decoder.**
+  - SparseTrack's own evidence (0.4.2 defaults).
+  - Learned evidence.
+  - "Perfect" evidence: the exact truth masks, which measures the ceiling of SparseTrack's current decoder.
+
+**Test 1: evidence only.** Each evidence source is sampled along each tube's *true* per-bin geometry and fed to
+SparseTrack's own `dp_front`. Differences here come only from evidence quality. Held-out seed 3: 19 tubes, 173 trace
+points.
+
+| Evidence | Lengths within max(2 px, 10%) | Median error | Bias | Absences correct | Onset within 2 bins |
+|---|---|---|---|---|---|
+| `abs` (\|change\|) | 74/173 (43%) | 3.22 px | −6.9 px | 77/77 | 0/19 |
+| `matched` (end-state cross-section) | 116/173 (67%) | 1.88 px | −2.5 px | 57/77 | 5/19 |
+| `union` (SparseTrack's default) | 124/173 (72%) | 1.78 px | −1.7 px | 57/77 | 5/19 |
+| **learned** | **157/173 (91%)** | **1.12 px** | **+0.1 px** | **77/77** | **8/19** |
+
+**Test 2: end to end.** The unchanged SparseTrack pipeline, run on the image cache (baseline) and on the learned
+probability cache.
+
+*[End-to-end table: see below.]*
+
+**The decoder's own ceiling.** With perfect evidence, SparseTrack 0.4.2 reaches only **71% (seed 3) and 77% (seed 4)**
+of lengths within tolerance, with a −3.4 px bias on seed 3.
+- Perfect evidence fixes bright-cored tubes: 24/71 in tolerance becomes 55/71.
+- It does not fix rotating or drifting tubes: 35/58 and 56/89 in tolerance. A grain that drifts 39 px gets zero length
+  even with perfect evidence.
+- Those losses come from the end-state path plus rigid rotation, so they motivate *decoder v2* (section 4.5).
+
+**Transfer to real footage (qualitative).** `sample_movie.avi` is real, with different optics and thicker,
+bright-cored tubes; the network has never seen its tubes.
+
+![Registered bin, SparseTrack's change evidence, learned tube probability on sample_movie.avi](img/learned-evidence-sample-movie.jpg)
+
+- SparseTrack's change evidence lights up whatever changed: grain bodies (the brightest objects), tube walls and
+  blocky codec noise.
+- The learned probability is tube-specific: near zero on grain bodies, and it follows most tubes.
+- It misses the wide, dark-walled tube at left in bin 45, and finds it only partly in bin 90. Its cross-section is
+  outside the synthetic profiles, which is the gap the next training round must close: wider profiles in `synth`,
+  then fine-tuning on the 127 real `ld` traces.
+- It also flags one small out-of-focus particle.
+
+**What these results do and don't show.**
+- **Do:** evidence quality is the right lever to pull. Learned evidence from synthetic data alone is decisively
+  better than SparseTrack's evidence when geometry is held fixed. It also looks tube-specific on real footage it has
+  never seen.
+- **Don't:** these are synthetic held-out numbers on the sample movie's field, from one training run. The real test
+  is the dev benchmark `ld_v1` on your movie (appendix B, one command) and then, once frozen, movie 2.
 
 ---
 
@@ -396,4 +456,28 @@ problem.
 
 ## Appendix B: run the learned-evidence test on your real dev movie
 
-*[Commands filled in below.]*
+Run this on your Mac, where the movies and prepared caches live, from a separate checkout so your labelling copy is
+untouched:
+
+```bash
+cd ~/path/to/TubeTracker                       # your repo
+git fetch origin
+git worktree add ../TubeTracker-learned origin/claude/magical-maxwell-i5tpeh
+cd ../TubeTracker-learned
+ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (runs/sparsetrack/ld)
+../TubeTracker/.venv/bin/pip install torch==2.13.0   # the project's `cnn` extra, if not installed
+../TubeTracker/.venv/bin/python -m prototypes.learned_evidence.pipeline \
+    --field runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld
+```
+
+- **Time:** about an hour. That is five synthetic movies on the `ld` field (~5 min each), training (~25 min on CPU,
+  faster on an Apple GPU, which is picked automatically) and a probability cache for the real movie.
+- **Output:** SparseTrack 0.4.2 with and without learned evidence, scored on `ld_v1`, plus a paired bootstrap of the
+  difference.
+- **Movie 2:** only after freezing a model, and only once:
+
+  ```bash
+  ../TubeTracker/.venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \
+      --labels ../TubeTracker/benchmark/labels/m2_v1.json --model runs/learned_evidence/ld/unet.pt \
+      --work runs/learned_evidence/m2 --heldout-once
+  ```
