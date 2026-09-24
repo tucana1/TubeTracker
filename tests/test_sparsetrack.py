@@ -1,5 +1,6 @@
 import json
 import shutil
+import struct
 import subprocess
 import threading
 import urllib.request
@@ -141,6 +142,10 @@ def test_bench_http_roundtrip(tiny_cache):
         for path in ("/", "/static/app.js", "/api/img/coarse/g001", "/api/img/fine/g001?start=2",
                      "/api/img/frame/g001?bin=5&view=near", "/api/img/field?which=late"):
             assert urllib.request.urlopen(base + path).status == 200
+        for view, v in state["layout"]["trace"].items():  # clicks map back through 2 * half * zoom
+            head = urllib.request.urlopen(base + f"/api/img/frame/g001?bin=5&view={view}").read(24)
+            assert struct.unpack(">II", head[16:24]) == (round(2 * v["half"] * v["zoom"]),) * 2
+        assert set(state["layout"]["trace"]) == {"near", "wide", "far"}
         req = urllib.request.Request(base + "/api/onset/g001", method="POST", headers={"Content-Type": "application/json"},
                                      data=json.dumps({"verdict": "emerged_at_start"}).encode())
         assert json.load(urllib.request.urlopen(req))["first_visible_bin"] == 0

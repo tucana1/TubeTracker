@@ -40,7 +40,8 @@ STATIC = Path(__file__).with_name("static")
 # display layouts (CSS px): coarse = whole movie, fine = single bins around a transition
 COARSE = {"bins_per_tile": 4, "half": 28, "zoom": 2.0, "cols": 11, "header": 16, "gap": 2}
 FINE = {"n_tiles": 18, "half": 24, "zoom": 4.0, "cols": 6, "header": 16, "gap": 2}
-TRACE_VIEWS = {"near": {"half": 64, "zoom": 5.0}, "wide": {"half": 128, "zoom": 2.5}}
+TRACE_VIEWS = {"near": {"half": 64, "zoom": 5.0}, "wide": {"half": 128, "zoom": 2.5},
+               "far": {"half": 256, "zoom": 1.25}}  # all 640 px across; "far" for tubes longer than "wide" shows
 ZOOM = {"half": 56, "zoom": 4.5}  # census close-up of the grain in focus
 RETEST_SIZE = 8
 FOLLOW_HALF = 60        # crop used to measure a grain's own drift

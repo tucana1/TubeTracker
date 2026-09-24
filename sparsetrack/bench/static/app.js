@@ -416,7 +416,8 @@ function renderTrace() {
     then follow the centreline to the apex (as many clicks as the curve needs).
     <kbd>F</kbd> full tube · <kbd>P</kbd> partial (part hidden/out of view) · <kbd>0</kbd> no tube ·
     <kbd>U</kbd> unsure · <kbd>⌫</kbd> undo point · <kbd>T</kbd> touching another tube/grain ·
-    <kbd>W</kbd> wide/near · <kbd>H</kbd> hide marks · <kbd>C</kbd> contrast · <kbd>A</kbd> smoother ·
+    <kbd>W</kbd> wide/near · ${S.st.layout.trace.far ? "<kbd>X</kbd> extra wide · " : ""}<kbd>H</kbd> hide marks ·
+    <kbd>C</kbd> contrast · <kbd>A</kbd> smoother ·
     <kbd>←</kbd>/<kbd>→</kbd> trace time.`);
   const chips = p.map((bb, i) => `<span data-i="${i}" class="${tr[String(bb)] ? "done" : ""} ${i === S.traceIdx ? "cur" : ""}">f${bb * S.st.frames_per_bin + S.st.frames_per_bin / 2}${tr[String(bb)] ? " ✓" : ""}</span>`).join("");
   const saved = tr[String(b)];
@@ -429,6 +430,7 @@ function renderTrace() {
     <button class="act" id="undo">⌫ undo</button><button class="act" id="clr">clear</button><br>
     <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
     <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
+    ${S.st.layout.trace.far ? `<button class="act ${S.traceView === "far" ? "on" : ""}" id="tX">X · extra wide</button>` : ""}
     <button class="act ${S.contrast === "h" ? "on" : ""}" id="tC">C · high contrast</button>
     <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button>
     <p class="muted">Onset: ${on ? VERDICT_TEXT[on.verdict] : "—"} ${on && on.first_visible_frame != null ? "· first visible f" + on.first_visible_frame : ""}</p></div></div>`;
@@ -448,10 +450,14 @@ function renderTrace() {
   $("#undo").onclick = () => { S.pts.pop(); drawTrace(); updateCount(); };
   $("#clr").onclick = () => { S.pts = []; drawTrace(); updateCount(); };
   $("#tT").onclick = () => { S.contact = !S.contact; render(); };
-  $("#tW").onclick = () => { S.traceView = S.traceView === "near" ? "wide" : "near"; render(); };
+  $("#tW").onclick = toggleWide;
+  if ($("#tX")) $("#tX").onclick = toggleFar;
   $("#tC").onclick = () => { S.contrast = S.contrast === "h" ? "n" : "h"; render(); };
   $("#tA").onclick = () => { S.smooth = S.smooth ? 0 : 1; render(); };
 }
+// clicked points are in movie coordinates, so a trace can be continued in another view
+function toggleWide() { S.traceView = S.traceView === "wide" ? "near" : "wide"; render(); }
+function toggleFar() { if (S.st.layout.trace.far) { S.traceView = S.traceView === "far" ? "wide" : "far"; render(); } }
 function traceLen() {
   let L = 0; for (let i = 1; i < S.pts.length; i++) L += Math.hypot(S.pts[i][0] - S.pts[i - 1][0], S.pts[i][1] - S.pts[i - 1][1]);
   return L;
@@ -556,7 +562,8 @@ document.addEventListener("keydown", (e) => {
     if (map[k.toLowerCase()]) return saveTrace(map[k.toLowerCase()]);
     if (k === "Backspace") { e.preventDefault(); S.pts.pop(); drawTrace(); return updateCount(); }
     if (k === "t") { S.contact = !S.contact; return render(); }
-    if (k === "w") { S.traceView = S.traceView === "near" ? "wide" : "near"; return render(); }
+    if (k === "w") return toggleWide();
+    if (k === "x") return toggleFar();
     if (k === "h") { S.overlay = !S.overlay; return drawTrace(); }
     if (k === "m") { S.marker = !S.marker; return drawTrace(); }
     if (k === "a") { S.smooth = S.smooth ? 0 : 1; return render(); }
