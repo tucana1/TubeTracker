@@ -112,5 +112,12 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
   - Pooled over the twelve held-out and test movies: 1808/2475 (73%) against 1516/2496 (61%) for SparseTrack as it
     is (+292, +170 to +413). It is ahead on all twelve movies, and drifting grains no longer lose.
   - `pipeline.py` scores it as a third run (`perbin/`), so `ld_v1` decides on real footage.
+- **Bursting tubes** (tubes inpainted away from a random bin on, in four synthetic movies; 28 tubes, 159 traces before
+  their bursts):
+  - SparseTrack as it is keeps 43% of those lengths in tolerance, and learned evidence through SparseTrack's
+    decoder 47%. SparseTrack's decoder reads the path at the end of the movie, when the tube has gone.
+  - The per-bin decoder keeps 71%.
+  - Its burst-aware fit (`burst=True`, on in `pipeline.py`) adds a little: +11 and +5 lengths. It cannot time bursts
+    (5 of 28 within ±2 bins).
 - **Real footage** (qualitative, `show.py`): tube-specific, near zero on grain bodies, but misses wide, dark-walled
   tubes whose profile is outside the synthetic range.

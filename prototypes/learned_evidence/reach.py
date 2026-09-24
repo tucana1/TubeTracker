@@ -54,10 +54,25 @@ def monotone_l1(raw: np.ndarray, vmax: float, step: float = 0.5) -> np.ndarray:
     return levels[out]
 
 
+def burst_cut(raw: np.ndarray, min_px: float = 8.0, frac: float = 0.3, hold: float = 0.9,
+              min_bins: int = 5) -> int | None:
+    """First bin of a burst: the tube had been read at ``min_px`` or more, and from this bin on its
+    reading stays below ``frac`` of the longest reading so far in at least ``hold`` of the remaining
+    bins (at least ``min_bins`` of them). A burst tube leaves nothing to trace, so its reading collapses
+    for good; a monotone fit over the whole movie would instead pull its growth down."""
+    raw = np.asarray(raw, float)
+    peak = np.maximum.accumulate(raw)
+    for b in range(1, raw.size - min_bins + 1):
+        if peak[b - 1] >= min_px and raw[b] < frac * peak[b - 1]:
+            if np.mean(raw[b:] < frac * peak[b - 1]) >= hold:
+                return b
+    return None
+
+
 def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: list[dict], thr: float = 0.5,
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
-                tip: str = "const", big: int | None = None) -> dict:
+                tip: str = "const", big: int | None = None, burst: bool = False) -> dict:
     """Length per bin, then a monotone fit. ``seed`` chooses how the bin's length is read:
     ``"skeleton"`` (the default, frozen on the development seed): geodesic length along the region's
     medial axis from its pixels nearest the grain centre, plus their distance from the rim, so a
@@ -67,7 +82,9 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     tube's end. With ``big`` set, a grain whose region reaches the crop's edge in any bin is read
     again with ``half = big`` (movies longer than the dev movie; ``pipeline.py`` sets 300).
     ``tip="dt"`` adds the region's half-width at the end of the axis instead: it helped with exact
-    truth masks and hurt with learned evidence on fresh held-out movies, so it is off.
+    truth masks and hurt with learned evidence on fresh held-out movies, so it is off. With
+    ``burst``, a reading that collapses for good (``burst_cut``) ends the growth fit there: a burst
+    tube leaves nothing to trace (``pipeline.py`` sets it; its burst frame is not a measurement).
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
@@ -136,11 +153,16 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     if edge and big and half < big:
         res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,
                           onset_px=onset_px, min_tube_px=min_tube_px, rim_band=rim_band, seed=seed, end_px=end_px,
-                          tip=tip, big=big)
+                          tip=tip, big=big, burst=burst)
         res["flags"].append(f"crop_grown:{big}")
         return res
-    fit = monotone_l1(raw, vmax) if raw.max() > 0 else raw
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
+    cut = burst_cut(raw, min_px=min_tube_px) if burst else None
+    if cut is not None:  # growth up to the burst, then the length it reached (nothing is left to trace)
+        head = monotone_l1(raw[:cut], vmax)
+        fit = np.concatenate([head, np.full(raw.size - cut, head[-1])])
+    else:
+        fit = monotone_l1(raw, vmax) if raw.max() > 0 else raw
     on = np.nonzero(fit >= onset_px)[0]
     flags = []
     if fit[-1] < min_tube_px:
@@ -150,10 +172,13 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     else:
         status, onset = "emerged_within", frames[int(on[0])]
     interval = None if onset is None or on[0] == 0 else [frames[int(on[0]) - 1], onset]
+    if cut is not None and status != "no_emergence_by_end":
+        flags.append(f"burst_after:{frames[cut - 1]}")
     return {"id": grain["id"], "x": gx, "y": gy, "r": gr, "status": status, "onset_frame": onset,
             "onset_interval": interval, "final_length_px": round(float(fit[-1]), 2),
             "length": {"frames": frames, "px": [round(float(v), 2) for v in fit]},
             "raw_reach_px": [round(float(v), 2) for v in raw], "flags": flags,
+            "burst_frame": frames[cut] if cut is not None and status != "no_emergence_by_end" else None,
             "width_px": (round(float(np.nanmedian(width[raw >= min_tube_px])), 2)
                          if np.any((raw >= min_tube_px) & np.isfinite(width)) else None)}
 

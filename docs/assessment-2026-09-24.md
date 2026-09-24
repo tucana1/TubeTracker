@@ -573,6 +573,28 @@ evidence.
   five held-out movies: development +84, held-out +12 in all, test +44. It also removes the drifting-grain weakness.
   `pipeline.py` now scores it as a third run, so `ld_v1` decides it on real footage.
 
+**Bursting tubes.** Movie 2's burst answer means a tube left "nothing to trace" after bursting. So I made tubes vanish
+in four synthetic movies, 28 bursting tubes in all: from a random bin on, each tube was inpainted away, leaving a
+faint ghost. The truth marks the first later trace time "burst" and drops the rest, as the labelling tool does.
+
+| Decoder (same movies) | Lengths before the burst, bursting tubes | Same tubes, movie without bursts |
+|---|---|---|
+| SparseTrack as it is | 69/159 (43%) | 87/159 (55%) |
+| Learned v2 → SparseTrack's decoder | 74/159 (47%) | 114/159 (72%) |
+| **Learned v2 → per-bin decoder** | **113/159 (71%)** | 130/159 (82%) |
+
+- SparseTrack's decoder reads each tube's path at the end of the movie. When the tube has vanished by then, it loses
+  the tube's earlier lengths and onset too: 40 traces lost with learned evidence, 18 with its own. Its own
+  change map still sees the ghost, which is why it loses less.
+- The per-bin decoder reads each bin as it comes, so it loses only 17.
+- A burst-aware fit (`reach.py burst=True`: fit growth only up to a reading that collapses for good) added +11
+  lengths on the development movie and +5 on the three test movies, with one false burst in three burst-free
+  movies. It is on by default in `pipeline.py` as a safeguard. Its burst frame is not reliable (5 of 28 within ±2
+  bins), so it is not reported as a measurement.
+- For movie 2: expect SparseTrack 0.4.x to be wrong on grains whose tube bursts, onset included. This is one more
+  reason to score the per-bin decoder there. The emulated burst is a guess at what a real one looks like, and your
+  burst answers will show whether it holds.
+
 **Transfer to real footage (qualitative).** `sample_movie.avi` is real, with different optics and thicker,
 bright-cored tubes; the network has never seen its tubes.
 

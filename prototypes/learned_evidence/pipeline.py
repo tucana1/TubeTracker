@@ -67,7 +67,8 @@ def write_per_grain(work: Path, runs: dict, seconds: float) -> None:
     with open(work / "per_grain.csv", "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs
-                                          for col in ("status", "onset_after", "onset_by", "final_length_px")])
+                                          for col in ("status", "onset_after", "onset_by", "final_length_px")]
+                   + ["perbin_burst_frame"])
         for gid in ids:
             g0 = by_run["sparsetrack"][gid]
             row = [gid, g0.get("x"), g0.get("y")]
@@ -75,7 +76,7 @@ def write_per_grain(work: Path, runs: dict, seconds: float) -> None:
                 g = by_run[name].get(gid, {})
                 iv = g.get("onset_interval") or [None, None]
                 row += [g.get("status"), iv[0], iv[1], g.get("final_length_px")]
-            w.writerow(row)
+            w.writerow(row + [by_run["perbin"].get(gid, {}).get("burst_frame")])
     lines = [f"{len(ids)} grains ({seconds:.0f} s); per-grain results in {work / 'per_grain.csv'}"]
     for name, pred in runs.items():
         st = [g.get("status") for g in pred["grains"]]
@@ -102,6 +103,9 @@ def main(argv=None):
     ap.add_argument("--steps", type=int, default=6000)
     ap.add_argument("--keep-caches", action="store_true")
     ap.add_argument("--heldout-once", action="store_true", help="required to score labels whose name contains m2")
+    ap.add_argument("--no-burst", action="store_true",
+                    help="per-bin decoder: fit growth over the whole movie even where a tube's reading collapses "
+                         "for good (by default that is read as a burst: growth is fitted up to it)")
     ap.add_argument("--fixed-crop", action="store_true",
                     help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
                          "(by default such grains are read again at +/-300 px, in both runs)")
@@ -125,7 +129,7 @@ def main(argv=None):
         learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
     # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
     perbin = reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None,
-                           big=None if args.fixed_crop else 300,
+                           big=None if args.fixed_crop else 300, burst=not args.no_burst,
                            vmax=float(learned.get("params", {}).get("vmax_px", 4.0)))  # SparseTrack's speed cap
     (work / "perbin").mkdir(exist_ok=True)
     (work / "perbin" / "predictions.json").write_text(json.dumps(perbin))

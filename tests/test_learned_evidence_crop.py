@@ -1,4 +1,4 @@
-"""Learned-evidence helpers around SparseTrack: the adaptive crop, the chunked kymograph, the monotone fit."""
+"""Learned-evidence helpers around SparseTrack: adaptive crop, chunked kymograph, monotone fit, burst cut."""
 
 import numpy as np
 import pytest
@@ -61,3 +61,13 @@ def test_monotone_l1_ignores_a_one_bin_flicker():
     fit = monotone_l1(raw, vmax=4.0)
     assert np.all(np.diff(fit) >= 0) and np.all(np.diff(fit) <= 4.0)
     assert fit[4] <= 6.0 and fit[-1] == pytest.approx(8.0, abs=0.5)
+
+
+def test_burst_cut_finds_a_collapse_that_lasts():
+    from prototypes.learned_evidence.reach import burst_cut
+
+    grow = np.linspace(0, 40, 30)
+    assert burst_cut(np.concatenate([grow, np.zeros(20)])) == 30  # the tube vanished for good
+    assert burst_cut(np.concatenate([grow, [0, 0], np.full(18, 41.0)])) is None  # a two-bin gap, then the tube again
+    assert burst_cut(np.concatenate([grow, np.full(20, 40.0)])) is None  # it stopped growing, still visible
+    assert burst_cut(np.concatenate([np.linspace(0, 5, 30), np.zeros(20)])) is None  # never a tube (< 8 px)
