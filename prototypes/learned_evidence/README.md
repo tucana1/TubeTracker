@@ -19,7 +19,9 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 | `model.py` | 0.49 M-parameter U-Net (BatchNorm, so tiled inference does not depend on tile size); tiled prediction |
 | `train.py` | Training: dihedral, gain, offset and noise augmentation; BCE + Dice for the body; weighted BCE for tips. CPU, MPS or CUDA |
 | `evaluate.py` | Probability caches; end-to-end SparseTrack runs (baseline, learned, and "perfect" = exact truth masks as evidence); the adaptive crop (below); oracle-path fronts; paired bootstrap over grains |
-| `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → both SparseTrack runs scored on its human labels |
+| `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
+| `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins |
+| `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
 | `models/unet_v2_sample_field.pt` | The trained v2 model (ten synthetic movies on the sample movie's field), for a quick first look |
 
 ## Run it on the dev movie (on the machine that has the movies)
@@ -79,7 +81,7 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
   - Bright-cored tubes go from 41% to 70–71%.
   - Weak spot left: drifting grains (67% with SparseTrack's evidence, 63% with v2).
   - Development seed 5: v1 144/192, v2 141/192, SparseTrack's evidence 102/192.
-- **Replication** (three fresh movies, v5 seeds 13–15, rendered after v2 was chosen):
+- **Replication** (three fresh movies, v5 seeds 13–15, rendered after v2 was chosen; then four more, 22–25, below):
   - v2 398/601 (66%) against SparseTrack's evidence 389/612 (64%): +9 traces (95% CI −47 to +64), within noise.
   - Pooled over all eight held-out movies (216 grains): 1132/1615 (70%) against 1012/1636 (62%), +120 traces
     (+17 to +226). Perfect evidence: 1176/1615 (73%).
@@ -92,13 +94,19 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
 - **The decoder's own ceiling:**
   - With perfect evidence (exact truth masks), SparseTrack's decoder reaches only 73% of lengths in tolerance over
     the eight held-out movies (58–89% per movie). Rotating, drifting and curling tubes remain its losses.
-  - `reach.py` is a per-bin decoder. It reads the region with P > 0.5 attached to the grain in every bin, measures
-    its length along the medial axis (+1 px), then fits a monotone L1 curve. Its settings were frozen on the
-    development seed.
-    - With learned evidence it ties SparseTrack's decoder over eight held-out movies: 1144 against 1132 of 1615
-      (+12, 95% CI −67 to +88).
-    - It lost on the first five movies (−27) and won on the three fresh ones (+39).
-    - It is better on dark tubes, curls, crossings, rotations and drift, and worse on bright-cored tubes and sways.
-      Decoder v2 should therefore be a hybrid of the two.
+- **Decoder v2: `reach.py`, the per-bin decoder.** It reads the region with P > 0.5 attached to the grain in every
+  bin, measures its length along the medial axis (+1 px), then fits a monotone L1 curve. Settings were frozen on the
+  development seed. With learned v2 evidence:
+  - First eight held-out movies: a tie with SparseTrack's decoder, 1144 against 1132 of 1615 (+12, 95% CI −67 to
+    +88).
+  - Seven new development movies (seeds 5, 16–21): 1073 against 989 of 1399 (+84, +32 to +139), better on every
+    tube type.
+    - No label-free per-grain switch between the two decoders beat using `reach.py` everywhere. The switches
+      tried were width, path coverage, drift, rotation and the longer reading, each scored leave-one-movie-out.
+  - Four untouched test movies (seeds 22–25), frozen beforehand: 664 against 620 of 860 (+44, −6 to +98), onsets 74
+    against 67. SparseTrack as it is gets 504 there.
+  - Pooled over the twelve held-out and test movies: 1808/2475 (73%) against 1516/2496 (61%) for SparseTrack as it
+    is (+292, +170 to +413). It is ahead on all twelve movies, and drifting grains no longer lose.
+  - `pipeline.py` scores it as a third run (`perbin/`), so `ld_v1` decides on real footage.
 - **Real footage** (qualitative, `show.py`): tube-specific, near zero on grain bodies, but misses wide, dark-walled
   tubes whose profile is outside the synthetic range.

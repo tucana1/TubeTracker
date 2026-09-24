@@ -1,5 +1,6 @@
 """One command: train learned evidence on synthetic movies built from a real field, then score
-SparseTrack with and without it on that real movie's human benchmark.
+SparseTrack with and without it on that real movie's human benchmark, and the learned evidence
+read by the per-bin decoder (``reach.py``) as well.
 
     .venv/bin/python -m prototypes.learned_evidence.pipeline \
         --field runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld
@@ -27,7 +28,7 @@ from sparsetrack.cli import write_census
 from sparsetrack.evaluate import load, score
 from sparsetrack.synth import make_movie, preset
 
-from . import data, evaluate, train
+from . import data, evaluate, reach, train
 from .model import load as load_model
 
 # ten movies (model v2): on held-out synthetic seeds, +35 lengths in tolerance over five (95% CI +6 to +70)
@@ -90,17 +91,30 @@ def main(argv=None):
     with contextlib.nullcontext() if args.fixed_crop else evaluate.adaptive_crop():
         base = evaluate.run_baseline(field, work, grains_path=labels_path)
         learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
-    rb, rl = score(labels, base), score(labels, learned)
+    # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
+    perbin = reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None,
+                           big=None if args.fixed_crop else 300,
+                           vmax=float(learned.get("params", {}).get("vmax_px", 4.0)))  # SparseTrack's speed cap
+    (work / "perbin").mkdir(exist_ok=True)
+    (work / "perbin" / "predictions.json").write_text(json.dumps(perbin))
+    rb, rl, rp = score(labels, base), score(labels, learned), score(labels, perbin)
     tol = rb["onset"]["tolerance_frames"]
     pb = evaluate.paired_bootstrap(rl, rb, tol)
+    pp = evaluate.paired_bootstrap(rp, rl, tol)
+
+    def diff(name, p):
+        return (f"{name} over {p['grains']} grains: onset {p['onset_diff']:+.0f} "
+                f"[{p['onset_ci'][0]:+.0f}, {p['onset_ci'][1]:+.0f}], lengths {p['length_diff']:+.0f} "
+                f"[{p['length_ci'][0]:+.0f}, {p['length_ci'][1]:+.0f}] (95% paired bootstrap over grains)")
+
     lines = [f"{labels_path.name}: {rb['grains_scored']} grains scored ({time.time() - started:.0f} s)",
              evaluate.e2e_summary("baseline", rb), evaluate.e2e_summary("learned", rl),
-             (f"learned - baseline over {pb['grains']} grains: onset {pb['onset_diff']:+.0f} "
-              f"[{pb['onset_ci'][0]:+.0f}, {pb['onset_ci'][1]:+.0f}], lengths {pb['length_diff']:+.0f} "
-              f"[{pb['length_ci'][0]:+.0f}, {pb['length_ci'][1]:+.0f}] (95% paired bootstrap over grains)")]
+             evaluate.e2e_summary("per-bin", rp),
+             diff("learned - baseline", pb), diff("per-bin - learned", pp)]
     print("\n".join(lines))
     (work / "report.txt").write_text("\n".join(lines) + "\n")
-    (work / "scores.json").write_text(json.dumps({"baseline": rb, "learned": rl, "paired": pb}, default=str, indent=1))
+    (work / "scores.json").write_text(json.dumps({"baseline": rb, "learned": rl, "perbin": rp, "paired": pb,
+                                                  "paired_perbin_learned": pp}, default=str, indent=1))
 
 
 if __name__ == "__main__":

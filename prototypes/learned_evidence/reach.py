@@ -1,4 +1,4 @@
-"""Decoder v2 sketch: read the tube where it is in every bin, then make its length monotone.
+"""Decoder v2, the per-bin decoder: read the tube where it is in every bin, then make its length monotone.
 
 SparseTrack traces one centreline on the end-state change map and reads every bin along that
 path (rotated rigidly). With a tube-probability map for every bin that is no longer necessary:
@@ -57,19 +57,21 @@ def monotone_l1(raw: np.ndarray, vmax: float, step: float = 0.5) -> np.ndarray:
 def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: list[dict], thr: float = 0.5,
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
-                tip: str = "const") -> dict:
+                tip: str = "const", big: int | None = None) -> dict:
     """Length per bin, then a monotone fit. ``seed`` chooses how the bin's length is read:
     ``"skeleton"`` (the default, frozen on the development seed): geodesic length along the region's
     medial axis from its pixels nearest the grain centre, plus their distance from the rim, so a
     wide tube's half-width does not count; ``"nearest"``: the same over the whole region;
     ``"rim"`` (the first sketch): from every region pixel within 1.5 px of the rim, which reads
     ~2 px short. ``end_px`` is added to every non-zero reach: the skeleton stops short of the
-    tube's end. ``tip="dt"`` adds the region's half-width at the end of the axis instead: it helped
-    with exact truth masks and hurt with learned evidence on fresh held-out movies, so it is off.
+    tube's end. With ``big`` set, a grain whose region reaches the crop's edge in any bin is read
+    again with ``half = big`` (movies longer than the dev movie; ``pipeline.py`` sets 300).
+    ``tip="dt"`` adds the region's half-width at the end of the axis instead: it helped with exact
+    truth masks and hurt with learned evidence on fresh held-out movies, so it is off.
 
-    Over eight held-out synthetic movies this ties SparseTrack's decoder with learned evidence
-    (1144 against 1132 of 1615 lengths), winning on curls, crossings, rotations and drift and
-    losing on bright-cored tubes and sways: decoder v2 should combine the two."""
+    With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
+    tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
+    movies. No label-free per-grain switch between the two decoders did better than this alone."""
     fpb, rs, nb = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0)), int(meta["n_bins"])
     gx, gy, gr = float(grain["x"]), float(grain["y"]), float(grain["r"])
     centre = half - 0.5
@@ -90,6 +92,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     own_ring = (rg >= gr - 1.0) & (rg <= gr + rim_band)
     rim = (rg >= gr - 1.0) & (rg <= gr + 1.5)
     raw = np.zeros(nb - rs)
+    width = np.full(nb - rs, np.nan)  # region area per px of length: the tube's full width
+    edge = False  # the tube reaches the crop's edge: read the grain again with a bigger crop
     for i, b in enumerate(range(rs, nb)):
         p = RP.crop(b, gx, gy, half) / scale
         dx, dy = ls[i]
@@ -104,6 +108,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         rivals = [r for r in rings if (comp & r).any()]
         if rivals:
             comp = A.geodesic_owner(comp, [own_ring] + rivals) == 0
+        k = 3 + int(np.ceil(np.abs(ls).max()))  # the registration shift leaves an empty band at the border
+        edge = edge or bool(comp[:k].any() or comp[-k:].any() or comp[:, :k].any() or comp[:, -k:].any())
         region = comp
         if seed == "skeleton":  # along the medial axis: a wide tube's half-width does not count
             sk = skeletonize(comp)
@@ -126,6 +132,13 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if tip == "dt":  # the medial axis stops about a half-width short of the tube's end
             end += float(cv2.distanceTransform(region.astype(np.uint8), cv2.DIST_L2, 3)[far])
         raw[i] = float(cum[far]) + offset + end
+        width[i] = float(region.sum()) / max(float(cum[far]) + 1.0, 1.0)
+    if edge and big and half < big:
+        res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,
+                          onset_px=onset_px, min_tube_px=min_tube_px, rim_band=rim_band, seed=seed, end_px=end_px,
+                          tip=tip, big=big)
+        res["flags"].append(f"crop_grown:{big}")
+        return res
     fit = monotone_l1(raw, vmax) if raw.max() > 0 else raw
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
     on = np.nonzero(fit >= onset_px)[0]
@@ -140,7 +153,9 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     return {"id": grain["id"], "x": gx, "y": gy, "r": gr, "status": status, "onset_frame": onset,
             "onset_interval": interval, "final_length_px": round(float(fit[-1]), 2),
             "length": {"frames": frames, "px": [round(float(v), 2) for v in fit]},
-            "raw_reach_px": [round(float(v), 2) for v in raw], "flags": flags}
+            "raw_reach_px": [round(float(v), 2) for v in raw], "flags": flags,
+            "width_px": (round(float(np.nanmedian(width[raw >= min_tube_px])), 2)
+                         if np.any((raw >= min_tube_px) & np.isfinite(width)) else None)}
 
 
 def analyze(pcache: str | Path, image_cache: str | Path, grains_path: str | Path | None = None, log=print,
