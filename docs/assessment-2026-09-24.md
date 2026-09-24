@@ -267,8 +267,8 @@ Looser tolerances for 0.4.0:
     1. Commit `m2_v1.json` and its journal.
     2. Before scoring anything, freeze 0.4.3: 0.4.2 plus the two long-tube fixes (section 3.3). They are label-free
        and leave `ld` unchanged, so choosing them now is not tuning on movie 2.
-    3. Score **0.4.0 once** (the pre-registered baseline), then 0.4.3 once. Record both in `benchmark/reports/`, and
-       report traces whose tube leaves ±150 px separately.
+    3. Score **0.4.0 once** (the pre-registered baseline), then 0.4.3 once (commands in appendix C). Record both in
+       `benchmark/reports/`.
 - **Soon (cheap, raises the value of both benchmarks):**
   - A 15-trace blind retest on `ld`, about 10 minutes.
   - A written onset rule, applied from now on.
@@ -584,3 +584,31 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
       --labels ../TubeTracker/benchmark/labels/m2_v1.json --model runs/learned_evidence/ld/unet.pt \
       --work runs/learned_evidence/m2 --heldout-once
   ```
+
+## Appendix C: score movie 2 once, when the labels are in
+
+Run these on your Mac, from your repo, after `m2_v1.json` is committed and 0.4.3 (the long-tube fix, section 3.3)
+is tagged. They only read the labels, so they cannot change them.
+
+```bash
+cd ~/path/to/TubeTracker
+# 1. The frozen baseline, from its own worktree (your checkout is not touched)
+git worktree add ../st-0.4.0 sparsetrack-0.4.0
+cd ../st-0.4.0
+../TubeTracker/.venv/bin/python -c "import sparsetrack; print(sparsetrack.__version__, sparsetrack.__file__)"
+#    must print 0.4.0 and a path inside st-0.4.0
+../TubeTracker/.venv/bin/python -m sparsetrack analyze ../TubeTracker/runs/sparsetrack/m2 \
+    --grains ../TubeTracker/benchmark/labels/m2_v1.json --out ../TubeTracker/runs/sparsetrack/m2_0.4.0
+cd ../TubeTracker
+# 2. 0.4.3, from your checkout
+.venv/bin/python -m sparsetrack analyze runs/sparsetrack/m2 --grains benchmark/labels/m2_v1.json \
+    --out runs/sparsetrack/m2_0.4.3
+# 3. One report for both
+.venv/bin/python -m sparsetrack eval --labels benchmark/labels/m2_v1.json \
+    --pred runs/sparsetrack/m2_0.4.0/predictions.json runs/sparsetrack/m2_0.4.3/predictions.json \
+    --out benchmark/reports/m2_v1_scores.md
+```
+
+- Both versions read the same cache, and the cache format is unchanged since 0.4.0 (`sparsetrack.cache.v1`).
+- Commit the report as generated. Then neither version is scored on movie 2 again.
+- The learned-evidence run on movie 2 comes later, once a model trained on the dev field is frozen (appendix B).
