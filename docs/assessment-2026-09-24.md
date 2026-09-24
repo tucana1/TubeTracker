@@ -575,6 +575,9 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
   CPU, faster on an Apple GPU, which is picked automatically) and a probability cache for the real movie.
 - **Output:** SparseTrack 0.4.2 with and without learned evidence, scored on `ld_v1`, plus a paired bootstrap of the
   difference.
+- **Quick first look (about 10 minutes):** add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
+  to skip the synthetic movies and training. That model is v2 from section 5, trained on synthetic movies built on
+  `sample_movie.avi`'s field. The full run above, on your own field, is still the proper test.
 - **Long tubes:** both runs read a grain again at ±300 px when its path reaches the ±150 px crop edge (section 3.3;
   `--fixed-crop` turns this off). On `ld` no path gets there, so nothing changes.
 - **Movie 2:** only after freezing a model, and only once:

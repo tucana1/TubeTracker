@@ -20,6 +20,7 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 | `train.py` | Training: dihedral, gain, offset and noise augmentation; BCE + Dice for the body; weighted BCE for tips. CPU, MPS or CUDA |
 | `evaluate.py` | Probability caches; end-to-end SparseTrack runs (baseline, learned, and "perfect" = exact truth masks as evidence); the adaptive crop (below); oracle-path fronts; paired bootstrap over grains |
 | `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → both SparseTrack runs scored on its human labels |
+| `models/unet_v2_sample_field.pt` | The trained v2 model (ten synthetic movies on the sample movie's field), for a quick first look |
 
 ## Run it on the dev movie (on the machine that has the movies)
 
@@ -32,6 +33,11 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 About 1.5 hours on a laptop. That is ten synthetic movies at about 5 min each, training (about 30 min on 4 CPU
 cores, less on an Apple GPU) and a probability cache for the real movie. It prints both SparseTrack runs
 scored on `ld_v1` and a paired bootstrap of the difference.
+
+**Quick first look (about 10 minutes).** Add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
+to skip the synthetic movies and training. That model (2 MB) is v2 below: trained on ten synthetic movies built on
+the field of `sample_movie.avi`, the repository's only movie. The full run builds them on your own `ld` field, so it
+remains the proper test.
 
 **Long tubes.** SparseTrack reads each grain in a ±150 px crop, and a tube that leaves it stops at the edge with no
 flag. Movie 2's longest tubes pass ±128 px, so both runs use `evaluate.adaptive_crop`:
