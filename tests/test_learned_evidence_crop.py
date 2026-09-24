@@ -1,4 +1,4 @@
-"""adaptive_crop: a grain whose path ends at its crop edge is read again with a bigger crop; others are untouched."""
+"""Learned-evidence helpers around SparseTrack: the adaptive crop, the chunked kymograph, the monotone fit."""
 
 import numpy as np
 import pytest
@@ -52,3 +52,12 @@ def test_chunked_matched_kymograph_reads_long_paths():
     assert out.shape == (2, len(angles), len(pts))
     ref = A.matched_kymograph(signed, template, pts, normal, 350.0, across, angles[20:26], lateral_offset=0.0)
     np.testing.assert_array_equal(out[:, 20:26], ref)
+
+
+def test_monotone_l1_ignores_a_one_bin_flicker():
+    from prototypes.learned_evidence.reach import monotone_l1
+
+    raw = np.array([0, 0, 1, 2, 30, 4, 5, 6, 0, 8], float)  # a merge with another tube, then a missed bin
+    fit = monotone_l1(raw, vmax=4.0)
+    assert np.all(np.diff(fit) >= 0) and np.all(np.diff(fit) <= 4.0)
+    assert fit[4] <= 6.0 and fit[-1] == pytest.approx(8.0, abs=0.5)

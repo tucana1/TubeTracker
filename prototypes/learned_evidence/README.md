@@ -79,15 +79,26 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
   - Bright-cored tubes go from 41% to 70–71%.
   - Weak spot left: drifting grains (67% with SparseTrack's evidence, 63% with v2).
   - Development seed 5: v1 144/192, v2 141/192, SparseTrack's evidence 102/192.
+- **Replication** (three fresh movies, v5 seeds 13–15, rendered after v2 was chosen):
+  - v2 398/601 (66%) against SparseTrack's evidence 389/612 (64%): +9 traces (95% CI −47 to +64), within noise.
+  - Pooled over all eight held-out movies (216 grains): 1132/1615 (70%) against 1012/1636 (62%), +120 traces
+    (+17 to +226). Perfect evidence: 1176/1615 (73%).
+  - The gain per movie runs from −3 to +43 traces. It follows the mix of tubes: bright-cored tubes and sways gain
+    most, and drifting grains lose.
 - **Two integration choices**, made on the development seed only:
   - Onset comes from the growth front (`onset_source="front"`). SparseTrack's matched stub filter z-scores against
     control angles that are exactly zero on probability maps, and called grains "emerged at start" (3/22 onsets).
   - Tip offset is 0 px: a 2 px offset scored 136/192 against 144/192.
 - **The decoder's own ceiling:**
-  - With perfect evidence (exact truth masks), SparseTrack's decoder reaches only 75% of held-out lengths in tolerance (67–80% per movie).
-    Rotating, drifting and curling tubes remain its losses.
-  - `reach.py`, a naive per-bin decoder (geodesic reach through P > 0.5, then a monotone L1 fit), ties it on the
-    development seed (147/192 against 152/192 with perfect evidence) but calls onsets ~3 bins late. Decoder v2 needs
-    real design work (exit handling, skeleton length); it is a starting point, not a result.
+  - With perfect evidence (exact truth masks), SparseTrack's decoder reaches only 73% of lengths in tolerance over
+    the eight held-out movies (58–89% per movie). Rotating, drifting and curling tubes remain its losses.
+  - `reach.py` is a per-bin decoder. It reads the region with P > 0.5 attached to the grain in every bin, measures
+    its length along the medial axis (+1 px), then fits a monotone L1 curve. Its settings were frozen on the
+    development seed.
+    - With learned evidence it ties SparseTrack's decoder over eight held-out movies: 1144 against 1132 of 1615
+      (+12, 95% CI −67 to +88).
+    - It lost on the first five movies (−27) and won on the three fresh ones (+39).
+    - It is better on dark tubes, curls, crossings, rotations and drift, and worse on bright-cored tubes and sways.
+      Decoder v2 should therefore be a hybrid of the two.
 - **Real footage** (qualitative, `show.py`): tube-specific, near zero on grain bodies, but misses wide, dark-walled
   tubes whose profile is outside the synthetic range.

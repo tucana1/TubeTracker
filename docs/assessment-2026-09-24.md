@@ -36,14 +36,13 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
    - This fixes what killed every earlier learned model: 5–135 human labels and a network asked to make global
      decisions. It keeps what works, and each piece can be measured on the benchmark you already have.
 5. **The experiment behind this recommendation (section 5).** A 0.49 M-parameter network was trained only on synthetic
-   movies, in 30 minutes on CPU, with no real labels. It was scored on five held-out synthetic movies (135 grains).
+   movies, in 30 minutes on CPU, with no real labels. It was scored on eight held-out synthetic movies (216 grains).
    - Along the true tube geometry, its evidence puts 91% of lengths in tolerance, against 72% for SparseTrack's.
-   - End to end through the *unchanged* SparseTrack decoder, lengths improve from 61% to 69% (the decoder's ceiling
-     with perfect evidence is 75%), median error from 2.12 to 1.62 px, and control false positives from 5 to 2.
-   - Bright-cored tubes go from 41% to 70%.
-   - That first model missed twice as many germinations (12 against 6). Training on ten synthetic movies instead of
-     five fixed most of it: lengths 72% (paired gain over five movies +35 traces, 95% CI +6 to +70), 7 missed
-     germinations, and onsets 86/112 against 79/112 for SparseTrack's evidence (within noise).
+   - End to end through the *unchanged* SparseTrack decoder, lengths improve from 62% to 70% (paired +120 traces, 95%
+     CI +17 to +226) and median error from 2.08 to 1.68 px. The decoder's ceiling with perfect evidence is 73%.
+   - The gain is concentrated in bright-cored tubes (50% to 71%) and swaying tubes (62% to 80%). It varies a lot
+     between movies: from −3 to +43 traces per movie, and within noise on the three movies rendered last.
+   - Onsets do not improve, and drifting grains read worse.
    - On real footage it has never seen, it is tube-specific: near zero on grain bodies.
    - Whether it transfers to your movies takes one command on your Mac (appendix B), scored on `ld_v1`.
 6. **The biggest single lever may be the microscope, not the code.** The movies are ~14 fps x264 at a QP-30 quality
@@ -372,7 +371,7 @@ problem.
 | Now | Finish movie-2 labels; freeze 0.4.3 (long-tube fix); score 0.4.0 and 0.4.3 once each | First held-out numbers, with bootstrap intervals |
 | Week 1 | **Prototype v1:** SparseTrack 0.4 plus review mode in the labelling tool, physical units, one-click run/export (macOS and Windows), growth-arrest frame from the DP plateau, burst candidates flagged for review | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
 | Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then fine-tune on the `ld` traces; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
-| Weeks 3–4 | **Decoder v2, per-bin geometry.** With a tube-probability map for every bin, read length where the tube *is* in each bin: the geodesic reach from the exit through P > 0.5, made monotone over bins by the same DP. Stop rotating the end-state path. Section 5 shows why: even perfect evidence leaves SparseTrack's current decoder at 75% of held-out lengths (67–80% per movie), and the losses are rotation, drift and curls | Beats decoder v1 on synthetic held-out *and* on `ld_v1` |
+| Weeks 3–4 | **Decoder v2, a hybrid.** With a tube-probability map for every bin, read length where the tube *is* in each bin (`reach.py`: medial-axis length through P > 0.5, made monotone over bins) wherever the end-state path fails, and keep SparseTrack's path elsewhere. Section 5 shows why: the per-bin decoder ties SparseTrack's over eight held-out movies, but the two fail on different tubes (per-bin wins on curls, crossings, rotations and drift; SparseTrack on bright-cored tubes and sways), and even perfect evidence leaves SparseTrack's decoder at 73% | Beats both decoders on eight synthetic held-out movies *and* on `ld_v1` |
 | Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts | Burst frame within ±2 bins on held-out reviews |
 | Weeks 4–8 | Dense fields: instance-aware evidence (which grain owns each tube pixel), learned with synthetic foreign tubes and crossings (v2+ presets); ownership decided by birth time and geodesic reach | Contact-censored fraction halves without losing isolated-grain accuracy |
 | Ongoing | Acquisition protocol for new experiments; a new held-out movie every 2–3 frozen versions | — |
@@ -489,15 +488,48 @@ integration choices, same held-out movies.
 - The decoder is now the limit. Learned evidence sits 26 traces below perfect evidence, and perfect evidence itself
   stops at 75%.
 
-**The decoder's own ceiling.** With perfect evidence, SparseTrack 0.4.2 reaches only **75%** of held-out lengths
-within tolerance (67–80% per movie) and 91% of onsets.
-- The losses are rotating tubes (66%), curls (60%) and drifting grains (70%). A grain that drifts 39 px gets zero length
-  even with perfect evidence.
+**Replication on three fresh movies.** v2 was chosen over v1 on the five held-out movies above. So I rendered three
+more that nothing had touched (v5 seeds 13–15, 81 grains) and ran everything once.
+
+| Evidence → SparseTrack 0.4.2 decoder | Fresh movies (13–15): lengths | All eight held-out movies: lengths | Eight movies: onsets | Eight movies: median error |
+|---|---|---|---|---|
+| SparseTrack's own evidence | 389/612 (64%) | 1012/1636 (62%) | 129/181 | 2.08 px |
+| **Learned v2** | 398/601 (66%) | **1132/1615 (70%)** | 133/181 | **1.68 px** |
+| Perfect evidence (ceiling) | 416/601 (69%) | 1176/1615 (73%) | 158/181 | 1.45 px |
+
+- On the fresh movies the gain is within noise: paired +9 traces (95% CI −47 to +64).
+- Pooled over all eight held-out movies (216 grains), it holds: +120 traces (95% CI +17 to +226; P(not better) =
+  0.01). Onsets +4 (−11 to +19).
+- Per movie, the gain runs +18, +13, +11, +26, +43, −3, −2 and +14 traces. Learned evidence helps most where
+  SparseTrack's evidence is weakest, so its gain depends on the mix of tubes:
+  - bright-cored tubes: 71% against 50%;
+  - sways: 80% against 62%;
+  - rotations, crossings and faint tubes: 7–10 points each;
+  - drifting grains read worse (56% against 63%).
+- Lesson: five synthetic movies (135 grains) cannot size an effect of a few points. Use eight or more, and keep a
+  fresh set for the last check.
+
+**The decoder's own ceiling.** With perfect evidence, SparseTrack 0.4.2 reaches only **73%** of held-out lengths
+within tolerance (eight movies; 75% on the first five, 58–89% per movie) and 87% of onsets.
+- The losses are rotating tubes, curls and drifting grains. A grain that drifts 39 px gets zero length even with
+  perfect evidence.
 - Those losses come from the end-state path plus rigid rotation, so better evidence alone cannot pass ~75%. That
   motivates *decoder v2* (section 4.5).
-- A naive per-bin decoder (`prototypes/learned_evidence/reach.py`: geodesic reach through P > 0.5, then a monotone L1
-  fit) ties the current decoder on the development seed: 147/192 against 152/192 with perfect evidence. Its onsets are
-  about 3 bins late, so it needs real design work rather than a quick swap.
+- **A per-bin decoder** (`prototypes/learned_evidence/reach.py`) reads the tube where it is in each bin. It takes the
+  region with P > 0.5 attached to the grain and measures its length along the medial axis, then fits a monotone
+  curve over bins (L1).
+  - Tuned on the development seed, it beat SparseTrack's decoder there: 151 against 141 of 192 lengths with learned
+    evidence.
+  - Frozen and scored once, it lost on the first five held-out movies (707 against 734; paired −27, 95% CI −82 to
+    +28). It won on the three fresh ones (437 against 398; +39, −15 to +91).
+  - Pooled over eight movies it is a tie: 1144 against 1132 of 1615 (+12, −67 to +88).
+- **The two decoders fail on different tubes.**
+  - The per-bin decoder is better on dark tubes, curls, crossings, rotations and drift, by 22–48 traces each.
+  - It is worse on bright-cored tubes and sways, by 30 traces each.
+  - So decoder v2 should be a hybrid, not a swap. Read per bin where the end-state path fails, and use SparseTrack's
+    path elsewhere. Choose per grain by a label-free signal such as path coverage, tube width or drift.
+- A width-aware end correction for wide tubes was fixed before the fresh test. It helped with perfect evidence but
+  hurt with learned evidence (403 against 437), so it was dropped.
 
 **Transfer to real footage (qualitative).** `sample_movie.avi` is real, with different optics and thicker,
 bright-cored tubes; the network has never seen its tubes.
@@ -516,14 +548,16 @@ bright-cored tubes; the network has never seen its tubes.
 - **Do:**
   - With geometry held fixed, learned evidence from synthetic data alone is decisively better than SparseTrack's
     evidence: 91% against 72%.
-  - End to end through the unchanged decoder, it improves lengths from 61% to 69% (ceiling 75%) and cuts control false
-    positives from 5 to 2. Doubling the synthetic training data takes lengths to 72% and missed germinations from 12
-    back to 7.
+  - End to end through the unchanged decoder, over eight held-out movies, it improves lengths from 62% to 70%
+    (ceiling 73%). Doubling the synthetic training data helped (v2 over v1: +35 traces, 95% CI +6 to +70).
   - It looks tube-specific on real footage it has never seen.
   - Both halves of the recommended architecture matter: better evidence and then a better decoder.
 - **Don't:**
   - These are synthetic held-out numbers on the sample movie's field, from 30-minute CPU training runs.
   - Onsets improve only within noise, and drifting grains still read worse than with SparseTrack's evidence.
+  - The gain varies from movie to movie, and three fresh movies alone did not show it (+9, −47 to +64).
+  - A decoder change that gained 10 traces on the 27-grain development seed lost 27 on held-out movies. Choices made
+    on one synthetic movie are noise at this scale.
   - The real test is the dev benchmark `ld_v1` on your movie (appendix B, one command), then movie 2 once a model is
     frozen.
 
