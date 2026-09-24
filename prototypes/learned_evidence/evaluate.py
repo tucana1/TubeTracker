@@ -128,6 +128,48 @@ def image_registration(image_cache: str | Path):
         A.analyze_grain, A.local_shifts = orig_grain, orig_shifts
 
 
+def _chunked(matched_kymograph):
+    """``matched_kymograph`` remaps (angles x path points) rows in one call, and OpenCV's remap
+    takes fewer than 32,767 rows: with 61 angles a path longer than ~268 px raises cv2.error.
+    Angles are independent, so they are read in groups small enough for remap."""
+    def run(signed, template, pts, normal, centre, across, angles_deg, lateral_offset=0.0):
+        per = max(1, 32000 // max(len(pts), 1))
+        return np.concatenate([matched_kymograph(signed, template, pts, normal, centre, across,
+                                                 angles_deg[i:i + per], lateral_offset=lateral_offset)
+                               for i in range(0, len(angles_deg), per)], axis=1)
+    return run
+
+
+@contextlib.contextmanager
+def adaptive_crop(big: int = 300, gap_px: float = 3.0):
+    """While active, a grain whose chosen path ends within ``gap_px`` of the edge of its square
+    crop (``Params.half``, 150 px either way) is read again with ``half = big``. Otherwise a tube
+    that leaves the crop stops there, with no flag: movie 2 runs twice as long as the dev movie,
+    and its longest tubes pass 128 px. Label-free, and a grain whose path stays inside the crop is
+    untouched. A grain read again is flagged ``crop_grown:<big>``. Long paths also need the
+    matched kymograph read in angle groups (``_chunked``); results are otherwise identical."""
+    orig, orig_mk = A.analyze_grain, A.matched_kymograph
+
+    def hook(renderer, meta, grain, others, p, _settled=False):
+        res = orig(renderer, meta, grain, others, p, _settled)
+        diag = res.get("_diag")
+        if not diag or diag[3] is None or len(diag[3]) == 0 or any(
+                f.startswith("crop_grown") for f in res.get("flags", [])):
+            return res
+        side = diag[0].shape[0]  # the crop actually read
+        x, y = diag[3][-1]
+        if side < 2 * big and min(x, y, side - 1 - x, side - 1 - y) <= gap_px:
+            res = orig(renderer, meta, grain, others, replace(p, half=big), _settled)
+            res["flags"].append(f"crop_grown:{big}")
+        return res
+
+    A.analyze_grain, A.matched_kymograph = hook, _chunked(orig_mk)
+    try:
+        yield
+    finally:
+        A.analyze_grain, A.matched_kymograph = orig, orig_mk
+
+
 def run_baseline(image_cache: str | Path, work: str | Path, grains_path: str | Path | None = None) -> dict:
     with contextlib.redirect_stdout(io.StringIO()):
         return A.analyze(image_cache, Path(work) / "baseline", grains_path=grains_path, params=A.Params(),

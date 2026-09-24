@@ -7,7 +7,9 @@ SparseTrack with and without it on that real movie's human benchmark.
 Every step is cached in ``--work`` (re-running skips what exists). Synthetic caches (440 MB each)
 are deleted once their training shard is written, unless ``--keep-caches``. Train on the dev
 movie's field only: the held-out movie 2 must never supply training data, and its labels are
-scored once per frozen model (``--heldout-once``).
+scored once per frozen model (``--heldout-once``). Both SparseTrack runs read a grain again at
++/-300 px when its path reaches the edge of the +/-150 px crop (``evaluate.adaptive_crop``;
+``--fixed-crop`` keeps SparseTrack as is).
 """
 
 from __future__ import annotations
@@ -28,7 +30,8 @@ from sparsetrack.synth import make_movie, preset
 from . import data, evaluate, train
 from .model import load as load_model
 
-DEFAULT_MOVIES = ("v5:0", "v5:1", "v5:2", "v2:1", "v3:2")
+# ten movies (model v2): on held-out synthetic seeds, +35 lengths in tolerance over five (95% CI +6 to +70)
+DEFAULT_MOVIES = ("v5:0", "v5:1", "v5:2", "v5:9", "v5:10", "v5:11", "v2:0", "v2:1", "v3:0", "v3:2")
 
 
 def ensure_synthetic(field: Path, work: Path, spec: str, keep_caches: bool, log=print) -> Path:
@@ -63,9 +66,12 @@ def main(argv=None):
                     help="cache whose field the synthetic movies are built on (default --field; use the dev "
                          "movie's cache when scoring a held-out movie)")
     ap.add_argument("--model", default=None, help="use this trained model instead of training one")
-    ap.add_argument("--steps", type=int, default=5000)
+    ap.add_argument("--steps", type=int, default=6000)
     ap.add_argument("--keep-caches", action="store_true")
     ap.add_argument("--heldout-once", action="store_true", help="required to score labels whose name contains m2")
+    ap.add_argument("--fixed-crop", action="store_true",
+                    help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
+                         "(by default such grains are read again at +/-300 px, in both runs)")
     args = ap.parse_args(argv)
     field, work, labels_path = Path(args.field), Path(args.work), Path(args.labels)
     if "m2" in labels_path.name and not args.heldout_once:
@@ -81,8 +87,9 @@ def main(argv=None):
     net = load_model(str(model_path))
     pcache = evaluate.prob_cache(field, net, work / f"prob_{field.name}")
     labels = load(labels_path)
-    base = evaluate.run_baseline(field, work, grains_path=labels_path)
-    learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
+    with contextlib.nullcontext() if args.fixed_crop else evaluate.adaptive_crop():
+        base = evaluate.run_baseline(field, work, grains_path=labels_path)
+        learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
     rb, rl = score(labels, base), score(labels, learned)
     tol = rb["onset"]["tolerance_frames"]
     pb = evaluate.paired_bootstrap(rl, rb, tol)

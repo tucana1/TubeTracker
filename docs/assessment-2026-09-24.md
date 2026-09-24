@@ -41,7 +41,9 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
    - End to end through the *unchanged* SparseTrack decoder, lengths improve from 61% to 69% (the decoder's ceiling
      with perfect evidence is 75%), median error from 2.12 to 1.62 px, and control false positives from 5 to 2.
    - Bright-cored tubes go from 41% to 70%.
-   - Onsets did not improve, and missed germinations doubled (12 against 6).
+   - That first model missed twice as many germinations (12 against 6). Training on ten synthetic movies instead of
+     five fixed most of it: lengths 72% (paired gain over five movies +35 traces, 95% CI +6 to +70), 7 missed
+     germinations, and onsets 86/112 against 79/112 for SparseTrack's evidence (within noise).
    - On real footage it has never seen, it is tube-specific: near zero on grain bodies.
    - Whether it transfers to your movies takes one command on your Mac (appendix B), scored on `ld_v1`.
 6. **The biggest single lever may be the microscope, not the code.** The movies are ~14 fps x264 at a QP-30 quality
@@ -51,8 +53,8 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
 
 **This week:**
 1. Finish the movie-2 labels (about an hour, section 3.5).
-2. Score 0.4.0 on them.
-3. Answer the five questions in section 8.
+2. Freeze 0.4.3 with the long-tube fix (section 3.3), then score 0.4.0 and 0.4.3 on movie 2, once each.
+3. Answer the five questions in section 6.
 4. Run the learned-evidence test on `ld` (appendix B).
 5. Build prototype v1: SparseTrack 0.4, a review loop, physical units and one-click run/export. That is about a week
    of work, and useful to the lab immediately for sparse movies.
@@ -67,7 +69,7 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
 | Modernised engine | `tubetracker/{gui,analysis,models,views}.py`, `scripts/run_pilot.py` | Jul 2026 | Same algorithms, modular, LapTrack linking, CLI pilot runner, reviewer-first burst candidates | Kept, not developed |
 | Research program v1–v30 | ledger H1–H491; code at tag `snapshot-2026-09-23` | 13 Jul – 22 Sep | Kymograph/DP trackers, tomography and min-cut formulations, TimesFM priors, a weakly supervised tip CNN, the v30 owner-conditioned temporal U-Net with a napari annotator and review queues (1,274 tests) | Frozen; pruned at the reset |
 | **SparseTrack 0.4.2** | `sparsetrack/` | 23 Sep | Keyframe-bin cache, per-grain registration, end-state path candidates, monotone DP growth front, matched-stub onset, Turnbull population curve, review gallery, codec-exact synthetic benchmark | **Active** |
-| **Benchmark labelling tool** | `sparsetrack/bench/` | 23 Sep | Local web app for census, onset brackets, exit-to-apex traces and blind retest; autosave plus journal | **Active; movie-2 labelling in progress** |
+| **Benchmark labelling tool** | `sparsetrack/bench/` | 23–24 Sep | Local web app for census, onset brackets, exit-to-apex traces (near, wide and extra-wide views) and blind retest; autosave plus journal | **Active; movie-2 labelling in progress** |
 | Human benchmark | `benchmark/labels/ld_v1.json` | 23 Sep | Session A: 39-grain census, 32 onsets, 127 traces, 7 retests | Dev set (tuned on) |
 
 ---
@@ -173,6 +175,21 @@ Looser tolerances for 0.4.0:
 **Structural limits.**
 - Isolated grains only: 28/39 on the dev movie, 82/122 on movie 2.
 - Lengths stop at first contact.
+- **Long tubes are cut off at a fixed ±150 px window, with no flag** (found on 24 September, while preparing for
+  movie 2):
+  - Each grain is read in a 300 × 300 px crop (`Params.half = 150`). A tube that leaves the crop stops growing at its
+    edge.
+  - This never happens on `ld`, whose farthest trace point is 112 px from its grain. Movie 2 runs twice as long, and
+    your commit notes say some of its tubes pass ±128 px by the last bins.
+  - On a synthetic movie of movie 2's length, 34 of 493 traces reach past the crop.
+    - SparseTrack as is gets 9 of the 20 scored ones in tolerance.
+    - Re-reading the 4 grains whose path ends at the crop edge, with a ±300 px crop, gets 20 of 20. Their lengths go
+      from 138–150 px to 156–268 px.
+    - The other 33 grains are bit-identical.
+  - Paths longer than about 268 px also crash `matched_kymograph`: OpenCV's `remap` takes fewer than 32,767 rows,
+    and there are 61 angles × 2 points per px. Reading the angles in groups fixes it, with identical results.
+  - Both fixes exist as tested wrappers in `prototypes/learned_evidence/evaluate.py` (`adaptive_crop`, `_chunked`).
+    They belong in `sparsetrack/analyze.py` as 0.4.3, frozen **before** movie 2 is scored.
 - Everything hangs on the end-state change map: a tube that fades or bursts, or a tube pushed around non-rigidly,
   breaks the path.
 - Time resolution is one bin (300 frames).
@@ -193,7 +210,9 @@ Looser tolerances for 0.4.0:
 **What it does.**
 - The grain census: confirm, exclude with a reason, or add grains, with a close-up view.
 - The onset: a whole-movie filmstrip of 4-bin tiles, then 18 single bins, with keyboard verdicts.
-- Exit-to-apex polyline traces at planned times: onset + 6 bins, 40%, 70% and the last full bin.
+- Exit-to-apex polyline traces at planned times: onset + 6 bins, 40%, 70% and the last full bin. There are three
+  views: near, wide (±128 px) and, since 24 September, extra-wide (X, ±256 px), which slides inward at the movie's
+  edges. Movie 2's longest tubes need the extra-wide view.
 - Tube states: full, partial, no tube or unsure, plus a contact flag.
 - An 8-grain blind retest of onsets.
 - Every click autosaves atomically to JSON, and an append-only journal records each answer.
@@ -246,7 +265,10 @@ Looser tolerances for 0.4.0:
     - Do the retest after a break.
   - When you finish:
     1. Commit `m2_v1.json` and its journal.
-    2. Score **0.4.0 once**, then 0.4.2. Record both in `benchmark/reports/`.
+    2. Before scoring anything, freeze 0.4.3: 0.4.2 plus the two long-tube fixes (section 3.3). They are label-free
+       and leave `ld` unchanged, so choosing them now is not tuning on movie 2.
+    3. Score **0.4.0 once** (the pre-registered baseline), then 0.4.3 once. Record both in `benchmark/reports/`, and
+       report traces whose tube leaves ±150 px separately.
 - **Soon (cheap, raises the value of both benchmarks):**
   - A 15-trace blind retest on `ld`, about 10 minutes.
   - A written onset rule, applied from now on.
@@ -284,7 +306,7 @@ registered bins ──► [1] learned evidence ──► [2] SparseTrack decoder
   after crops)        P(tip), later P(burst)  DP front, onset, censoring   labelling tool           population
 ```
 
-1. **Learned evidence.** A small U-Net (0.47 M parameters) reads the same three images SparseTrack uses: the bin, the
+1. **Learned evidence.** A small U-Net (0.49 M parameters) reads the same three images SparseTrack uses: the bin, the
    "before" reference and the "after" reference. It outputs the probability that each pixel is built tube, plus a tip
    heatmap.
    - It is trained on codec-exact synthetic movies from `sparsetrack synth`: real fields and grains, real measured
@@ -307,7 +329,7 @@ registered bins ──► [1] learned evidence ──► [2] SparseTrack decoder
   2023).
 - **It reuses what exists.** The generator, the decoder, the benchmark and the tool are already built. The integration
   is one file: a probability "cache" that SparseTrack reads like a movie (`prototypes/learned_evidence/evaluate.py`).
-- **It is cheap to falsify.** The real-data test (appendix B) takes about an hour on a Mac. If it does not beat 0.4.x
+- **It is cheap to falsify.** The real-data test (appendix B) takes about 1.5 hours on a Mac. If it does not beat 0.4.x
   on `ld_v1`, you have lost a day, not a month.
 
 ### 4.3 Where modern foundation models fit (and where they don't)
@@ -347,17 +369,17 @@ problem.
 
 | When | Deliverable | Gate |
 |---|---|---|
-| Now | Finish movie-2 labels; score 0.4.0 once, then 0.4.2 | First held-out numbers, with bootstrap intervals |
+| Now | Finish movie-2 labels; freeze 0.4.3 (long-tube fix); score 0.4.0 and 0.4.3 once each | First held-out numbers, with bootstrap intervals |
 | Week 1 | **Prototype v1:** SparseTrack 0.4 plus review mode in the labelling tool, physical units, one-click run/export (macOS and Windows), growth-arrest frame from the DP plateau, burst candidates flagged for review | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
 | Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then fine-tune on the `ld` traces; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
-| Weeks 3–4 | **Decoder v2, per-bin geometry.** With a tube-probability map for every bin, read length where the tube *is* in each bin: the geodesic reach from the exit through P > 0.5, made monotone over bins by the same DP. Stop rotating the end-state path. Section 5 shows why: even perfect evidence leaves SparseTrack's current decoder at 71–77% of lengths, and the losses are rotation, drift and curls | Beats decoder v1 on synthetic held-out *and* on `ld_v1` |
+| Weeks 3–4 | **Decoder v2, per-bin geometry.** With a tube-probability map for every bin, read length where the tube *is* in each bin: the geodesic reach from the exit through P > 0.5, made monotone over bins by the same DP. Stop rotating the end-state path. Section 5 shows why: even perfect evidence leaves SparseTrack's current decoder at 75% of held-out lengths (67–80% per movie), and the losses are rotation, drift and curls | Beats decoder v1 on synthetic held-out *and* on `ld_v1` |
 | Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts | Burst frame within ±2 bins on held-out reviews |
 | Weeks 4–8 | Dense fields: instance-aware evidence (which grain owns each tube pixel), learned with synthetic foreign tubes and crossings (v2+ presets); ownership decided by birth time and geodesic reach | Contact-censored fraction halves without losing isolated-grain accuracy |
 | Ongoing | Acquisition protocol for new experiments; a new held-out movie every 2–3 frozen versions | — |
 
 ### 4.6 Process: how to avoid another 490 hypotheses
 
-1. **Keep one scoreboard.** It holds the dev (`ld_v1`), held-out (movie 2) and synthetic held-out (seeds 3–4) scores,
+1. **Keep one scoreboard.** It holds the dev (`ld_v1`), held-out (movie 2) and synthetic held-out (v5 seeds 3, 4, 6, 7 and 8) scores,
    each with paired bootstrap intervals. A change counts only if it clears noise on the dev set and does not regress
    the synthetic held-out.
 2. **Never tune on held-out data.** Score each frozen version once. Retire a held-out movie after two or three
@@ -383,9 +405,10 @@ problem.
   and outputs P(tube already built) and P(tip). It trained for 5,000 steps on 4 CPU cores in about 30 minutes.
   **No real labels were used.**
 - **Evaluation data.**
-  - Held-out synthetic seeds 3 and 4 (preset v5: sway, rotation, drift, contrast maturation, blurred tips,
-    docking particles, touching and crossing tubes). They were never used for training or for any choice.
-  - A separate development seed 5, used for the single integration choice below.
+  - Held-out synthetic movies, preset v5 (sway, rotation, drift, contrast maturation, blurred tips, docking
+    particles, touching and crossing tubes): seed 3 for Test 1, seeds 3, 4, 6, 7 and 8 for Test 2. They were never
+    used for training or for any choice.
+  - A separate development seed 5, used for the two integration choices below.
 - **Three evidence sources through the same decoder.**
   - SparseTrack's own evidence (0.4.2 defaults).
   - Learned evidence.
@@ -425,23 +448,46 @@ probability cache.
 
 **Where it helps and where it hurts.** Lengths within tolerance by tube type:
 
-| Tube type (held-out) | SparseTrack evidence | Learned | Perfect |
-|---|---|---|---|
-| Bright-cored | 119/292 (41%) | **203/292 (70%)** | 200/292 (68%) |
-| Sways | 215/369 (58%) | **284/369 (77%)** | 299/369 (81%) |
-| Touches or crosses | 190/329 (58%) | 214/319 (67%) | 243/319 (76%) |
-| Rotates | 142/257 (55%) | 163/257 (63%) | 170/257 (66%) |
-| Faint (amplitude < 1.3) | 234/394 (59%) | 260/394 (66%) | 316/394 (80%) |
-| Dark line | 504/732 (69%) | 496/722 (69%) | 560/722 (78%) |
-| Curls | 134/262 (51%) | 134/262 (51%) | 157/262 (60%) |
-| Drifts | 224/335 (67%) | **189/325 (58%)** | 226/325 (70%) |
+| Tube type (held-out) | SparseTrack evidence | Learned v1 (5 movies) | Learned v2 (10 movies) | Perfect |
+|---|---|---|---|---|
+| Bright-cored | 119/292 (41%) | **203/292 (70%)** | **206/292 (71%)** | 200/292 (68%) |
+| Sways | 215/369 (58%) | **284/369 (77%)** | **296/369 (80%)** | 299/369 (81%) |
+| Touches or crosses | 190/329 (58%) | 214/319 (67%) | 221/319 (69%) | 243/319 (76%) |
+| Rotates | 142/257 (55%) | 163/257 (63%) | 172/257 (67%) | 170/257 (66%) |
+| Faint (amplitude < 1.3) | 234/394 (59%) | 260/394 (66%) | 285/394 (72%) | 316/394 (80%) |
+| Dark line | 504/732 (69%) | 496/722 (69%) | 528/722 (73%) | 560/722 (78%) |
+| Curls | 134/262 (51%) | 134/262 (51%) | 157/262 (60%) | 157/262 (60%) |
+| Drifts | 224/335 (67%) | **189/325 (58%)** | **206/325 (63%)** | 226/325 (70%) |
 
 **Reading:**
 - The gains are where SparseTrack's hand-built evidence is weakest. Bright-cored tubes read nearly perfectly: 70%,
   against a 68% ceiling.
-- The weak spots are drifting grains and twice as many missed germinations (12 against 6). The network misses some
-  faint tubes near the grain entirely. These are training-data problems (5 synthetic movies, 5,600 crops).
-  Generating more movies is the cheapest lever the approach has: `--synthetic` takes any number.
+- v1's weak spots were drifting grains and twice as many missed germinations (12 against 6): the network missed some
+  faint tubes near the grain entirely. Those looked like training-data problems (5 synthetic movies, 5,600 crops),
+  so v2 tests the cheapest lever the approach has: more synthetic movies.
+
+**More synthetic data (model v2).** The same network and recipe, trained on ten synthetic movies instead of five
+(v5 seeds 0–2 and 9–11, v2 seeds 0–1, v3 seeds 0 and 2: 11,200 crops) for 6,000 steps. Nothing else changed: same
+integration choices, same held-out movies.
+
+| Evidence → SparseTrack 0.4.2 decoder | Onsets within ±2 bins | Lengths within max(2 px, 10%) | Median length error | Bias | Control false positives | Germinations missed |
+|---|---|---|---|---|---|---|
+| SparseTrack's own evidence (baseline) | 79/112 | 623/1024 (61%) | 2.12 px | −3.4 px | 5/23 | 6 |
+| Learned v1 (5 movies) | 82/112 | 699/1014 (69%) | 1.62 px | −2.2 px | 2/23 | 12 |
+| **Learned v2 (10 movies)** | **86/112** | **734/1014 (72%)** | **1.60 px** | **−0.9 px** | **2/23** | **7** |
+| Perfect evidence (exact truth; ceiling) | 102/112 | 760/1014 (75%) | 1.33 px | −0.8 px | 2/23 | 8 |
+
+- Paired over the 135 grains, v2 − v1: lengths +35 traces (95% CI +6 to +70), onsets +4 (−3 to +12). v2 is ahead
+  on all five held-out movies.
+- v2 − SparseTrack's evidence: lengths +111 traces (95% CI +25 to +195), onsets +7 (−5 to +19).
+- On lengths, v2 closes 81% of the gap between SparseTrack's evidence and perfect evidence. Missed germinations fall
+  from 12 to 7 (SparseTrack's own: 6). Curls reach the perfect-evidence score, and faint tubes go from 66% to 72%.
+- Drifting grains remain the weak spot: 63%, against 67% with SparseTrack's evidence.
+- On the development seed v2 is level with v1: 141 against 144 of 192.
+- `pipeline.py` now defaults to the ten-movie recipe. That choice was made on these held-out synthetic movies, so
+  `ld_v1` and movie 2 remain the untouched tests.
+- The decoder is now the limit. Learned evidence sits 26 traces below perfect evidence, and perfect evidence itself
+  stops at 75%.
 
 **The decoder's own ceiling.** With perfect evidence, SparseTrack 0.4.2 reaches only **75%** of held-out lengths
 within tolerance (67–80% per movie) and 91% of onsets.
@@ -471,18 +517,19 @@ bright-cored tubes; the network has never seen its tubes.
   - With geometry held fixed, learned evidence from synthetic data alone is decisively better than SparseTrack's
     evidence: 91% against 72%.
   - End to end through the unchanged decoder, it improves lengths from 61% to 69% (ceiling 75%) and cuts control false
-    positives from 5 to 2.
+    positives from 5 to 2. Doubling the synthetic training data takes lengths to 72% and missed germinations from 12
+    back to 7.
   - It looks tube-specific on real footage it has never seen.
   - Both halves of the recommended architecture matter: better evidence and then a better decoder.
 - **Don't:**
-  - These are synthetic held-out numbers on the sample movie's field, from one 30-minute CPU training run.
-  - Onsets did not improve, and missed germinations doubled.
+  - These are synthetic held-out numbers on the sample movie's field, from 30-minute CPU training runs.
+  - Onsets improve only within noise, and drifting grains still read worse than with SparseTrack's evidence.
   - The real test is the dev benchmark `ld_v1` on your movie (appendix B, one command), then movie 2 once a model is
     frozen.
 
 ---
 
-## 8. Questions only the lab can answer
+## 6. Questions only the lab can answer
 
 1. What is the real acquisition interval (seconds per frame) of `test1lowdensjoshua-28c-hz` and movie 2? Were they
    recorded as 14-fps video or as time-lapse exported at 14 fps? What is the pixel size in µm?
@@ -524,10 +571,12 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
     --field runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld
 ```
 
-- **Time:** about an hour. That is five synthetic movies on the `ld` field (~5 min each), training (~25 min on CPU,
-  faster on an Apple GPU, which is picked automatically) and a probability cache for the real movie.
+- **Time:** about 1.5 hours. That is ten synthetic movies on the `ld` field (~5 min each), training (~30 min on
+  CPU, faster on an Apple GPU, which is picked automatically) and a probability cache for the real movie.
 - **Output:** SparseTrack 0.4.2 with and without learned evidence, scored on `ld_v1`, plus a paired bootstrap of the
   difference.
+- **Long tubes:** both runs read a grain again at ±300 px when its path reaches the ±150 px crop edge (section 3.3;
+  `--fixed-crop` turns this off). On `ld` no path gets there, so nothing changes.
 - **Movie 2:** only after freezing a model, and only once:
 
   ```bash
