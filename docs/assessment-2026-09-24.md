@@ -1,7 +1,8 @@
 # TubeTracker: assessment of the work so far and the direction to a working prototype
 
 > Nothing here changes the labelling tool, `sparsetrack/`, the benchmark labels, or the frozen `sparsetrack-0.4.0` tag.
-> The new code lives in `prototypes/learned_evidence/` on branch `claude/magical-maxwell-i5tpeh`.
+> The new code lives in `prototypes/learned_evidence/` on branch `claude/magical-maxwell-i5tpeh`, plus one launcher,
+> `Analyze_Movie_Learned.command`.
 
 *24 September 2026. Written from a full read of every branch (`main`, `feature/burst-candidate-detection`,
 `snapshot-2026-09-23`, `sparse-reset-2026-09-23`), the research ledger (H1–H491), the benchmark labels and reports,
@@ -723,6 +724,8 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
   - SparseTrack 0.4.2 as it is;
   - learned evidence through SparseTrack's decoder;
   - learned evidence through the per-bin decoder (decoder v2), with its burst safeguard.
+- **One double-click, any movie:** `Analyze_Movie_Learned.command` prepares a chosen movie, runs all three without
+  labels, and opens the review gallery. It uses the model trained on your dev movie once that exists.
 - **Any movie, no labels:** leave out `--labels`. The pipeline then writes all three runs' predictions and a
   `per_grain.csv` instead of scores. Add `--um-per-px` and `--s-per-frame` to get µm and minutes.
 - **For review, in `perbin/`:**

@@ -12,6 +12,28 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
   runs from −1 at P = 0 to +1 at P ≥ 0.63.
 - Per-grain registration is measured on the image cache.
 
+## For the lab: analyse a new movie (prototype)
+
+1. Double-click `Analyze_Movie_Learned.command` in the repository folder and choose the movie.
+   - It prepares the movie the first time, which takes a few minutes. The cache is the same one SparseTrack uses.
+   - It then runs three analyses, taking 10–20 minutes on a laptop:
+     - SparseTrack as it is;
+     - learned evidence through SparseTrack's decoder;
+     - learned evidence through the per-bin decoder.
+2. The review gallery opens by itself, one card per grain, with grains that need a second look first. Each card shows
+   six moments from germination to the end, with the tube the per-bin decoder measured outlined in green and its
+   centreline in yellow, then its length over time. Check that the outline follows the grain's own tube.
+3. Results are in `runs/learned_evidence/<movie name>/`:
+   - `per_grain.csv`: per grain and per analysis, the status, onset interval and final length;
+   - `perbin/population.png`: the germination curve with T50;
+   - `perbin/growth_curves.png`.
+
+For physical units, run the pipeline command below with `--um-per-px` and `--s-per-frame`.
+
+**This is a prototype.** Its accuracy has been measured only on synthetic movies. Your dev benchmark (`ld_v1`,
+appendix B of the assessment) is the real test. Until it is done, trust the numbers only for grains whose card looks
+right. Burst frames and growth-arrest frames are hints for review, not measurements.
+
 | File | What it does |
 |---|---|
 | `truth.py` | Exact per-frame truth rasters (built tube body, instances, tips) from a `sparsetrack.synth.Scene`, reusing its geometry: rotation, drift, substrate anchoring, sway |
