@@ -146,6 +146,11 @@ def test_bench_http_roundtrip(tiny_cache):
             head = urllib.request.urlopen(base + f"/api/img/frame/g001?bin=5&view={view}").read(24)
             assert struct.unpack(">II", head[16:24]) == (round(2 * v["half"] * v["zoom"]),) * 2
         assert set(state["layout"]["trace"]) == {"near", "wide", "far"}
+        # "far" slides inward at the movie's edges: it is drawn round whatever centre the page asks for
+        assert state["layout"]["trace"]["far"]["fit"]
+        far = [urllib.request.urlopen(base + f"/api/img/frame/g001?bin=5&view=far&cx={cx}&cy=40").read()
+               for cx in (40, 60)]
+        assert far[0] != far[1]
         req = urllib.request.Request(base + "/api/onset/g001", method="POST", headers={"Content-Type": "application/json"},
                                      data=json.dumps({"verdict": "emerged_at_start"}).encode())
         assert json.load(urllib.request.urlopen(req))["first_visible_bin"] == 0

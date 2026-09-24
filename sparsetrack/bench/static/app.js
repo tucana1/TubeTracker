@@ -398,7 +398,7 @@ async function saveOnset(verdict, retest) {
 
 // ---------------------------------------------------------------- 3. traces
 function renderTrace() {
-  const c = $("#content"), g = grain(), p = plan();
+  const c = $("#content"), p = plan();
   const on = label().onset;
   S._img = null;
   if (!p.length) {
@@ -409,7 +409,7 @@ function renderTrace() {
     if (!on) $("#go").onclick = () => { S.view = "onset"; render(); };
     return;
   }
-  const b = p[S.traceIdx]; const V = S.st.layout.trace[S.traceView];
+  const b = p[S.traceIdx]; const V = S.st.layout.trace[S.traceView]; const [cx, cy] = viewCentre(V);
   const size = Math.round(2 * V.half * V.zoom);
   const tr = label().traces || {};
   help(`Trace the <b>whole visible tube of the centre grain</b>: click its exit from the grain first,
@@ -437,9 +437,9 @@ function renderTrace() {
   const cv = $("#tc"), ctx = cv.getContext("2d");
   const img = new Image();
   img.onload = () => { S._img = img; drawTrace(); };
-  img.src = `/api/img/frame/${S.gid}?bin=${b}&view=${S.traceView}&contrast=${S.contrast}&smooth=${S.smooth}`;
+  img.src = `/api/img/frame/${S.gid}?bin=${b}&view=${S.traceView}&contrast=${S.contrast}&smooth=${S.smooth}&cx=${cx}&cy=${cy}`;
   cv.onclick = (e) => {
-    const x = g.x - V.half + e.offsetX / V.zoom, y = g.y - V.half + e.offsetY / V.zoom;
+    const x = cx - V.half + e.offsetX / V.zoom, y = cy - V.half + e.offsetY / V.zoom;
     S.pts.push([x, y]); drawTrace(); updateCount();
   };
   $("#chips").onclick = (e) => { const s = e.target.closest("span"); if (s) { S.traceIdx = +s.dataset.i; loadTrace(); render(); } };
@@ -456,6 +456,12 @@ function renderTrace() {
   $("#tA").onclick = () => { S.smooth = S.smooth ? 0 : 1; render(); };
 }
 // clicked points are in movie coordinates, so a trace can be continued in another view
+function viewCentre(V) {  // a "fit" view slides inward at the movie's edges; image and clicks share this centre
+  const g = grain(), m = S.st.movie;
+  if (!V.fit) return [g.x, g.y];
+  const slide = (c, size) => Math.min(Math.max(c, V.half), size - V.half);
+  return [slide(g.x, m.width), slide(g.y, m.height)];
+}
 function toggleWide() { S.traceView = S.traceView === "wide" ? "near" : "wide"; render(); }
 function toggleFar() { if (S.st.layout.trace.far) { S.traceView = S.traceView === "far" ? "wide" : "far"; render(); } }
 function traceLen() {
@@ -467,10 +473,10 @@ function updateCount() {
 }
 function drawTrace() {
   const cv = $("#tc"); if (!cv || !S._img) return;
-  const ctx = cv.getContext("2d"), g = grain(), V = S.st.layout.trace[S.traceView];
+  const ctx = cv.getContext("2d"), g = grain(), V = S.st.layout.trace[S.traceView], [cx, cy] = viewCentre(V);
   ctx.drawImage(S._img, 0, 0);
   if (!S.overlay) return;
-  const toC = (x, y) => [(x - g.x + V.half) * V.zoom, (y - g.y + V.half) * V.zoom];
+  const toC = (x, y) => [(x - cx + V.half) * V.zoom, (y - cy + V.half) * V.zoom];
   if (S.marker) {  // four short ticks just outside the grain, clear of its rim
     ctx.strokeStyle = "rgba(34,211,238,0.8)"; ctx.lineWidth = 2;
     for (const a of [0.25, 0.75, 1.25, 1.75]) {

@@ -40,8 +40,10 @@ STATIC = Path(__file__).with_name("static")
 # display layouts (CSS px): coarse = whole movie, fine = single bins around a transition
 COARSE = {"bins_per_tile": 4, "half": 28, "zoom": 2.0, "cols": 11, "header": 16, "gap": 2}
 FINE = {"n_tiles": 18, "half": 24, "zoom": 4.0, "cols": 6, "header": 16, "gap": 2}
+# trace views, all 640 px across; "far" is for tubes longer than "wide" shows, and near the movie's
+# edges it slides inward ("fit") instead of showing the space beyond the frame
 TRACE_VIEWS = {"near": {"half": 64, "zoom": 5.0}, "wide": {"half": 128, "zoom": 2.5},
-               "far": {"half": 256, "zoom": 1.25}}  # all 640 px across; "far" for tubes longer than "wide" shows
+               "far": {"half": 256, "zoom": 1.25, "fit": True}}
 ZOOM = {"half": 56, "zoom": 4.5}  # census close-up of the grain in focus
 RETEST_SIZE = 8
 FOLLOW_HALF = 60        # crop used to measure a grain's own drift
@@ -324,12 +326,17 @@ class Bench:
         return png(self.renderer.strip(gid, g["x"], g["y"], ranges, labels, FINE["half"], FINE["zoom"],
                                        FINE["cols"], mode, FINE["header"], FINE["gap"], self.follow(gid), True))
 
-    def frame_png(self, gid: str, b: int, view: str, mode: str, smooth: int) -> bytes:
+    def frame_png(self, gid: str, b: int, view: str, mode: str, smooth: int,
+                  cx: float | str | None = None, cy: float | str | None = None) -> bytes:
+        """A trace view centred on the grain, or on (cx, cy): the page slides a "fit" view to stay
+        inside the movie and maps clicks back through the same centre."""
         g = self.grain(gid)
         v = TRACE_VIEWS[view]
+        cx = g["x"] if cx is None else float(cx)
+        cy = g["y"] if cy is None else float(cy)
         b0, b1 = int(b) - smooth, int(b) + smooth
-        img = self.renderer.mean_crop(b0, b1, g["x"], g["y"], v["half"], self.follow(gid), mark_outside=True)
-        window = self.renderer.contrast(gid, g["x"], g["y"], v["half"], mode, self.follow(gid))
+        img = self.renderer.mean_crop(b0, b1, cx, cy, v["half"], self.follow(gid), mark_outside=True)
+        window = self.renderer.contrast((gid, cx, cy), cx, cy, v["half"], mode, self.follow(gid))
         return png(self.renderer.to_display(img, window, v["zoom"]))
 
     def zoom_png(self, x: float, y: float, which: str) -> bytes:
@@ -394,7 +401,8 @@ def make_handler(bench: Bench):
                         return self._send(200, bench.fine_png(gid, int(q.get("start", 0)), mode), "image/png")
                     if kind == "frame":
                         return self._send(200, bench.frame_png(gid, int(q["bin"]), q.get("view", "near"), mode,
-                                                               int(q.get("smooth", 0))), "image/png")
+                                                               int(q.get("smooth", 0)), q.get("cx"), q.get("cy")),
+                                          "image/png")
                 self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
             except (KeyError, ValueError, IndexError) as exc:
                 self._json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
