@@ -30,6 +30,8 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 .venv/bin/python -m sparsetrack prepare runs/sparsetrack/synth/synthv2_s0.mp4 --out runs/sparsetrack/synth/v2s0_cache --frames-per-bin 25 --ref-start 0
 # score parameter variants on the synthetic seeds (by failure class) and the legacy real grains
 .venv/bin/python scripts/synth_bench.py --suite v2 --breakdown --set evidence=matched
+# ... or on the dev movie's human benchmark only (~1 min per variant)
+.venv/bin/python scripts/synth_bench.py --real --no-synth --no-legacy --set tip_offset_px=2.5
 ```
 
 `analyze` works per grain, whole-movie and offline:
@@ -51,8 +53,10 @@ It writes:
 - `growth_curves.png` (small multiples);
 - `population.csv`/`population.png` (interval-censored cumulative germination, Turnbull
   estimate, with T50);
-- `index.html`, a review gallery with the grains whose flags ask for a second look
-  marked;
+- `index.html`, a review gallery. Grains whose flags ask for a second look are marked
+  and come first, lowest path coverage first. Path coverage is the share of the grain's
+  own change region lying within 6 px of its traced path. A tube that curls, turns back,
+  wraps round its grain or shares a region leaves much of it unexplained;
 - with `--video`, `field_overlay.mp4`.
 
 Scores so far are in `benchmark/reports/`.

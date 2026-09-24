@@ -112,6 +112,7 @@ class Params:
     through_min_px: int = 10     # ...at least this many pixels of it, changed before the front left
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
     other_block_px: float = 2.0  # another grain's disc (radius + this) is never tube
+    cover_px: float = 6.0        # review: region pixels farther than this from the path are unexplained
     min_tube_px: float = 8.0     # a front that never gets this long is not a tube (unless contact-censored)
     tip_offset_px: float = 2.5   # reported length = front - this (the signal's blurred end lies beyond the apex)
     front_lead_px: float = 12.0  # if the front is already this long at the stub's onset...
@@ -850,6 +851,15 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         return result
     pts, ss, theta, front, kymo, tau = (read[k] for k in ("pts", "ss", "theta", "front", "kymo", "tau"))
     result["flags"] += read["flags"]
+    # how much of its own change region the path accounts for: a tube that curls, turns back
+    # or wraps round its grain leaves part of that region far from the path (a review signal)
+    on_path = np.zeros(comp.shape, np.uint8)
+    cv2.polylines(on_path, [np.round(pts).astype(np.int32).reshape(-1, 1, 2)], False, 1, 1)
+    by_path = cv2.distanceTransform(1 - on_path, cv2.DIST_L2, 3) <= p.cover_px
+    _, comp_lab = cv2.connectedComponents(comp.astype(np.uint8), connectivity=8)
+    own = np.isin(comp_lab, [l for l in np.unique(comp_lab[on_path.astype(bool) & comp]) if l > 0])
+    result["uncovered_px"] = int((own & ~by_path).sum())
+    result["path_coverage"] = round(float((own & by_path).sum()) / max(int(own.sum()), 1), 3)
     result.update({k: v for k, v in read["result"].items()})
     # contact censoring: stop measuring where the path first reaches another grain's rim
     contact_idx = None

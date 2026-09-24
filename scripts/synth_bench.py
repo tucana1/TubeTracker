@@ -9,6 +9,10 @@ deleted after scoring unless --keep-caches (suite v1: runs/sparsetrack/synth/s{s
 suite v2/v3: v{2,3}s{seed}_cache + synthv{2,3}_s{seed}_truth.json). The onset tolerance
 there is 50 synthetic frames (= 600 source frames). Seeds 3-4 of v2-v5 are the held-out
 synthetic test: report them only for a frozen variant (--seeds 3 4).
+
+--real also scores the variant on the dev movie's human benchmark (benchmark/labels/ld_v1.json,
+Session A: isolated grains, FULL traces) and prints its worst length errors. Never point this
+at the held-out movie 2 labels.
 """
 
 from __future__ import annotations
@@ -27,6 +31,7 @@ from sparsetrack.evaluate import load, score  # noqa: E402
 
 SYN = REPO / "runs/sparsetrack/synth"
 LEGACY_IDS = ["g025", "g014", "g037", "g034", "g013", "g030", "g029"]
+REAL_LABELS = REPO / "benchmark/labels/ld_v1.json"
 SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json"),
           "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json"),
           "v5": ("v5s{}_cache", "synthv5_s{}_truth.json")}
@@ -67,7 +72,8 @@ def _within(err: float, truth_len: float) -> bool:
     return abs(err) <= max(2.0, 0.1 * truth_len)
 
 
-def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True, keep_caches: bool = False) -> dict:
+def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True, keep_caches: bool = False,
+        real: bool = False, tag: str = "default") -> dict:
     agg = {"on_hit": 0, "on_n": 0, "on_truth": 0, "early": 0, "late": 0, "len_hit": 0, "len_n": 0,
            "abs_ok": 0, "abs_n": 0, "ctrl_fp": 0, "ctrl_n": 0, "missed": 0, "errs": [], "rows": []}
     cache_fmt, truth_fmt = SUITES[suite]
@@ -97,6 +103,15 @@ def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True
             t = truth["labels"].get(r["grain"], {}).get("truth", {})
             agg["rows"].append({**r, "seed": s, "truth": t})
     out = {"synthetic": agg}
+    if real:
+        pred = analyze(REPO / "runs/sparsetrack/ld", f"/tmp/tt_bench/ld_real_{tag}", grains_path=REAL_LABELS,
+                       params=params, log=lambda *a: None)
+        rep = score(load(REAL_LABELS), pred)
+        errs = [(f["error"], f["human"], r["grain"], f["frame"]) for r in rep["rows"] for f in r.get("full", [])]
+        out["real"] = {"on_hit": rep["onset"]["hits"], "on_n": rep["onset"]["n_timed"],
+                       "len_hit": rep["length_full"]["within_tolerance"], "len_n": rep["length_full"]["n"],
+                       "len_med": rep["length_full"]["median_abs_error"], "len_bias": rep["length_full"]["bias"],
+                       "errs": errs}
     if legacy:
         pred = analyze(REPO / "runs/sparsetrack/ld", "/tmp/tt_bench/ld", params=params, only=LEGACY_IDS,
                        log=lambda *a: None)
@@ -113,6 +128,10 @@ def line(name: str, r: dict) -> str:
     txt = (f"{name:34s} synth onset {s['on_hit']:3d}/{s['on_truth']:3d} (med|e| {med:5.0f}, early {s['early']}, "
            f"late {s['late']}, missed {s['missed']}) | len {s['len_hit']}/{s['len_n']} | abs {s['abs_ok']}/{s['abs_n']} | "
            f"ctrl FP {s['ctrl_fp']}/{s['ctrl_n']}")
+    if "real" in r:
+        g = r["real"]
+        txt += (f" || real onset {g['on_hit']}/{g['on_n']}, len {g['len_hit']}/{g['len_n']} "
+                f"(med {g['len_med']:.2f}, bias {g['len_bias']:+.2f})")
     if "legacy" in r:
         g = r["legacy"]
         txt += f" || legacy onset {g['on_hit']}/{g['on_n']}, len {g['len_hit']}/{g['len_n']} (med {g['len_med']:.2f})"
@@ -160,6 +179,8 @@ if __name__ == "__main__":
     ap.add_argument("--seeds", type=int, nargs="+", default=[0, 1, 2])
     ap.add_argument("--suite", choices=tuple(SUITES), default="v1")
     ap.add_argument("--no-legacy", action="store_true")
+    ap.add_argument("--real", action="store_true", help="also score on the dev movie's human benchmark (ld_v1)")
+    ap.add_argument("--no-synth", action="store_true", help="skip the synthetic seeds (with --real)")
     ap.add_argument("--breakdown", action="store_true", help="hit rates by synthetic truth attribute")
     ap.add_argument("--dump", help="write per-grain rows (JSON) here")
     ap.add_argument("--keep-caches", action="store_true", help="keep caches rebuilt from the movies (440 MB each)")
@@ -169,9 +190,14 @@ if __name__ == "__main__":
                                                             (kv.split("=", 1) for kv in args.set)}))]
                 if args.set is not None else [("default", Params()),
                                               ("wedge_fixed (v1 onset)", Params(onset_source="wedge_fixed"))])
-    for name, prm in variants:
-        res = run(prm, args.seeds, args.suite, legacy=not args.no_legacy, keep_caches=args.keep_caches)
+    for i, (name, prm) in enumerate(variants):
+        res = run(prm, [] if args.no_synth else args.seeds, args.suite, legacy=not args.no_legacy,
+                  keep_caches=args.keep_caches, real=args.real, tag=str(i))
         print(line(name, res), flush=True)
+        if args.real:
+            worst = sorted(res["real"]["errs"], key=lambda e: -abs(e[0]))[:8]
+            print("  worst real length errors: " + ", ".join(f"{g}@{fr} {e:+.1f}/{h:.0f}" for e, h, g, fr in worst))
+            print(f"  real predictions: /tmp/tt_bench/ld_real_{i}/predictions.json")
         if args.breakdown:
             print(breakdown(res), flush=True)
         if args.dump:

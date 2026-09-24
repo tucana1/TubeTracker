@@ -421,3 +421,25 @@ def test_bench_sample_labels_a_fixed_random_subset(tmp_path):
     assert len(kept) == 5 and kept == [g for g, v in b.doc["grains"].items() if not v.get("excluded")]
     assert all(a.doc["grains"][g]["isolated"] for g in kept)
     assert {v["exclude_reason"] for v in a.doc["grains"].values() if v.get("excluded")} == {"not_sampled"}
+
+
+def test_path_coverage_and_review_reasons():
+    from sparsetrack.report import review_reasons
+    bins, _ = _synthetic_growth()
+    meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
+    res = analyze_grain(Renderer(bins, meta), meta, {"id": "g001", "x": 160.0, "y": 160.0, "r": 13.0}, [],
+                        Params(half=100))
+    assert res["path_coverage"] > 0.9  # a straight tube: its path accounts for its whole change region
+    assert review_reasons(res) == []
+    # a path that explains under half of its region asks for a look; a saturated rotation track does not
+    assert review_reasons({"flags": ["rotates:45deg"], "path_coverage": 0.3}) == ["path_coverage:0.30"]
+    assert review_reasons({"flags": ["rotates:45deg", "onset_from_front"], "path_coverage": 0.9}) == ["onset_from_front"]
+
+
+def test_turned_path_uses_the_models_own_pivot():
+    from sparsetrack.report import turned_path
+    g = {"x": 0.0, "y": 0.0, "path": [[10.0, 0.0], [20.0, 0.0]], "exit_xy": [10.0, 0.0], "rotation_deg": [90.0]}
+    # 0.4.1 on: the tube swings about its exit
+    assert np.allclose(turned_path(g, 0, {"params": {"rot_pivot": "exit"}}), [[10, 0], [10, 10]])
+    # older predictions turned the path with the grain about its centre
+    assert np.allclose(turned_path(g, 0, {"params": {}}), [[0, 10], [0, 20]])

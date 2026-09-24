@@ -172,6 +172,18 @@ def write_growth_curves(pred: dict, out_dir: str | Path, ids: list[str], cols: i
     plt.close(fig)
 
 
+def turned_path(g: dict, t: int, pred: dict) -> np.ndarray:
+    """The grain's model path as the model read it at bin index ``t``: turned by that bin's
+    rotation about the tube exit (``rot_pivot="exit"``, 0.4.1 on) or the grain centre (before)."""
+    path = np.asarray(g.get("path") or [], np.float64).reshape(-1, 2)
+    rot = g.get("rotation_deg") or []
+    th = math.radians(rot[t]) if t < len(rot) else 0.0
+    exit_pivot = (pred.get("params") or {}).get("rot_pivot") == "exit" and g.get("exit_xy")
+    c = np.asarray(g["exit_xy"] if exit_pivot else [g["x"], g["y"]], np.float64)
+    turn = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
+    return (path - c) @ turn.T + c
+
+
 def write_video(renderer, meta: dict, pred: dict, out_path: str | Path, fps: int = 12, ids: set[str] | None = None):
     """Registered field per bin with each emerged grain's tube drawn at its reported length."""
     import cv2
@@ -208,12 +220,8 @@ def write_video(renderer, meta: dict, pred: dict, out_path: str | Path, fps: int
                 if gg is None or L <= 0:
                     continue
                 n_em += 1
-                path, s = gg
-                keep = path[s <= L]
-                theta = math.radians((g.get("rotation_deg") or [0.0] * len(lengths))[t])
-                c = np.array([g["x"], g["y"]])
-                rot = np.array([[math.cos(theta), -math.sin(theta)], [math.sin(theta), math.cos(theta)]])
-                pts = (keep - c) @ rot.T + c
+                s = gg[1]
+                pts = turned_path(g, t, pred)[s <= L]
                 if len(pts) >= 2:
                     cv2.polylines(frame, [np.round(pts * 4).astype(np.int32).reshape(-1, 1, 2)], False, series_bgr, 2,
                                   cv2.LINE_AA, shift=2)
@@ -233,16 +241,22 @@ def write_video(renderer, meta: dict, pred: dict, out_path: str | Path, fps: int
 
 
 # flags whose grains deserve a human look before their numbers are used: on synthetic v2/v3
-# every grain carrying one of these was wrong somewhere (base rate 70%), rotation >= 40 deg 92%
+# every grain carrying one of these was wrong somewhere (base rate 70%)
 REVIEW_FLAGS = ("settled_from_bin", "onset_moved_to_front", "onset_from_front", "contact_censored", "no_grain",
                 "front_too_short", "degenerate_path", "tube_map_without_onset")
+# a path that accounts for less than half of its own change region: the tube curls, turns back,
+# wraps round its grain or is shared. On the dev benchmark (ld_v1, 0.4.1) all 11 grains below
+# this had a gross error (a trace off by > max(5 px, 20%) or onset off by > 2400 frames); the
+# lowest clean grain was at 0.52. (The old "rotation >= 40 deg" rule fired on 17 of 28 grains
+# there: with the exit pivot the track saturates before the tube exists, so it carried no signal.)
+COVERAGE_MIN = 0.5
 
 
 def review_reasons(res: dict) -> list[str]:
     out = [f for f in res.get("flags", []) if f.startswith(REVIEW_FLAGS)]
-    rot = [f for f in res.get("flags", []) if f.startswith("rotates:")]
-    if rot and float(rot[0].split(":")[1].rstrip("deg")) >= 40:  # the rotation track hit its range
-        out.append(rot[0])
+    cov = res.get("path_coverage")
+    if cov is not None and cov < COVERAGE_MIN:
+        out.append(f"path_coverage:{cov:.2f}")
     return out
 
 
@@ -262,9 +276,11 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
         rows = [("status", r["status"]), ("onset (frames)", onset),
                 ("final length", f"{r.get('final_length_px', 0) or 0:.1f} px"),
                 ("path", f"{r.get('path_length_px', 0) or 0:.1f} px")]
+        if r.get("path_coverage") is not None:
+            rows.append(("path explains", f"{100 * r['path_coverage']:.0f}% of its change region"))
         table = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(str(v))}</td></tr>" for k, v in rows)
         flags = " ".join(f"<span class='flag{' review' if f in reasons else ''}'>{html.escape(f)}</span>"
-                         for f in r.get("flags", []))
+                         for f in r.get("flags", []) + [x for x in reasons if x not in r.get("flags", [])])
         mark = "<span class='mark'>check</span>" if reasons else ""
         return (f"<section class='card{' needs' if reasons else ''}' id='{html.escape(r['id'])}'>"
                 f"<h2>{html.escape(r['id'])} {mark}</h2>"
@@ -273,11 +289,11 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
 
     iso = [r for r in grains if isolated is None or r["id"] in isolated]
     rest = [r for r in grains if isolated is not None and r["id"] not in isolated]
-    key = lambda r: (not review_reasons(r), r["id"])
+    key = lambda r: (not review_reasons(r), r.get("path_coverage", 1.0) if review_reasons(r) else 0.0, r["id"])
     n_check = sum(bool(review_reasons(r)) for r in iso)
     body = (f"<h1>SparseTrack review — {html.escape(str(pred.get('movie', {}).get('name', '')))}</h1>"
             f"<p class='sub'>{html.escape(pred.get('method', ''))} · {len(iso)} isolated grains, {n_check} marked "
-            f"<b>check</b> (their flags ask for a second look) · {fpb} frames per bin · panels: end state with the "
+            f"<b>check</b> (their flags ask for a second look; lowest path coverage first) · {fpb} frames per bin · panels: end state with the "
             f"traced path, end-state change map, kymograph (time down, arclength right) with the growth front. "
             f"Model output, not human-verified.</p>"
             f"<h2 class='group'>Isolated grains</h2><div class='grid'>{''.join(card(r) for r in sorted(iso, key=key))}</div>")
@@ -339,10 +355,7 @@ def write_comparison(labels: dict, pred: dict, renderer, out_dir: str | Path, ha
             u = cv2.cvtColor(renderer.to_display(img, (float(lo), float(hi)), zoom), cv2.COLOR_GRAY2BGR)
             to_c = lambda q: ((np.asarray(q, float) - [g["x"] - half, g["y"] - half]) * zoom).astype(np.int32)
             if p.get("path"):
-                th = math.radians(p.get("rotation_deg", [0.0] * len(frames))[i])
-                rel = np.asarray(p["path"], float) - [g["x"], g["y"]]
-                rp = np.stack([g["x"] + math.cos(th) * rel[:, 0] - math.sin(th) * rel[:, 1],
-                               g["y"] + math.sin(th) * rel[:, 0] + math.cos(th) * rel[:, 1]], 1)
+                rp = turned_path(p, i, pred)
                 cv2.polylines(u, [to_c(rp).reshape(-1, 1, 2)], False, (40, 40, 230), 1, cv2.LINE_AA)
                 if ours > 0 and p.get("tip"):
                     cv2.circle(u, tuple(int(v) for v in to_c(p["tip"]["xy"][i])), 5, (40, 40, 230), 2, cv2.LINE_AA)
