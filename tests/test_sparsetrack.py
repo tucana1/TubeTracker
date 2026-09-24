@@ -7,6 +7,7 @@ from http.server import ThreadingHTTPServer
 
 import numpy as np
 import pytest
+from scipy.special import erfc
 
 from sparsetrack import stack
 from sparsetrack.bench.server import Bench, make_handler, trace_bins
@@ -225,9 +226,10 @@ def _synthetic_growth(n_bins=40, onset_bin=12, rate=1.5, size=320, gx=160.0, gy=
     for t in range(n_bins):
         L = min(max_len, max(0.0, (t - onset_bin + 1) * rate))
         lengths.append(L)
-        tube = (along > 0) & (along < L)
+        # the tube's end is blurred by the optics, like a real tip: its signal fades out over ~3 px
+        cap = np.where(along > 0, 0.5 * erfc((along - L) / (np.sqrt(2) * 1.2)), 0.0) if L > 0 else 0.0
         img = grain.copy()
-        img += np.where(tube, 18 * np.exp(-across ** 2 / 0.8) - 22 * np.exp(-(np.abs(across) - 1.6) ** 2 / 0.5), 0)
+        img += cap * (18 * np.exp(-across ** 2 / 0.8) - 22 * np.exp(-(np.abs(across) - 1.6) ** 2 / 0.5))
         bins.append(img + rng.normal(0, 0.4, img.shape))
     return np.stack(bins).astype(np.float16), np.array(lengths)
 

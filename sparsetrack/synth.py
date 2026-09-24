@@ -25,6 +25,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 from scipy.spatial import cKDTree
+from scipy.special import erfc
 
 from . import stack
 from .cli import registered_mean
@@ -84,6 +85,7 @@ class SynthConfig:
     p_sway: float = 0.0                  # the tube sways sideways over time (more further from its base)
     sway_px: tuple = (2.0, 8.0)
     sway_base_px: tuple = (15.0, 40.0)   # ...reaching full amplitude this far along
+    tip_blur_px: float = 0.0             # optical blur of the tube's end (Gaussian sigma along the tube)
     p_stub: float = 0.0                  # a short fat tube that stops early
     stub_len: tuple = (8.0, 14.0)
     stub_width: tuple = (1.8, 2.5)
@@ -95,7 +97,7 @@ def preset(name: str, **kw) -> SynthConfig:
     growth that pauses or stops, width changes, drifting grains and docking particles. ``v3``:
     also tubes that start dark and turn bright-cored, tubes stuck to the substrate while their
     grain drifts, grains still landing in the first bins, and short fat stubs. ``v4``: also
-    sideways sway of the tube over time."""
+    sideways sway of the tube over time. ``v5``: v4 with the tube's end blurred like real tips."""
     if name == "v1":
         return SynthConfig(**kw)
     v2 = dict(foreign_sources=True, p_free=0.35, p_curl=0.25, width=(0.8, 1.3), p_stop=0.35, pauses=0.7,
@@ -107,6 +109,9 @@ def preset(name: str, **kw) -> SynthConfig:
         return SynthConfig(**{**v3, **kw})
     if name == "v4":  # + sideways sway of the tube (measured on real tubes: 2-8 px against the end state)
         return SynthConfig(**{**v3, **dict(p_sway=0.7), **kw})
+    if name == "v5":  # calibrated on the human benchmark: real fronts run ~2.9 px past the clicked apex,
+        # so tips are blurred over ~2.5 px and barely mature (strong maturation would pull fronts back)
+        return SynthConfig(**{**v3, **dict(p_sway=0.7, tip_blur_px=2.5, maturation_bins=(0.0, 3.0)), **kw})
     raise ValueError(f"unknown synthetic preset {name!r}")
 
 
@@ -499,11 +504,15 @@ class Scene:
                 rx, ry = rx.astype(np.float32), ry.astype(np.float32)
                 ss = cv2.remap(s, rx, ry, cv2.INTER_NEAREST, borderValue=1e6)
                 dd = cv2.remap(d, rx, ry, cv2.INTER_NEAREST, borderValue=1e6)
-            on = (ss <= L) & (dd < 6 * t.width)
+            blur = cfg.tip_blur_px
+            on = (ss <= L + 3 * blur) & (dd < 6 * t.width)
             if not on.any():
                 continue
-            age = k - t.birth(ss[on])
+            s_on = np.minimum(ss[on], L)  # beyond the apex the blur shows the apex's own look
+            age = np.maximum(k - t.birth(s_on), 0.0)
             mature = 1.0 - np.exp(-age / t.tau) if t.tau > 0 else np.ones_like(age)
+            if blur > 0:  # the tube's end is blurred by the optics: half contrast at the apex
+                mature = mature * 0.5 * erfc((ss[on] - L) / (math.sqrt(2.0) * blur))
             prof = tube_profile(dd[on] / t.width, t.bright)
             if t.evolve_tau > 0:  # young tube: a dark line; the bright core comes with age
                 wgt = 1.0 - np.exp(-age / t.evolve_tau)

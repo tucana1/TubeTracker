@@ -68,6 +68,8 @@ class Params:
     max_turn: float = 6.0        # largest rotation change between consecutive bins (degrees)
     rot_min_s: float = 6.0       # rotation judged only on path points at least this far along...
     rot_rim_clear: float = 4.0   # ...and at least this far outside the grain rim
+    rot_refine: bool = True      # second pass: rotation judged only on the tube the first front found
+    rot_refine_px: float = 10.0  # ...plus this far beyond it
     wedge_r: tuple = (1.0, 6.0)  # onset wedge: radii beyond the rim (px)
     wedge_halfwidth: float = 12.0  # degrees either side of the exit angle
     wedge_base_bins: int = 5     # bins defining the pre-emergence noise
@@ -107,6 +109,7 @@ class Params:
     through_min_px: int = 10     # ...at least this many pixels of it, changed before the front left
     contact_px: float = 4.0      # lengths are censored where the path comes this close to another rim
     min_tube_px: float = 8.0     # a front that never gets this long is not a tube (unless contact-censored)
+    tip_offset_px: float = 2.5   # reported length = front - this (the signal's blurred end lies beyond the apex)
     front_lead_px: float = 12.0  # if the front is already this long at the stub's onset...
     run_min_px: float = 0.5      # ...onset = start of the growth run (> this per 3 bins) that led there
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
@@ -611,10 +614,21 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
     else:
         theta = np.zeros(n_bins)
     ai = np.array([int(np.argmin(np.abs(angles - a))) for a in theta])
-    kymo = kymo_all[np.arange(n_bins), ai]
-    tau = tau_all[-1, ai[-1]] if tau_all.ndim == 3 else tau_all[ai[-1]]
     evid = evid_all[np.arange(n_bins), ai]
     front = dp_front(evid, max(1, int(round(p.vmax_px / p.step))))
+    if p.rotate and p.rot_refine and informative.sum() >= 4:
+        # While the tube is short, the far path points read only neighbours and debris at every
+        # angle, and the track follows those. Judge rotation again only on the part of the path
+        # the first front says exists by then (plus a margin), and read the front once more.
+        reach = front[:, None] * p.step + p.rot_refine_px
+        mask = informative[None, :] & (ss[None, :] <= reach)
+        rot_score = (np.clip(evid_all, 0.0, None) * mask[:, None, :]).sum(axis=2)
+        theta = rotation_track(rot_score, angles, p.angle_penalty, p.max_turn, p.late_bins + 1)
+        ai = np.array([int(np.argmin(np.abs(angles - a))) for a in theta])
+        evid = evid_all[np.arange(n_bins), ai]
+        front = dp_front(evid, max(1, int(round(p.vmax_px / p.step))))
+    kymo = kymo_all[np.arange(n_bins), ai]
+    tau = tau_all[-1, ai[-1]] if tau_all.ndim == 3 else tau_all[ai[-1]]
     behind = np.arange(len(pts))[None, :] < front[:, None]
     explained = float(np.sum(np.where(behind, evid, 0.0)))
     beyond = float(np.sum(np.where(~behind, np.clip(evid, 0.0, None), 0.0)))
@@ -800,7 +814,9 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         for i, a in enumerate(cands):
             nested = False
             for j, b in enumerate(cands):
-                if j != i and b["ss"][-1] > a["ss"][-1] + 1.0:
+                # only a longer path from the same exit counts as the same tube reaching further
+                if (j != i and b["ss"][-1] > a["ss"][-1] + 1.0
+                        and math.hypot(*(a["pts"][0] - b["pts"][0])) <= p.nest_px + 1.0):
                     d = np.min(np.hypot(a["pts"][:, None, 0] - b["pts"][None, :, 0],
                                         a["pts"][:, None, 1] - b["pts"][None, :, 1]), axis=1)
                     if np.all(d <= p.nest_px):
@@ -905,6 +921,14 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         result["flags"].append("front_too_short")
         status, onset, interval = "no_emergence_by_end", None, None
         length[:] = 0.0
+    if p.tip_offset_px > 0:
+        # The change signal outlasts the tube's visible end by the optical blur: on the real
+        # benchmark the front ran a median 2.9 px beyond the human-clicked apex. Report the apex.
+        grown = length > 0
+        length = np.where(grown, np.maximum(length - p.tip_offset_px, 0.0), 0.0)
+        back = int(round(p.tip_offset_px / p.step))
+        for t in np.nonzero(grown)[0]:
+            tips[t] = rotated(pts[max(int(front[t]) - 1 - back, 0)], theta[t])
     to_ref = lambda xy: [round(float(xy[0] - centre + gx), 2), round(float(xy[1] - centre + gy), 2)]
     result.update(status=status, onset_frame=onset, onset_interval=interval,
                   length={"frames": frames, "px": [round(float(v), 2) for v in length]},
@@ -945,7 +969,8 @@ def _diagnostic(res: dict, fpb: int) -> np.ndarray:
     return np.concatenate([band, sheet], axis=0)
 
 
-def growth_scale(renderer: Renderer, meta: dict, grains: list[dict], p: "Params", log=print) -> float | None:
+def growth_scale(renderer: Renderer, meta: dict, grains: list[dict], p: "Params", log=print,
+                 physical: list[dict] | None = None) -> float | None:
     """Fast growth per bin in this movie: the median over a sample of isolated grains of the
     90th percentile of their 3-bin front advance, read with a generous speed cap. None when
     too few tubes to tell."""
@@ -955,7 +980,7 @@ def growth_scale(renderer: Renderer, meta: dict, grains: list[dict], p: "Params"
     probe = replace(p, vmax_px=p.vmax_cap, vmax_auto=False)
     rates = []
     for g in sample:
-        res = analyze_grain(renderer, meta, g, [o for o in grains if o["id"] != g["id"]], probe)
+        res = analyze_grain(renderer, meta, g, [o for o in (physical or grains) if o["id"] != g["id"]], probe)
         L = np.asarray(res.get("length", {}).get("px") or [], float)
         if res.get("status") != "emerged_within" or len(L) < 8 or L[-1] < 2 * p.min_tube_px:
             continue
@@ -977,12 +1002,15 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
     (out_dir / "diagnostics").mkdir(parents=True, exist_ok=True)
     src = Path(grains_path) if grains_path else Path(cache_dir) / "grains.json"
     doc = json.loads(src.read_text())
-    grains = list(doc["grains"].values()) if isinstance(doc["grains"], dict) else doc["grains"]
-    grains = [g for g in grains if not g.get("excluded")]
+    census = list(doc["grains"].values()) if isinstance(doc["grains"], dict) else doc["grains"]
+    grains = [g for g in census if not g.get("excluded")]
+    # grains excluded from scoring (clump members, edge grains) are still grains: they stay
+    # obstacles and ownership rivals for their neighbours; only "not a grain" is dropped
+    physical = [g for g in census if g.get("exclude_reason") != "not_a_grain"]
     started = time.time()
     if p.vmax_auto:
         from dataclasses import replace
-        scale = growth_scale(renderer, meta, grains, p, log)
+        scale = growth_scale(renderer, meta, grains, p, log, physical)
         if scale is not None:
             vmax = float(np.clip(p.vmax_factor * scale, p.vmax_px, p.vmax_cap))
             log(f"growth scale {scale:.2f} px/bin (90th pct, median of isolated grains): front speed cap "
@@ -992,7 +1020,7 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
     for g in grains:
         if only and g["id"] not in only:
             continue
-        others = [o for o in grains if o["id"] != g["id"]]
+        others = [o for o in physical if o["id"] != g["id"]]
         res = analyze_grain(renderer, meta, g, others, p)
         cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)

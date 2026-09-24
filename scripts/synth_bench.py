@@ -7,7 +7,7 @@ Synthetic movies come from `sparsetrack synth [--preset v2]`; their caches (`pre
 --frames-per-bin 25 --ref-start 0`, 440 MB each) are rebuilt from the movies when missing and
 deleted after scoring unless --keep-caches (suite v1: runs/sparsetrack/synth/s{seed}_cache + synth_s{seed}_truth.json;
 suite v2/v3: v{2,3}s{seed}_cache + synthv{2,3}_s{seed}_truth.json). The onset tolerance
-there is 50 synthetic frames (= 600 source frames). Seeds 3-4 of v2, v3 and v4 are the held-out
+there is 50 synthetic frames (= 600 source frames). Seeds 3-4 of v2-v5 are the held-out
 synthetic test: report them only for a frozen variant (--seeds 3 4).
 """
 
@@ -28,7 +28,8 @@ from sparsetrack.evaluate import load, score  # noqa: E402
 SYN = REPO / "runs/sparsetrack/synth"
 LEGACY_IDS = ["g025", "g014", "g037", "g034", "g013", "g030", "g029"]
 SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json"),
-          "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json")}
+          "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json"),
+          "v5": ("v5s{}_cache", "synthv5_s{}_truth.json")}
 
 
 def ensure_cache(cache: Path, truth_path: Path) -> bool | None:
