@@ -71,7 +71,7 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
 | Modernised engine | `tubetracker/{gui,analysis,models,views}.py`, `scripts/run_pilot.py` | Jul 2026 | Same algorithms, modular, LapTrack linking, CLI pilot runner, reviewer-first burst candidates | Kept, not developed |
 | Research program v1–v30 | ledger H1–H491; code at tag `snapshot-2026-09-23` | 13 Jul – 22 Sep | Kymograph/DP trackers, tomography and min-cut formulations, TimesFM priors, a weakly supervised tip CNN, the v30 owner-conditioned temporal U-Net with a napari annotator and review queues (1,274 tests) | Frozen; pruned at the reset |
 | **SparseTrack 0.4.2** | `sparsetrack/` | 23 Sep | Keyframe-bin cache, per-grain registration, end-state path candidates, monotone DP growth front, matched-stub onset, Turnbull population curve, review gallery, codec-exact synthetic benchmark | **Active** |
-| **Benchmark labelling tool** | `sparsetrack/bench/` | 23–24 Sep | Local web app for census, onset brackets, exit-to-apex traces (near, wide and extra-wide views) and blind retest; autosave plus journal | **Active; movie-2 labelling in progress** |
+| **Benchmark labelling tool** | `sparsetrack/bench/` | 23–24 Sep | Local web app for census, onset brackets, exit-to-apex traces (near, wide and extra-wide views), contact and burst answers, and blind retest; autosave plus journal | **Active; movie-2 labelling in progress** |
 | Human benchmark | `benchmark/labels/ld_v1.json` | 23 Sep | Session A: 39-grain census, 32 onsets, 127 traces, 7 retests | Dev set (tuned on) |
 
 ---
@@ -215,7 +215,8 @@ Looser tolerances for 0.4.0:
 - Exit-to-apex polyline traces at planned times: onset + 6 bins, 40%, 70% and the last full bin. There are three
   views: near, wide (±128 px) and, since 24 September, extra-wide (X, ±256 px), which slides inward at the movie's
   edges. Movie 2's longest tubes need the extra-wide view.
-- Tube states: full, partial, no tube or unsure, plus a contact flag.
+- Tube states: full, partial, no tube or unsure, plus a contact flag. Since 24 September, also burst (B): the tip
+  ruptured, so the grain's later trace times drop out. Scoring skips burst traces and reports how many.
 - An 8-grain blind retest of onsets.
 - Every click autosaves atomically to JSON, and an append-only journal records each answer.
 
@@ -263,7 +264,7 @@ Looser tolerances for 0.4.0:
     - Keep it blind: do not open any SparseTrack output for movie 2 first.
     - Mark an honest last-absent bin whenever the transition is not crisp.
     - Use U (can't tell) and P (partial) rather than guessing.
-    - Press T on every trace that touches another tube or grain.
+    - Press T on every trace that touches another tube or grain, and B when the tube has burst.
     - Do the retest after a break.
   - When you finish:
     1. Commit `m2_v1.json` and its journal.
@@ -377,7 +378,7 @@ problem.
 | Week 1 | **Prototype v1:** SparseTrack 0.4 plus review mode in the labelling tool, physical units, one-click run/export (macOS and Windows), growth-arrest frame from the DP plateau, burst candidates flagged for review | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
 | Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then fine-tune on the `ld` traces; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
 | Weeks 3–4 | **Decoder v2, the per-bin decoder.** With a tube-probability map for every bin, read length where the tube *is* in each bin (`reach.py`: medial-axis length through P > 0.5, made monotone over bins) instead of rotating one end-state path. On twelve held-out synthetic movies it takes learned evidence from 71% to 73% of lengths in tolerance (61% for SparseTrack as it is), and it removes the drifting-grain weakness. A hybrid with SparseTrack's decoder did not help. `pipeline.py` already scores it | Beats SparseTrack's decoder on `ld_v1`, then holds on movie 2 |
-| Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts | Burst frame within ±2 bins on held-out reviews |
+| Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts. Movie 2's burst answers are the first real burst labels, bracketed by trace times | Burst frame within ±2 bins on held-out reviews |
 | Weeks 4–8 | Dense fields: instance-aware evidence (which grain owns each tube pixel), learned with synthetic foreign tubes and crossings (v2+ presets); ownership decided by birth time and geodesic reach | Contact-censored fraction halves without losing isolated-grain accuracy |
 | Ongoing | Acquisition protocol for new experiments; a new held-out movie every 2–3 frozen versions | — |
 
