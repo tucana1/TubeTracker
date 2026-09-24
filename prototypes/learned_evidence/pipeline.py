@@ -23,6 +23,8 @@ import shutil
 import time
 from pathlib import Path
 
+import numpy as np
+
 from sparsetrack import stack
 from sparsetrack.cli import write_census
 from sparsetrack.evaluate import load, score
@@ -57,10 +59,40 @@ def ensure_synthetic(field: Path, work: Path, spec: str, keep_caches: bool, log=
     return shard
 
 
+def write_per_grain(work: Path, runs: dict, seconds: float) -> None:
+    """Without labels: one row per grain with each run's status, onset interval and final length."""
+    import csv
+    ids = [g["id"] for g in runs["sparsetrack"]["grains"]]
+    by_run = {name: {g["id"]: g for g in pred["grains"]} for name, pred in runs.items()}
+    with open(work / "per_grain.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs
+                                          for col in ("status", "onset_after", "onset_by", "final_length_px")])
+        for gid in ids:
+            g0 = by_run["sparsetrack"][gid]
+            row = [gid, g0.get("x"), g0.get("y")]
+            for name in runs:
+                g = by_run[name].get(gid, {})
+                iv = g.get("onset_interval") or [None, None]
+                row += [g.get("status"), iv[0], iv[1], g.get("final_length_px")]
+            w.writerow(row)
+    lines = [f"{len(ids)} grains ({seconds:.0f} s); per-grain results in {work / 'per_grain.csv'}"]
+    for name, pred in runs.items():
+        st = [g.get("status") for g in pred["grains"]]
+        grew = [g.get("final_length_px") or 0.0 for g in pred["grains"] if g.get("status") == "emerged_within"]
+        lines.append(f"{name:12s} emerged within the movie {st.count('emerged_within'):3d}, at start "
+                     f"{st.count('emerged_at_start'):3d}, none by the end {st.count('no_emergence_by_end'):3d}; "
+                     f"median final length {float(np.median(grew)) if grew else 0.0:.1f} px")
+    print("\n".join(lines))
+    (work / "report.txt").write_text("\n".join(lines) + "\n")
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--field", required=True, help="prepared cache of the real movie (e.g. runs/sparsetrack/ld)")
-    ap.add_argument("--labels", required=True, help="human benchmark labels for that movie")
+    ap.add_argument("--labels", default=None,
+                    help="human benchmark labels for that movie; without them the three runs are written "
+                         "(predictions and per_grain.csv) but not scored")
     ap.add_argument("--work", required=True)
     ap.add_argument("--synthetic", nargs="+", default=list(DEFAULT_MOVIES), help="PRESET:SEED synthetic movies")
     ap.add_argument("--train-field", default=None,
@@ -74,8 +106,9 @@ def main(argv=None):
                     help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
                          "(by default such grains are read again at +/-300 px, in both runs)")
     args = ap.parse_args(argv)
-    field, work, labels_path = Path(args.field), Path(args.work), Path(args.labels)
-    if "m2" in labels_path.name and not args.heldout_once:
+    field, work = Path(args.field), Path(args.work)
+    labels_path = Path(args.labels) if args.labels else None
+    if labels_path is not None and "m2" in labels_path.name and not args.heldout_once:
         raise SystemExit("movie 2 is the held-out benchmark: score it once per frozen model (--heldout-once), "
                          "with --model trained on the dev field (--train-field runs/sparsetrack/ld)")
     work.mkdir(parents=True, exist_ok=True)
@@ -87,7 +120,6 @@ def main(argv=None):
         train.main(["--shards", *shards, "--out", str(model_path), "--steps", str(args.steps)])
     net = load_model(str(model_path))
     pcache = evaluate.prob_cache(field, net, work / f"prob_{field.name}")
-    labels = load(labels_path)
     with contextlib.nullcontext() if args.fixed_crop else evaluate.adaptive_crop():
         base = evaluate.run_baseline(field, work, grains_path=labels_path)
         learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
@@ -97,6 +129,10 @@ def main(argv=None):
                            vmax=float(learned.get("params", {}).get("vmax_px", 4.0)))  # SparseTrack's speed cap
     (work / "perbin").mkdir(exist_ok=True)
     (work / "perbin" / "predictions.json").write_text(json.dumps(perbin))
+    if labels_path is None:
+        write_per_grain(work, {"sparsetrack": base, "learned": learned, "perbin": perbin}, time.time() - started)
+        return
+    labels = load(labels_path)
     rb, rl, rp = score(labels, base), score(labels, learned), score(labels, perbin)
     tol = rb["onset"]["tolerance_frames"]
     pb = evaluate.paired_bootstrap(rl, rb, tol)

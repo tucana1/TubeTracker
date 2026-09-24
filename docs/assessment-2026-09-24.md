@@ -375,7 +375,7 @@ problem.
 | When | Deliverable | Gate |
 |---|---|---|
 | Now | Finish movie-2 labels; freeze 0.4.3 (long-tube fix); score 0.4.0 and 0.4.3 once each | First held-out numbers, with bootstrap intervals |
-| Week 1 | **Prototype v1:** SparseTrack 0.4 plus review mode in the labelling tool, physical units, one-click run/export (macOS and Windows), growth-arrest frame from the DP plateau, burst candidates flagged for review | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
+| Week 1 | **Prototype v1:** SparseTrack 0.4 plus review mode in the labelling tool, physical units, one-click run/export (macOS and Windows), growth-arrest frame from the DP plateau, shown for review (on synthetic movies a plateau rule finds under half of arrests within ±3 bins), burst candidates flagged for review | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
 | Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then fine-tune on the `ld` traces; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
 | Weeks 3–4 | **Decoder v2, the per-bin decoder.** With a tube-probability map for every bin, read length where the tube *is* in each bin (`reach.py`: medial-axis length through P > 0.5, made monotone over bins) instead of rotating one end-state path. On twelve held-out synthetic movies it takes learned evidence from 71% to 73% of lengths in tolerance (61% for SparseTrack as it is), and it removes the drifting-grain weakness. A hybrid with SparseTrack's decoder did not help. `pipeline.py` already scores it | Beats SparseTrack's decoder on `ld_v1`, then holds on movie 2 |
 | Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts. Movie 2's burst answers are the first real burst labels, bracketed by trace times | Burst frame within ±2 bins on held-out reviews |
@@ -585,6 +585,20 @@ bright-cored tubes; the network has never seen its tubes.
   outside the synthetic profiles, which is the gap the next training round must close: wider profiles in `synth`,
   then fine-tuning on the 127 real `ld` traces.
 - It also flags one small out-of-focus particle.
+- **End to end on the same movie, without labels, the three runs disagree widely.** `pipeline.py` now runs without
+  `--labels` and writes a per-grain CSV.
+  - The learned evidence calls 16 of 37 grains tubeless, where SparseTrack calls 7.
+  - Final lengths for the same grain differ by up to about 100 px between runs.
+  - This movie's thick, dark-walled tubes and single-frame bins are outside anything the network was trained on, so
+    this is expected and says little about your movies. `ld_v1` is the test that matters.
+- **A growth-arrest frame cannot be read reliably off the length curves.** Tried on the seven development movies (49
+  truth arrests, 106 tubes still growing at the end):
+  - The rule "first bin within δ of the final length, flat for at least n bins" finds at most 22 of 49 arrests
+    within ±3 bins, at the cost of 28 false arrests. With few false arrests (2), it finds 13.
+  - A growth-then-plateau change-point fit does no better.
+  - Slow growth (0.15–1 px per bin), bin-to-bin noise and curves that flatten in the last bins, where the "after"
+    reference sits, make the plateau ambiguous. Prototype v1 should show an arrest frame for review, not report it
+    as a measurement. A dependable one needs its own evidence, such as the network's tip output standing still.
 
 **What these results do and don't show.**
 - **Do:**
