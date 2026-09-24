@@ -296,3 +296,84 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
     path.write_text(f"<!doctype html><html lang='en'><meta charset='utf-8'><title>SparseTrack review</title>"
                     f"<style>{css}</style><body>{body}</body></html>")
     return path
+
+
+def write_comparison(labels: dict, pred: dict, renderer, out_dir: str | Path, half: int = 50,
+                     zoom: float = 3.0) -> Path:
+    """compare.html: every human FULL trace next to the model's path and tip at that bin.
+
+    Each tile is the grain-following view the labelling tool showed (so both traces are drawn
+    in the frame they were made in): human trace green, model path red (turned by the model's
+    rotation at that bin), model tip red ring. Grains with the most traces out of tolerance
+    come first.
+    """
+    import html
+    import cv2
+    from .bench.server import Bench
+    from .evaluate import match_grains
+    out_dir = Path(out_dir)
+    (out_dir / "compare").mkdir(parents=True, exist_ok=True)
+    bench = Bench.__new__(Bench)
+    bench.renderer, bench.n_bins, bench.doc, bench._follow = renderer, renderer.n_bins, labels, {}
+    grains = {g: v for g, v in labels["grains"].items() if not v.get("excluded")}
+    matched = match_grains({"grains": grains}, pred["grains"])
+    fpb = int(pred.get("frames_per_bin", 300))
+    cards = []
+    for gid, lab in labels["labels"].items():
+        g, p = grains.get(gid), matched.get(gid)
+        if g is None or p is None:
+            continue
+        frames = np.asarray(p["length"]["frames"])
+        tiles, bad = [], 0
+        for b, t in sorted(lab.get("traces", {}).items(), key=lambda kv: int(kv[0])):
+            if t["state"] != "full":
+                continue
+            b = int(b)
+            i = int(np.argmin(np.abs(frames - (b * fpb + fpb // 2))))
+            ours, human = float(p["length"]["px"][i]), float(t["length_px"])
+            ok = abs(ours - human) <= max(2.0, 0.1 * human)
+            bad += not ok
+            img = renderer.mean_crop(b, b, g["x"], g["y"], half, bench.follow(gid), mark_outside=True)
+            fin = img[np.isfinite(img)]
+            lo, hi = (np.percentile(fin, [0.5, 99.5]) if fin.size else (0.0, 255.0))
+            u = cv2.cvtColor(renderer.to_display(img, (float(lo), float(hi)), zoom), cv2.COLOR_GRAY2BGR)
+            to_c = lambda q: ((np.asarray(q, float) - [g["x"] - half, g["y"] - half]) * zoom).astype(np.int32)
+            if p.get("path"):
+                th = math.radians(p.get("rotation_deg", [0.0] * len(frames))[i])
+                rel = np.asarray(p["path"], float) - [g["x"], g["y"]]
+                rp = np.stack([g["x"] + math.cos(th) * rel[:, 0] - math.sin(th) * rel[:, 1],
+                               g["y"] + math.sin(th) * rel[:, 0] + math.cos(th) * rel[:, 1]], 1)
+                cv2.polylines(u, [to_c(rp).reshape(-1, 1, 2)], False, (40, 40, 230), 1, cv2.LINE_AA)
+                if ours > 0 and p.get("tip"):
+                    cv2.circle(u, tuple(int(v) for v in to_c(p["tip"]["xy"][i])), 5, (40, 40, 230), 2, cv2.LINE_AA)
+            hp = t.get("path_xy_view") or t["path_xy_ref"]
+            cv2.polylines(u, [to_c(hp).reshape(-1, 1, 2)], False, (40, 200, 40), 2, cv2.LINE_AA)
+            cv2.circle(u, tuple(int(v) for v in to_c(hp[-1])), 3, (40, 200, 40), -1, cv2.LINE_AA)
+            name = f"{gid}_{b}.png"
+            cv2.imwrite(str(out_dir / "compare" / name), u)
+            tiles.append(f"<figure class='{'ok' if ok else 'bad'}'><img loading='lazy' src='compare/{name}'>"
+                         f"<figcaption>frame {b * fpb + fpb // 2} · human {human:.1f} px · model {ours:.1f} px "
+                         f"({ours - human:+.1f})</figcaption></figure>")
+        on = lab.get("onset") or {}
+        onset_txt = (f"human ({on.get('last_absent_frame')}, {on.get('first_visible_frame')}] · model "
+                     f"{p.get('onset_frame')}" if on.get("verdict") == "emerged_within" else
+                     f"human {on.get('verdict')} · model {p.get('status')}")
+        cards.append((bad, gid, f"<section class='card'><h2>{html.escape(gid)} <span class='muted'>"
+                                f"{bad} of {len(tiles)} traces out of tolerance · onset {html.escape(onset_txt)}"
+                                f"</span></h2><div class='tiles'>{''.join(tiles)}</div></section>"))
+    cards.sort(key=lambda c: (-c[0], c[1]))
+    css = ("body{font:14px/1.4 -apple-system,system-ui,sans-serif;color:#0b0b0b;background:#fcfcfb;margin:24px}"
+           "h1{font-size:20px;margin:0 0 4px}.sub{color:#52514e;margin:0 0 16px;max-width:1100px}"
+           ".card{border:1px solid #e1e0d9;border-radius:6px;padding:10px;margin:0 0 12px;background:#fff}"
+           ".card h2{font-size:15px;margin:0 0 8px}.muted{color:#52514e;font-weight:400}"
+           ".tiles{display:flex;flex-wrap:wrap;gap:8px}figure{margin:0;border:3px solid #e1e0d9;border-radius:4px}"
+           "figure.bad{border-color:#c2410c}figure img{display:block;width:300px}"
+           "figcaption{font-size:12px;padding:3px 6px;color:#0b0b0b}")
+    body = (f"<h1>Model vs human traces — {html.escape(str(pred.get('movie', {}).get('name', '')))}</h1>"
+            f"<p class='sub'>{html.escape(pred.get('method', ''))}. Green: human trace (dot = apex). Red: model "
+            f"path at that bin (ring = model tip). Orange frame: out of max(2 px, 10%). Worst grains first.</p>"
+            + "".join(c[2] for c in cards))
+    page = out_dir / "compare.html"
+    page.write_text(f"<!doctype html><html lang='en'><meta charset='utf-8'><title>Model vs human</title>"
+                    f"<style>{css}</style><body>{body}</body></html>")
+    return page

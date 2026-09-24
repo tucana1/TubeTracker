@@ -109,6 +109,15 @@ def cmd_eval(args) -> None:
         Path(args.out).write_text(text)
 
 
+def cmd_compare(args) -> None:
+    from .evaluate import load
+    from .render import Renderer
+    from .report import write_comparison
+    bins, meta = stack.load(args.cache)
+    page = write_comparison(load(args.labels), load(args.pred), Renderer(bins, meta), args.out)
+    print(f"comparison page: {page.resolve()}")
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser(prog="sparsetrack")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -163,6 +172,12 @@ def main(argv=None) -> None:
     r.add_argument("--video", action="store_true", help="also render field_overlay.mp4")
     r.add_argument("--no-browser", action="store_true")
     r.set_defaults(func=cmd_run)
+    m = sub.add_parser("compare", help="page of every human trace next to the model's path and tip")
+    m.add_argument("cache")
+    m.add_argument("--labels", required=True)
+    m.add_argument("--pred", required=True)
+    m.add_argument("--out", required=True)
+    m.set_defaults(func=cmd_compare)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")
     e.add_argument("--labels", required=True)
     e.add_argument("--pred", required=True, nargs="+")
