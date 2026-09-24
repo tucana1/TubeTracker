@@ -21,6 +21,7 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 | `evaluate.py` | Probability caches; end-to-end SparseTrack runs (baseline, learned, and "perfect" = exact truth masks as evidence); the adaptive crop (below); oracle-path fronts; paired bootstrap over grains |
 | `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
 | `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins |
+| `review.py` | Review pictures for the per-bin decoder on the movie itself (six registered bins with the region read and its medial axis, then the length curve), in SparseTrack's own review gallery |
 | `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
 | `models/unet_v2_sample_field.pt` | The trained v2 model (ten synthetic movies on the sample movie's field), for a quick first look |
 
@@ -39,6 +40,11 @@ scored on `ld_v1` and a paired bootstrap of the difference.
 **Any movie, no labels.** Leave out `--labels` to run all three on a new movie. The pipeline then writes each run's
 `predictions.json` and a `per_grain.csv` (status, onset interval and final length per run) instead of scores. For
 example, add `--field runs/sparsetrack/<movie> --model runs/learned_evidence/ld/unet.pt`.
+- `--um-per-px` and `--s-per-frame` add final lengths in µm and onsets in minutes to the CSV.
+- With or without labels, `perbin/` also holds what the lab would look at:
+  - `index.html`, a review gallery of every grain drawn on the movie;
+  - `population.png` and `population.csv`, the germination curve (Turnbull, with T50);
+  - `growth_curves.png`.
 
 **Quick first look (about 10 minutes).** Add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
 to skip the synthetic movies and training. That model (2 MB) is v2 below: trained on ten synthetic movies built on

@@ -613,6 +613,15 @@ bright-cored tubes; the network has never seen its tubes.
   - Final lengths for the same grain differ by up to about 100 px between runs.
   - This movie's thick, dark-walled tubes and single-frame bins are outside anything the network was trained on, so
     this is expected and says little about your movies. `ld_v1` is the test that matters.
+- **The review gallery showed where the per-bin decoder goes wrong on real footage.** `review.py` draws the region
+  the decoder read on the movie itself, and that exposed a bug and two limits:
+  - Near the frame edge, the padded border made straight streaks that the network took for tube, giving a false
+    264 px tube. The decoder now ignores pixels that leave the movie in any bin, as SparseTrack does. On the eight
+    held-out synthetic movies this changes no scored result.
+  - A grain touching another grain can lose its tube to the neighbour when the region is split between them.
+    Scored benchmarks exclude such grains, but per-grain outputs include them.
+  - Where a real tube's contrast changes, the learned probability can fade. The burst safeguard then keeps the
+    length reached, which was the right call here.
 - **A growth-arrest frame cannot be read reliably off the length curves.** Tried on the seven development movies (49
   truth arrests, 106 tubes still growing at the end):
   - The rule "first bin within δ of the final length, flat for at least n bins" finds at most 22 of 49 arrests
@@ -691,7 +700,14 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
   - learned evidence through SparseTrack's decoder;
   - learned evidence through the per-bin decoder (decoder v2), with its burst safeguard.
 - **Any movie, no labels:** leave out `--labels`. The pipeline then writes all three runs' predictions and a
-  `per_grain.csv` instead of scores.
+  `per_grain.csv` instead of scores. Add `--um-per-px` and `--s-per-frame` to get µm and minutes.
+- **For review, in `perbin/`:**
+  - a gallery of every grain drawn on the movie itself: six bins from onset to the end, with the region read and its
+    length curve;
+  - the population germination curve (Turnbull, T50);
+  - growth curves.
+
+  That is most of prototype v1's output, less the review-and-correct loop, which belongs in the labelling tool.
 - **Quick first look (about 10 minutes):** add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
   to skip the synthetic movies and training. That model is v2 from section 5, trained on synthetic movies built on
   `sample_movie.avi`'s field. The full run above, on your own field, is still the proper test.

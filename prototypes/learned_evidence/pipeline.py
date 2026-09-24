@@ -30,7 +30,7 @@ from sparsetrack.cli import write_census
 from sparsetrack.evaluate import load, score
 from sparsetrack.synth import make_movie, preset
 
-from . import data, evaluate, reach, train
+from . import data, evaluate, reach, review, train
 from .model import load as load_model
 
 # ten movies (model v2): on held-out synthetic seeds, +35 lengths in tolerance over five (95% CI +6 to +70)
@@ -59,16 +59,19 @@ def ensure_synthetic(field: Path, work: Path, spec: str, keep_caches: bool, log=
     return shard
 
 
-def write_per_grain(work: Path, runs: dict, seconds: float) -> None:
-    """Without labels: one row per grain with each run's status, onset interval and final length."""
+def write_per_grain(work: Path, runs: dict, seconds: float, um_per_px: float | None = None,
+                    s_per_frame: float | None = None) -> None:
+    """Without labels: one row per grain with each run's status, onset interval and final length
+    (also in um and minutes when the pixel size and frame interval are given)."""
     import csv
     ids = [g["id"] for g in runs["sparsetrack"]["grains"]]
     by_run = {name: {g["id"]: g for g in pred["grains"]} for name, pred in runs.items()}
     with open(work / "per_grain.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs
-                                          for col in ("status", "onset_after", "onset_by", "final_length_px")]
-                   + ["perbin_burst_frame"])
+        cols = ["status", "onset_after", "onset_by", "final_length_px"]
+        cols += ["onset_by_min"] if s_per_frame else []
+        cols += ["final_length_um"] if um_per_px else []
+        w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs for col in cols] + ["perbin_burst_frame"])
         for gid in ids:
             g0 = by_run["sparsetrack"][gid]
             row = [gid, g0.get("x"), g0.get("y")]
@@ -76,6 +79,10 @@ def write_per_grain(work: Path, runs: dict, seconds: float) -> None:
                 g = by_run[name].get(gid, {})
                 iv = g.get("onset_interval") or [None, None]
                 row += [g.get("status"), iv[0], iv[1], g.get("final_length_px")]
+                if s_per_frame:
+                    row.append(round(iv[1] * s_per_frame / 60.0, 2) if iv[1] is not None else None)
+                if um_per_px:
+                    row.append(round(float(g.get("final_length_px") or 0.0) * um_per_px, 2))
             w.writerow(row + [by_run["perbin"].get(gid, {}).get("burst_frame")])
     lines = [f"{len(ids)} grains ({seconds:.0f} s); per-grain results in {work / 'per_grain.csv'}"]
     for name, pred in runs.items():
@@ -103,6 +110,8 @@ def main(argv=None):
     ap.add_argument("--steps", type=int, default=6000)
     ap.add_argument("--keep-caches", action="store_true")
     ap.add_argument("--heldout-once", action="store_true", help="required to score labels whose name contains m2")
+    ap.add_argument("--um-per-px", type=float, default=None, help="pixel size, for lengths in um in per_grain.csv")
+    ap.add_argument("--s-per-frame", type=float, default=None, help="frame interval, for onsets in minutes")
     ap.add_argument("--no-burst", action="store_true",
                     help="per-bin decoder: fit growth over the whole movie even where a tube's reading collapses "
                          "for good (by default that is read as a burst: growth is fitted up to it)")
@@ -128,13 +137,19 @@ def main(argv=None):
         base = evaluate.run_baseline(field, work, grains_path=labels_path)
         learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
     # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
-    perbin = reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None,
-                           big=None if args.fixed_crop else 300, burst=not args.no_burst,
-                           vmax=float(learned.get("params", {}).get("vmax_px", 4.0)))  # SparseTrack's speed cap
+    kw = dict(big=None if args.fixed_crop else 300, burst=not args.no_burst,
+              vmax=float(learned.get("params", {}).get("vmax_px", 4.0)))  # SparseTrack's speed cap
+    perbin = reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, **kw)
     (work / "perbin").mkdir(exist_ok=True)
     (work / "perbin" / "predictions.json").write_text(json.dumps(perbin))
+    # what the lab reviews and reports: pictures on the movie itself, the population curve, growth curves
+    from sparsetrack.report import write_growth_curves, write_population
+    review.write_review(pcache, field, perbin, work / "perbin", grains_path=labels_path, **kw)
+    write_population(perbin, work / "perbin")
+    write_growth_curves(perbin, work / "perbin", [g["id"] for g in perbin["grains"] if g.get("status") == "emerged_within"])
     if labels_path is None:
-        write_per_grain(work, {"sparsetrack": base, "learned": learned, "perbin": perbin}, time.time() - started)
+        write_per_grain(work, {"sparsetrack": base, "learned": learned, "perbin": perbin}, time.time() - started,
+                        um_per_px=args.um_per_px, s_per_frame=args.s_per_frame)
         return
     labels = load(labels_path)
     rb, rl, rp = score(labels, base), score(labels, learned), score(labels, perbin)

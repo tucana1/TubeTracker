@@ -72,7 +72,7 @@ def burst_cut(raw: np.ndarray, min_px: float = 8.0, frac: float = 0.3, hold: flo
 def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: list[dict], thr: float = 0.5,
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
-                tip: str = "const", big: int | None = None, burst: bool = False) -> dict:
+                tip: str = "const", big: int | None = None, burst: bool = False, keep: tuple = ()) -> dict:
     """Length per bin, then a monotone fit. ``seed`` chooses how the bin's length is read:
     ``"skeleton"`` (the default, frozen on the development seed): geodesic length along the region's
     medial axis from its pixels nearest the grain centre, plus their distance from the rim, so a
@@ -85,6 +85,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     truth masks and hurt with learned evidence on fresh held-out movies, so it is off. With
     ``burst``, a reading that collapses for good (``burst_cut``) ends the growth fit there: a burst
     tube leaves nothing to trace (``pipeline.py`` sets it; its burst frame is not a measurement).
+    ``keep`` lists bins (counted from the first analysed bin) whose registered image, region and
+    medial axis are returned under ``_views`` for review pictures (``review.py``).
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
@@ -99,6 +101,12 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float64)
     rg = np.hypot(xx - centre, yy - centre)
     blocked = rg < gr - 1.0
+    # pixels whose source leaves the movie in any bin are not evidence (as in SparseTrack): near an
+    # edge, the padded border shows up as straight streaks that the network can take for tubes
+    shifts = R_img.shifts[rs:nb] + ls
+    ref_x, ref_y = gx - half + xx + 0.5, gy - half + yy + 0.5
+    blocked |= ~((ref_x + shifts[:, 0].min() >= 1) & (ref_x + shifts[:, 0].max() < R_img.width - 1) &
+                 (ref_y + shifts[:, 1].min() >= 1) & (ref_y + shifts[:, 1].max() < R_img.height - 1))
     rings = []
     for o in others:
         ox, oy = o["x"] - gx + centre, o["y"] - gy + centre
@@ -111,11 +119,16 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     raw = np.zeros(nb - rs)
     width = np.full(nb - rs, np.nan)  # region area per px of length: the tube's full width
     edge = False  # the tube reaches the crop's edge: read the grain again with a bigger crop
+    views = {}
     for i, b in enumerate(range(rs, nb)):
         p = RP.crop(b, gx, gy, half) / scale
         dx, dy = ls[i]
-        p = cv2.warpAffine(np.nan_to_num(p).astype(np.float32), np.float32([[1, 0, -dx], [0, 1, -dy]]),
+        shift = np.float32([[1, 0, -dx], [0, 1, -dy]])
+        p = cv2.warpAffine(np.nan_to_num(p).astype(np.float32), shift,
                            (2 * half, 2 * half), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+        if i in keep:
+            views[i] = [cv2.warpAffine(img[i].astype(np.float32), shift, (2 * half, 2 * half),
+                                       flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE), None, None]
         m = (p > thr) & ~blocked
         if not (m & own_ring).any():
             continue
@@ -131,6 +144,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if seed == "skeleton":  # along the medial axis: a wide tube's half-width does not count
             sk = skeletonize(comp)
             comp = sk if sk.sum() >= 2 else comp
+        if i in views:
+            views[i][1], views[i][2] = region, comp
         seeds = comp & rim if seed == "rim" else np.zeros_like(comp)
         offset = 0.0
         if not seeds.any():  # nearest pixels (or a faint base that starts beyond the rim)
@@ -153,7 +168,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     if edge and big and half < big:
         res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,
                           onset_px=onset_px, min_tube_px=min_tube_px, rim_band=rim_band, seed=seed, end_px=end_px,
-                          tip=tip, big=big, burst=burst)
+                          tip=tip, big=big, burst=burst, keep=keep)
         res["flags"].append(f"crop_grown:{big}")
         return res
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
@@ -180,7 +195,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
             "raw_reach_px": [round(float(v), 2) for v in raw], "flags": flags,
             "burst_frame": frames[cut] if cut is not None and status != "no_emergence_by_end" else None,
             "width_px": (round(float(np.nanmedian(width[raw >= min_tube_px])), 2)
-                         if np.any((raw >= min_tube_px) & np.isfinite(width)) else None)}
+                         if np.any((raw >= min_tube_px) & np.isfinite(width)) else None),
+            **({"_views": views, "_centre": centre} if keep else {})}
 
 
 def analyze(pcache: str | Path, image_cache: str | Path, grains_path: str | Path | None = None, log=print,
