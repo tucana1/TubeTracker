@@ -33,10 +33,9 @@ from ..render import Renderer, png
 
 SCHEMA = "sparsetrack.bench.v1"
 VERDICTS = ("emerged_at_start", "emerged_within", "no_emergence_by_end", "unobservable")
-TRACE_STATES = ("full", "partial", "no_tube", "unsure")
-# per-trace flags: touching another tube or grain; the tube has burst by this time (the old engine's
-# is_bursted/burst_frame, here bracketed by the trace times)
-TRACE_FLAGS = ("contact", "burst")
+# "burst": the tube has burst by this time and there is nothing left to trace (the old engine's
+# is_bursted/burst_frame, here bracketed by the trace times); the grain's later trace times drop out
+TRACE_STATES = ("full", "partial", "no_tube", "unsure", "burst")
 EXCLUDE_REASONS = ("not_a_grain", "clump", "edge", "out_of_focus", "other", "not_sampled")
 STATIC = Path(__file__).with_name("static")
 
@@ -70,6 +69,13 @@ def trace_bins(first_visible_bin: int, n_bins: int) -> list[int]:
         elif b == last:
             merged[-1] = b
     return merged
+
+
+def grain_trace_plan(first_visible_bin: int, n_bins: int, saved: dict) -> list[int]:
+    """``trace_bins``, ending at a burst: nothing is left to trace later (answers given stay listed)."""
+    bins = trace_bins(first_visible_bin, n_bins)
+    burst = [b for b in bins if (saved.get(str(b)) or {}).get("state") == "burst"]
+    return [b for b in bins if b <= burst[0] or str(b) in saved] if burst else bins
 
 
 class Bench:
@@ -166,7 +172,7 @@ class Bench:
             if onset.get("verdict") in ("emerged_within", "emerged_at_start"):
                 fv = onset.get("first_visible_bin")
                 fv = 0 if fv is None else fv
-                plan[gid] = trace_bins(fv, self.n_bins)
+                plan[gid] = grain_trace_plan(fv, self.n_bins, labels[gid].get("traces", {}))
                 traces_needed += len(plan[gid])
                 traces_done += sum(1 for b in plan[gid] if str(b) in labels[gid].get("traces", {}))
         return {
@@ -174,8 +180,7 @@ class Bench:
             "shifts": self.meta["shifts"], "order": self.order(), "grains": grains,
             "labels": labels, "retest": self.doc["retest"], "trace_plan": plan,
             "layout": {"coarse": COARSE, "fine": FINE, "trace": TRACE_VIEWS, "zoom": ZOOM},
-            "verdicts": VERDICTS, "trace_states": TRACE_STATES, "trace_flags": TRACE_FLAGS,
-            "exclude_reasons": EXCLUDE_REASONS,
+            "verdicts": VERDICTS, "trace_states": TRACE_STATES, "exclude_reasons": EXCLUDE_REASONS,
             "progress": {"grains": len(todo), "onset_done": onset_done,
                          "traces_needed": traces_needed, "traces_done": traces_done},
             "labels_path": str(self.labels_path),
@@ -229,7 +234,7 @@ class Bench:
         pts = [[round(float(x), 2), round(float(y), 2)] for x, y in body.get("points", [])]
         if state in ("full", "partial") and len(pts) < 2:
             raise ValueError("a traced tube needs at least an exit and an apex point")
-        if state in ("no_tube", "unsure"):
+        if state in ("no_tube", "unsure", "burst"):
             pts = pts if state == "unsure" else []
         dx, dy = self.meta["shifts"][b]
         fx, fy = (float(v) for v in self.follow(gid)[b])  # clicked in the grain-following view
@@ -242,10 +247,10 @@ class Bench:
             "path_xy_view": pts, "view_offset": [round(fx, 2), round(fy, 2)],
             "path_complete": state == "full",
             "direct_state": {"full": "direct_visible", "partial": "direct_visible",
-                             "no_tube": "no_tube_visible", "unsure": "not_directly_visible"}[state],
+                             "no_tube": "no_tube_visible", "unsure": "not_directly_visible",
+                             "burst": "not_directly_visible"}[state],
             "length_px": round(length, 2),
             "contact": bool(body.get("contact", False)),
-            "burst": bool(body.get("burst", False)),
             "view": body.get("view", "near"),
             "annotator": self.annotator, "review_origin": "human",
             "updated": time.strftime("%Y-%m-%dT%H:%M:%S"),

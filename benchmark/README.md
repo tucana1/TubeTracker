@@ -15,4 +15,5 @@ Scoring (see `sparsetrack/evaluate.py`): onset error is the signed distance of t
 predicted onset frame from the human bracket (tolerance ±600 frames); FULL traces are
 scored within max(2 px, 10%); "no tube" traces count as absences; isolated grains only
 unless `--subset all`. Traces flagged `contact` (touching another tube or grain) are counted
-apart; `burst` marks a tube that has burst by that trace time (recorded, not yet scored).
+apart. A `burst` trace means the tube had burst by then and nothing was left to trace; the
+grain's later trace times are skipped, and burst traces are recorded but not yet scored.

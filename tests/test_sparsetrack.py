@@ -11,7 +11,7 @@ import pytest
 from scipy.special import erfc
 
 from sparsetrack import stack
-from sparsetrack.bench.server import Bench, make_handler, trace_bins
+from sparsetrack.bench.server import Bench, grain_trace_plan, make_handler, trace_bins
 from sparsetrack.grains import annotate_layout
 from sparsetrack.render import Renderer
 from sparsetrack.video import iter_keyframes, keyframe_indices, probe
@@ -116,12 +116,20 @@ def test_bench_onset_trace_persistence_and_validation(tiny_cache):
     assert t["length_px"] == 5.0 and t["path_complete"] is False and t["direct_state"] == "direct_visible"
     with pytest.raises(ValueError):
         bench.set_trace("g001", {"bin": 9, "state": "full", "points": [[40, 30]]})
-    assert bench.set_trace("g001", {"bin": 11, "state": "full", "points": [[40, 30], [44, 22]], "burst": True})["burst"]
     reopened = Bench(tiny_cache, labels)  # persisted and reloadable
     assert reopened.doc["labels"]["g001"]["onset"]["verdict"] == "no_emergence_by_end"
-    traces = reopened.doc["labels"]["g001"]["traces"]
-    assert (traces["9"]["burst"], traces["11"]["burst"]) == (False, True)
-    assert labels.with_suffix(".journal.jsonl").read_text().count("\n") == 5  # create, 2 onsets, 2 traces
+    assert labels.with_suffix(".journal.jsonl").read_text().count("\n") == 4  # create, 2 onsets, 1 trace
+
+
+def test_burst_ends_the_trace_plan(tiny_cache):
+    assert grain_trace_plan(0, 40, {}) == [6, 15, 27, 38]
+    assert grain_trace_plan(0, 40, {"15": {"state": "burst"}}) == [6, 15]  # nothing left to trace later
+    assert grain_trace_plan(0, 40, {"15": {"state": "burst"}, "38": {"state": "full"}}) == [6, 15, 38]
+    bench = Bench(tiny_cache, tiny_cache / "t.json")
+    bench.set_onset("g001", {"verdict": "emerged_at_start"})
+    rec = bench.set_trace("g001", {"bin": 10, "state": "burst", "points": [[40, 30], [43, 26]]})
+    assert rec["path_xy_ref"] == [] and rec["direct_state"] == "not_directly_visible"
+    assert bench.state()["progress"]["traces_done"] == 1
 
 
 def test_bench_refuses_labels_from_another_movie(tiny_cache):
@@ -142,7 +150,7 @@ def test_bench_http_roundtrip(tiny_cache):
     try:
         state = json.load(urllib.request.urlopen(base + "/api/state"))
         assert state["order"] == ["g001"] and state["n_bins"] == 12
-        assert state["trace_flags"] == ["contact", "burst"]  # the page offers B only when this lists it
+        assert "burst" in state["trace_states"]  # the page offers B only when the server takes it
         for path in ("/", "/static/app.js", "/api/img/coarse/g001", "/api/img/fine/g001?start=2",
                      "/api/img/frame/g001?bin=5&view=near", "/api/img/field?which=late"):
             assert urllib.request.urlopen(base + path).status == 200
@@ -276,12 +284,14 @@ def test_score_counts_onset_and_length_hits():
               "labels": {"g1": {"onset": {"verdict": "emerged_within", "last_absent_frame": 1000,
                                           "first_visible_frame": 2000},
                                 "traces": {"20": {"state": "full", "length_px": 10.0, "source_frame": 6150},
-                                           "2": {"state": "no_tube", "length_px": 0.0, "source_frame": 750}}}}}
+                                           "2": {"state": "no_tube", "length_px": 0.0, "source_frame": 750},
+                                           "30": {"state": "burst", "length_px": 0.0, "source_frame": 9150}}}}}
     pred = {"method": "m", "grains": [{"id": "g1", "x": 10, "y": 10, "status": "emerged_within", "onset_frame": 2500,
                                         "length": {"frames": [750, 6150], "px": [0.0, 11.5]}}]}
     rep = score(labels, pred, onset_tol=600)
     assert rep["onset"]["hits"] == 1 and rep["onset"]["late"] == 0
     assert rep["length_full"]["within_tolerance"] == 1 and rep["absences"]["correct"] == 1
+    assert rep["traces_burst_skipped"] == 1 and rep["length_partial"]["n"] == 0  # burst: not a partial trace
 
 
 def test_settled_start_skips_initial_settling():
