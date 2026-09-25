@@ -828,9 +828,10 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
   CPU, faster on an Apple GPU, which is picked automatically) and a probability cache for the real movie.
 - **Or all of this appendix in one go:** double-click `Adapt_Learned_To_Dev_Movie.command` in the worktree (or run
   `python -m prototypes.learned_evidence.adapt --labels ../TubeTracker/benchmark/labels/ld_v1.json`). It runs this test, then the calibration and fine-tuning below, in
-  that order. It reads your current labels from the checkout that holds `runs/`, and skips steps already done. It
-  ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and the movie-2
-  command.
+  that order. It reads your current labels from the checkout that holds `runs/`, and skips steps already done. If
+  your labels have changed since a step ran, it offers to run every step again on them (`--redo`; the trained model
+  is kept). It ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and
+  the movie-2 command.
 - **Output:** three runs, each scored on `ld_v1`, with paired bootstraps of the differences:
   - SparseTrack 0.4.2 as it is;
   - learned evidence through SparseTrack's decoder;

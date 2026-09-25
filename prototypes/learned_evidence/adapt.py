@@ -6,10 +6,12 @@
 3. ``finetune.py``: tunes the network on the traces, judged with the decoder it will be used with; kept only
    if its check adopts it.
 
-Each step is skipped when its report is already there, so the command can be stopped and started again.
-``--redo`` runs calibration and fine-tuning again (their earlier outputs are moved aside); the dev test,
-whose trained model took the longest, is only run again once ``runs/learned_evidence/ld`` is removed. ``SUMMARY.md`` then says what each step found, which model and decoder the
-launcher (``Analyze_Movie_Learned.command``) now uses, and the one command that scores movie 2, once.
+Each step is skipped when its report is already there, so the command can be stopped and started again;
+a step that ran on labels since changed is said so. ``--redo`` runs every step again on the current labels
+(calibration's and fine-tuning's earlier outputs are moved aside to ``*_old``); the dev test keeps the model
+it trained, the longest part, and is only scored again. ``SUMMARY.md`` then says what each step found, which
+model and decoder the launcher (``Analyze_Movie_Learned.command``) now uses, and the one command that
+scores movie 2, once.
 
     python -m prototypes.learned_evidence.adapt --field runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json
 """
@@ -17,6 +19,8 @@ launcher (``Analyze_Movie_Learned.command``) now uses, and the one command that 
 from __future__ import annotations
 
 import argparse
+import hashlib
+import os
 import shutil
 import time
 from pathlib import Path
@@ -41,11 +45,18 @@ def in_use() -> tuple[Path, Path | None]:
     return _here(model), (decoder if decoder.exists() else None)
 
 
+def _stale_note(stale) -> str:
+    if not stale:
+        return ""
+    return (f"\n**The labels have changed since {' and '.join(stale)} ran: run this again with `--redo` for results "
+            "on the current labels.**\n")
+
+
 def _report(path: Path) -> str:
     return path.read_text().strip() if path.exists() else "(not run)"
 
 
-def summary(labels: Path, seconds: float) -> str:
+def summary(labels: Path, seconds: float, stale: tuple = ()) -> str:
     model, decoder = in_use()
     m2 = (f".venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \\\n"
           f"    --labels benchmark/labels/m2_v1.json --model {model} \\\n"
@@ -58,7 +69,7 @@ def summary(labels: Path, seconds: float) -> str:
     return f"""# Learned pipeline adapted to {labels.name}
 
 Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
-
+{_stale_note(stale)}
 ## 1. Dev test: three runs scored on your labels
 
 ```
@@ -102,8 +113,9 @@ def main(argv=None, steps=None):
     ap.add_argument("--quick", action="store_true",
                     help="use the shipped model instead of training on your field (minutes, not 1.5 hours)")
     ap.add_argument("--skip-finetune", action="store_true")
-    ap.add_argument("--redo", action="store_true", help="run calibration and fine-tuning again (earlier outputs are "
-                                                        "moved aside to *_old); the dev test is kept")
+    ap.add_argument("--redo", action="store_true", help="run every step again on the current labels (calibration's "
+                                                        "and fine-tuning's earlier outputs are moved aside to *_old); "
+                                                        "the dev test keeps its trained model and is scored again")
     args = ap.parse_args(argv)
     field, labels = Path(args.field), Path(args.labels)
     if "m2" in labels.name:
@@ -111,6 +123,8 @@ def main(argv=None, steps=None):
     if not (field / "meta.json").exists():
         raise SystemExit(f"no prepared cache at {field}: prepare the dev movie first (Label_Sparse_Benchmark.command "
                          "does, or `python -m sparsetrack prepare MOVIE --out runs/sparsetrack/ld`)")
+    if not labels.exists():
+        raise SystemExit(f"no labels at {labels}")
     if steps is None:
         from . import calibrate, finetune, pipeline
         steps = {"dev": pipeline.main, "calibrate": calibrate.main, "finetune": finetune.main}
@@ -122,6 +136,10 @@ def main(argv=None, steps=None):
                 old = d.with_name(d.name + "_old")
                 shutil.rmtree(old, ignore_errors=True)
                 d.rename(old)
+        if (DEV / "report.txt").exists():  # scored again; the model it trained stays and is not trained again
+            os.replace(DEV / "report.txt", DEV / "report_old.txt")
+    stamp = hashlib.sha1(labels.read_bytes()).hexdigest()
+    stale = []
     plan = [("dev", DEV, ["--field", str(field), "--labels", str(labels), "--work", str(DEV)]
              + (["--model", str(SHIPPED)] if args.quick else [])),
             ("calibrate", CAL, ["--field", str(field), "--labels", str(labels), "--work", str(CAL)])]
@@ -129,13 +147,21 @@ def main(argv=None, steps=None):
         plan.append(("finetune", FT, ["--field", str(field), "--labels", str(labels), "--work", str(FT)]))
     for name, work, cmd in plan:
         if (work / "report.txt").exists():
-            print(f"== {name}: done before ({work / 'report.txt'}), skipped", flush=True)
+            seen = work / "labels.sha1"
+            changed = seen.exists() and seen.read_text().strip() != stamp
+            stale += [name] if changed else []
+            print(f"== {name}: done before ({work / 'report.txt'}), skipped"
+                  + ("; the labels have changed since" if changed else ""), flush=True)
             continue
         print(f"== {name}: {' '.join(cmd)}", flush=True)
         steps[name](cmd)
+        work.mkdir(parents=True, exist_ok=True)
+        (work / "labels.sha1").write_text(stamp + "\n")  # the labels this step's results are on
     ROOT.mkdir(parents=True, exist_ok=True)
     out = ROOT / "SUMMARY.md"
-    out.write_text(summary(labels, time.time() - started))
+    out.write_text(summary(labels, time.time() - started, tuple(stale)))
+    if stale:
+        print(f"== the labels have changed since {' and '.join(stale)} ran: run again with --redo", flush=True)
     print(f"== summary: {out}")
     return out
 

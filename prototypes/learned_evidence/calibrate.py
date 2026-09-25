@@ -47,13 +47,27 @@ def model_default() -> Path:
     return next(p for p in (Path("runs/learned_evidence/ld/unet.pt"), SHIPPED) if p.exists())
 
 
+def _same(a, b) -> bool:
+    return bool(a) and bool(b) and Path(a).resolve() == Path(b).resolve()
+
+
+def judged_with(model: str | Path) -> str | None:
+    """The decoder settings file a fine-tuned model's check was read with (``finetune.py`` records it)."""
+    try:
+        import torch
+        return (torch.load(model, map_location="cpu", weights_only=False).get("args") or {}).get("decoder")
+    except Exception:
+        return None
+
+
 def decoder_settings(path: str | Path | None, model: str | Path | None = None, log=print) -> dict:
     """Per-bin decoder keywords from a ``decoder.json`` (none without one). Says so when the file was
-    fitted on another model: the offset belongs to the evidence it was fitted on."""
+    fitted on another model: the offset belongs to the evidence it was fitted on. Not for a model
+    fine-tuned after it: that model's check read its evidence with this file, so the pair was judged."""
     if not path:
         return {}
     doc = json.loads(Path(path).read_text())
-    if model is not None and Path(doc.get("model", "")).resolve() != Path(model).resolve():
+    if model is not None and not _same(doc.get("model"), model) and not _same(judged_with(model), path):
         log(f"note: {path} was fitted on {doc.get('model')}, not {model}")
     return {"end_px": float(doc["end_px"]), **({"onset_px": float(doc["onset_px"])} if "onset_px" in doc else {})}
 
@@ -206,7 +220,6 @@ def main(argv=None):
               ("adopted: the interval for onsets lies above zero" if ocheck["adopted"] else
                "not adopted: keep calling germination at 2 px")]
     print("\n".join(lines))
-    (work / "report.txt").write_text("\n".join(lines) + "\n")
     doc = {"end_px": end if check["adopted"] else DEFAULT_END, "model": str(model), "labels": str(labels_path),
            "check": check, "default_end_px": DEFAULT_END, "onset_check": ocheck, "default_onset_px": DEFAULT_ONSET}
     if ocheck["adopted"]:
@@ -215,6 +228,7 @@ def main(argv=None):
         doc["end_px"], doc["picked_end_px"], doc["picked_onset_px"] = end, end, onset
     out = work / ("decoder.json" if check["adopted"] or ocheck["adopted"] else "decoder_not_adopted.json")
     out.write_text(json.dumps(doc, indent=1))
+    (work / "report.txt").write_text("\n".join(lines) + "\n")  # last: adapt.py takes it to mean the step is done
     print(f"wrote {out}")
 
 

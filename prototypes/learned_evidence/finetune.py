@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -422,9 +423,16 @@ def tune(start: str | Path, real: dict, syn: dict | None = None, steps: int = 15
 
 def save(net: UNet, path: Path, **info) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
     torch.save({"state": {k: v.cpu() for k, v in net.state_dict().items()}, "widths": net.widths,
-                "args": info}, path)
+                "args": info}, tmp)
+    os.replace(tmp, path)
     return path
+
+
+def _sha1(path: Path) -> str:
+    import hashlib
+    return hashlib.sha1(Path(path).read_bytes()).hexdigest()
 
 
 def speed_cap(pcache: Path, field: Path, grains_path: Path) -> float:
@@ -494,6 +502,10 @@ def main(argv=None):
     labels = json.loads(labels_path.read_text())
     start = Path(args.model) if args.model else next(
         p for p in (Path("runs/learned_evidence/ld/unet.pt"), SHIPPED) if p.exists())
+    done = [p for p in (work / "unet_ft.pt", work / "unet_ft_not_adopted.pt") if p.exists()]
+    if done:  # its verdict and this run's could disagree, and the launcher takes unet_ft.pt wherever it is
+        raise SystemExit(f"{done[0]} is there from an earlier run: fine-tune into a new --work, or move that folder "
+                         "aside (adapt.py --redo does)")
     work.mkdir(parents=True, exist_ok=True)
     log_file = (work / "log.txt").open("a")
 
@@ -514,7 +526,16 @@ def main(argv=None):
               seed=args.seed, log=log)
     info = dict(labels=str(labels_path), field=str(field), started_from=str(start),
                 **{k: getattr(args, k) for k in ("steps", "batch", "lr", "distill", "seed", "synthetic", "decoder")})
-    if args.folds > 1:
+    # what the check depends on: stopped while the final model was tuning, a run with the same settings,
+    # traces and starting model takes the check's verdict from scores.json instead of redoing it
+    settings = {**info, "folds": args.folds, "decoder_settings": dec, "labels_sha1": _sha1(labels_path),
+                "start_sha1": _sha1(start)}
+    earlier = json.loads((work / "scores.json").read_text()) if (work / "scores.json").exists() else {}
+    if args.folds > 1 and earlier.get("settings") == settings and "report" in earlier:
+        adopt, lines = earlier["adopted"], earlier["report"]
+        log("the check was done before with these settings, traces and starting model (scores.json):\n"
+            + "\n".join(lines))
+    elif args.folds > 1:
         from sparsetrack.evaluate import score
 
         from . import evaluate
@@ -559,11 +580,11 @@ def main(argv=None):
                  if adopt else "not adopted: the tuned model does not read more lengths or onsets right than the start "
                  "without reading fewer of the other"]
         log("\n".join(lines))
-        (work / "report.txt").write_text("\n".join(lines) + "\n")
-        (work / "scores.json").write_text(json.dumps({"start": rs, "tuned_cv": rt, "paired": pb, "adopted": adopt},
-                                                     default=str, indent=1))
+        (work / "scores.json").write_text(json.dumps({"start": rs, "tuned_cv": rt, "paired": pb, "adopted": adopt,
+                                                      "report": lines, "settings": settings}, default=str, indent=1))
     else:
         adopt = True
+        lines = [f"{labels_path.name}: no cross-validated check (--folds {args.folds}); the tuned model is kept"]
     if not args.no_final:
         real = real_samples(field, labels, seed=args.seed)
         log(f"final model: tuning on {len(real['x'])} crops from every labelled grain")
@@ -571,6 +592,7 @@ def main(argv=None):
         out = save(tune(start, real, **kw), work / ("unet_ft.pt" if adopt else "unet_ft_not_adopted.pt"), **info)
         log(f"saved {out}" + (f": freeze it, then score it once on movie 2 (pipeline --model {out} --heldout-once)"
                               if adopt else ": the cross-validated score says keep the start model"))
+    (work / "report.txt").write_text("\n".join(lines) + "\n")  # last: adapt.py takes it to mean the step is done
     log_file.close()
 
 

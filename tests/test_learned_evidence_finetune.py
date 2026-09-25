@@ -199,3 +199,60 @@ def test_real_loss_holds_unsupervised_pixels_to_the_teacher():
     agree = real_loss(logits, body, tip, none, none, teacher=logits.clone())
     differ = real_loss(logits, body, tip, none, none, teacher=torch.full((2, 2, 8, 8), 6.0))
     assert float(differ) > float(agree)
+
+
+def test_a_stopped_final_tuning_resumes_without_redoing_the_check(movie, tmp_path, monkeypatch):
+    """report.txt is what adapt.py takes as "done", so it comes last; the check's verdict is kept in
+    scores.json with what it depends on, and a run with the same settings takes it from there."""
+    import sparsetrack.evaluate as SE
+
+    from prototypes.learned_evidence import evaluate as EV
+    from prototypes.learned_evidence import finetune as FT
+    from prototypes.learned_evidence import model as M
+
+    cache, labels = movie
+    lab = tmp_path / "ld_v1.json"
+    lab.write_text(json.dumps(labels))
+    start = tmp_path / "start.pt"
+    start.write_bytes(b"weights")
+    tuned, stop_at = [], [4]  # three folds, then the final model
+
+    def tune(start, real, **kw):
+        tuned.append(len(real["x"]))
+        if len(tuned) == stop_at[0]:
+            raise KeyboardInterrupt
+        return "net"
+
+    def save(net, path, **info):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("model")
+        return path
+
+    monkeypatch.setattr(FT, "tune", tune)
+    monkeypatch.setattr(FT, "save", save)
+    monkeypatch.setattr(FT, "real_samples", lambda *a, **k: {"x": [0, 0]})
+    monkeypatch.setattr(FT, "read_perbin", lambda *a, **k: {"grains": []})
+    monkeypatch.setattr(M, "load", lambda path: "start net")
+    monkeypatch.setattr(SE, "score", lambda labels, pred: {"grains_scored": 4, "onset": {"tolerance_frames": 600}})
+    monkeypatch.setattr(EV, "e2e_summary", lambda name, rep: name)
+    monkeypatch.setattr(EV, "paired_bootstrap", lambda a, b, tol: {
+        "grains": 4, "onset_diff": 0, "onset_ci": [0, 0], "length_diff": 2, "length_ci": [1, 3]})
+    work = tmp_path / "ft"
+    argv = ["--field", str(cache), "--labels", str(lab), "--work", str(work), "--model", str(start),
+            "--decoder", "none"]
+    with pytest.raises(KeyboardInterrupt):
+        FT.main(argv)
+    assert (work / "scores.json").exists() and not (work / "report.txt").exists() and len(tuned) == 4
+    tuned.clear()
+    stop_at[0] = 0
+    FT.main(argv)
+    assert len(tuned) == 1 and (work / "unet_ft.pt").exists()  # only the final model was tuned
+    assert "adopted" in (work / "report.txt").read_text()
+    with pytest.raises(SystemExit, match="earlier run"):  # never next to a model from before
+        FT.main(argv)
+    work2 = tmp_path / "ft2"
+    (work2).mkdir()
+    (work2 / "scores.json").write_text((work / "scores.json").read_text())
+    lab.write_text(json.dumps({**labels, "note": "more traces"}))  # other traces: the check is done again
+    FT.main(argv[:5] + [str(work2)] + argv[6:])
+    assert len(tuned) == 1 + 3 + 1

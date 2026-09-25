@@ -97,3 +97,16 @@ def test_decoder_settings_carry_an_adopted_onset(tmp_path):
     f = tmp_path / "decoder.json"
     f.write_text(json.dumps({"end_px": 1.0, "onset_px": 4.0, "model": "m.pt"}))
     assert C.decoder_settings(f) == {"end_px": 1.0, "onset_px": 4.0}
+
+
+def test_no_note_for_a_model_fine_tuned_with_the_decoder(tmp_path):
+    import torch
+
+    f = tmp_path / "decoder.json"
+    f.write_text(json.dumps({"end_px": -2.0, "model": str(tmp_path / "start.pt")}))
+    tuned = tmp_path / "unet_ft.pt"
+    torch.save({"state": {}, "args": {"decoder": str(f)}}, tuned)  # as finetune.py records the check's decoder
+    notes = []
+    assert C.decoder_settings(f, tuned, log=notes.append) == {"end_px": -2.0} and not notes
+    torch.save({"state": {}, "args": {"decoder": None}}, tuned)  # tuned and checked without it
+    assert C.decoder_settings(f, tuned, log=notes.append) == {"end_px": -2.0} and notes

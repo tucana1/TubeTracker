@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import glob
+import os
 import time
 
 import numpy as np
@@ -109,8 +110,10 @@ def main(argv=None):
                     VL = losses(net(vx.to(device)), vb.to(device), vt.to(device))
                 msg += " | val " + " ".join(f"{k} {float(v):.4f}" for k, v in VL.items())
             print(f"step {step:5d} {time.time() - started:6.0f}s  {msg}", flush=True)
+    tmp = f"{args.out}.tmp"  # written whole, then renamed: a stopped run leaves no half-written model to reuse
     torch.save({"state": {k: v.cpu() for k, v in net.state_dict().items()}, "widths": tuple(args.widths),
-                "args": vars(args)}, args.out)
+                "args": vars(args)}, tmp)
+    os.replace(tmp, args.out)
     print(f"saved {args.out}")
 
 
