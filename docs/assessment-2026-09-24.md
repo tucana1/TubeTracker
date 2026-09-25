@@ -34,7 +34,9 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
      decoder, and far better when tubes burst (section 5). `ld_v1` decides between the two.
    - Replace its hand-built change evidence with a small network trained on SparseTrack's own codec-exact synthetic
      movies. They give unlimited, exact labels.
-   - Put a model-prefilled review-and-correct step, built into the labelling tool, in front of the final numbers.
+   - Put a model-prefilled review-and-correct step, built into the labelling tool, in front of the final numbers. It
+     works now without changing the tool: `Review_Movie_Learned.command` opens the tool pre-filled with the model's
+     answers.
    - This fixes what killed every earlier learned model: 5–135 human labels and a network asked to make global
      decisions. It keeps what works, and each piece can be measured on the benchmark you already have.
 5. **The experiment behind this recommendation (section 5).** A 0.49 M-parameter network was trained only on synthetic
@@ -86,6 +88,7 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
 | **SparseTrack 0.4.2** | `sparsetrack/` | 23 Sep | Keyframe-bin cache, per-grain registration, end-state path candidates, monotone DP growth front, matched-stub onset, Turnbull population curve, review gallery, codec-exact synthetic benchmark | **Active** |
 | **Benchmark labelling tool** | `sparsetrack/bench/` | 23–24 Sep | Local web app for census, onset brackets, exit-to-apex traces (near, wide and extra-wide views), contact and burst answers, and blind retest; autosave plus journal | **Active; movie-2 labelling in progress** |
 | Human benchmark | `benchmark/labels/ld_v1.json` | 23 Sep | Session A: 39-grain census, 32 onsets, 127 traces, 7 retests | Dev set (tuned on) |
+| **Learned-evidence prototype** | `prototypes/learned_evidence/` (branch `claude/magical-maxwell-i5tpeh`) | 24–25 Sep | Synthetic-trained evidence network and per-bin decoder. Double-click launchers: analyse any movie; adapt to the dev movie (decoder calibration and fine-tuning, each behind a check); review and correct through the labelling tool, pre-filled | **Prototype; the `ld` test decides** |
 
 ---
 
@@ -800,13 +803,15 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
 ln -s ../TubeTracker/.venv .venv               # and your environment, for the double-click launchers
 ../TubeTracker/.venv/bin/pip install torch==2.13.0   # the project's `cnn` extra, if not installed
 ../TubeTracker/.venv/bin/python -m prototypes.learned_evidence.pipeline \
-    --field runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld
+    --field runs/sparsetrack/ld --labels ../TubeTracker/benchmark/labels/ld_v1.json --work runs/learned_evidence/ld
 ```
 
+- **Your labels:** every command here reads them from your main checkout (`../TubeTracker/benchmark/labels/`),
+  where the labelling tool saves them. The worktree's own copy is the branch's and may be older.
 - **Time:** about 1.5 hours. That is ten synthetic movies on the `ld` field (~5 min each), training (~30 min on
   CPU, faster on an Apple GPU, which is picked automatically) and a probability cache for the real movie.
 - **Or all of this appendix in one go:** double-click `Adapt_Learned_To_Dev_Movie.command` in the worktree (or run
-  `python -m prototypes.learned_evidence.adapt`). It runs this test, then the calibration and fine-tuning below, in
+  `python -m prototypes.learned_evidence.adapt --labels ../TubeTracker/benchmark/labels/ld_v1.json`). It runs this test, then the calibration and fine-tuning below, in
   that order. It reads your current labels from the checkout that holds `runs/`, and skips steps already done. It
   ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and the movie-2
   command.
@@ -824,7 +829,8 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
   - the population germination curve (Turnbull, T50);
   - growth curves.
 
-  That is most of prototype v1's output, less the review-and-correct loop, which belongs in the labelling tool.
+  With `Review_Movie_Learned.command` (the labelling tool, pre-filled with the model's answers, then the reviewed
+  results exported), that is prototype v1's loop.
 - **Quick first look (about 10 minutes):** add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
   to skip the synthetic movies and training. That model is v2 from section 5, trained on synthetic movies built on
   `sample_movie.avi`'s field. The full run above, on your own field, is still the proper test.
