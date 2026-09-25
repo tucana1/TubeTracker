@@ -10,6 +10,7 @@ heatmap, rasterised from the synthetic scene's own geometry (``truth.frame_truth
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import cv2
@@ -112,8 +113,10 @@ def build(field_cache: str | Path, movie_cache: str | Path, preset_name: str, se
             info.append((int(b), cx, cy))
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(out, x=np.stack(xs), body=np.stack(bodies), tip=np.stack(tipmaps),
+    tmp = out.with_name(out.stem + ".tmp.npz")  # written whole, then renamed: a stopped run leaves no half shard
+    np.savez_compressed(tmp, x=np.stack(xs), body=np.stack(bodies), tip=np.stack(tipmaps),
                         info=np.array(info, np.float32), preset=preset_name, seed=seed)
+    os.replace(tmp, out)
     log(f"{out.name}: {len(xs)} samples from {len(chosen)} bins "
         f"(tube pixels {100 * np.mean(np.stack(bodies)):.1f}%)")
     return out

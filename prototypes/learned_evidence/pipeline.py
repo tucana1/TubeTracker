@@ -19,6 +19,7 @@ import argparse
 import contextlib
 import io
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -57,6 +58,22 @@ def ensure_synthetic(field: Path, work: Path, spec: str, keep_caches: bool, log=
     if not keep_caches:
         shutil.rmtree(cache)
     return shard
+
+
+def _shard(job) -> str:
+    field, work, spec, keep_caches = job
+    return str(ensure_synthetic(Path(field), Path(work), spec, keep_caches))
+
+
+def build_shards(field: Path, work: Path, specs, keep_caches: bool = False, workers: int = 1) -> list[str]:
+    """``ensure_synthetic`` for every movie, several at a time: the movies are independent, and building
+    them one after another took most of an hour."""
+    jobs = [(str(field), str(work), spec, keep_caches) for spec in specs]
+    if workers <= 1 or len(jobs) <= 1:
+        return [_shard(j) for j in jobs]
+    import multiprocessing as mp
+    with mp.get_context("spawn").Pool(min(workers, len(jobs))) as pool:  # forked workers hang once torch has threads
+        return pool.map(_shard, jobs)
 
 
 def write_per_grain(work: Path, runs: dict, seconds: float, um_per_px: float | None = None,
@@ -111,6 +128,8 @@ def main(argv=None):
                          "movie's cache when scoring a held-out movie)")
     ap.add_argument("--model", default=None, help="use this trained model instead of training one")
     ap.add_argument("--steps", type=int, default=6000)
+    ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 2)),
+                    help="synthetic movies built at a time (default: half the processor cores, at most 4)")
     ap.add_argument("--keep-caches", action="store_true")
     ap.add_argument("--heldout-once", action="store_true", help="required to score labels whose name contains m2")
     ap.add_argument("--um-per-px", type=float, default=None, help="pixel size, for lengths in um in per_grain.csv")
@@ -137,7 +156,7 @@ def main(argv=None):
     model_path = Path(args.model) if args.model else work / "unet.pt"
     if not model_path.exists():
         train_field = Path(args.train_field) if args.train_field else field
-        shards = [str(ensure_synthetic(train_field, work, spec, args.keep_caches)) for spec in args.synthetic]
+        shards = build_shards(train_field, work, args.synthetic, args.keep_caches, args.workers)
         train.main(["--shards", *shards, "--out", str(model_path), "--steps", str(args.steps)])
     net = load_model(str(model_path))
     pcache = evaluate.prob_cache(field, net, work / f"prob_{field.name}")
