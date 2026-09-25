@@ -69,6 +69,27 @@ def burst_cut(raw: np.ndarray, min_px: float = 8.0, frac: float = 0.3, hold: flo
     return None
 
 
+def grain_gone(img: np.ndarray, ls: np.ndarray, centre: float, gr: float, rg: np.ndarray, run: int = 5) -> int | None:
+    """First bin from which the grain is no longer where it was, for ``run`` bins or more: its inner disc
+    (registered on the grain) has lost more than half its early contrast against the ground round it (the
+    contrast, so that the whole movie brightening or dimming does not count)."""
+    inner, back = rg < 0.7 * gr, (rg >= gr + 6.0) & (rg <= gr + 14.0)
+    disc = np.empty(len(img))
+    ground = np.empty(len(img))
+    for i, (im, (dx, dy)) in enumerate(zip(img, ls)):
+        w = cv2.warpAffine(im.astype(np.float32), np.float32([[1, 0, -dx], [0, 1, -dy]]), im.shape[::-1],
+                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+        disc[i], ground[i] = float(w[inner].mean()), float(np.median(w[back]))
+    c0 = float((ground[:3] - disc[:3]).mean())
+    if abs(c0) < 1e-6:
+        return None
+    away = (ground - disc) / c0 < 0.5
+    for i in range(len(away) - run + 1):
+        if away[i:i + run].all():
+            return i
+    return None
+
+
 def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: list[dict], thr: float = 0.5,
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
@@ -202,6 +223,16 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     interval = None if onset is None or on[0] == 0 else [frames[int(on[0]) - 1], onset]
     if cut is not None and status != "no_emergence_by_end":
         flags.append(f"burst_after:{frames[cut - 1]}")
+    # review hints (the readings are unchanged): the grain has left its place, so what is read there is
+    # not its tube; or the reading keeps jumping off the fit, as when a crossing tube takes over the region
+    gone = grain_gone(img, ls, centre, gr, rg)
+    if gone is not None:
+        flags.append(f"no_grain_after:{frames[gone]}")
+    if status != "no_emergence_by_end":
+        live = (fit >= min_tube_px / 2) & (np.arange(raw.size) < (cut if cut is not None else raw.size))
+        off = live & (np.abs(raw - fit) > np.maximum(10.0, 0.3 * fit))
+        if live.sum() >= 5 and off.sum() >= 0.3 * live.sum():
+            flags.append(f"unsteady:{int(off.sum())}/{int(live.sum())}")
     return {"id": grain["id"], "x": gx, "y": gy, "r": gr, "status": status, "onset_frame": onset,
             "onset_interval": interval, "final_length_px": round(float(fit[-1]), 2),
             "length": {"frames": frames, "px": [round(float(v), 2) for v in fit]},

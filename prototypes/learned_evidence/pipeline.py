@@ -72,7 +72,8 @@ def write_per_grain(work: Path, runs: dict, seconds: float, um_per_px: float | N
         cols = ["status", "onset_after", "onset_by", "final_length_px"]
         cols += ["onset_by_min"] if s_per_frame else []
         cols += ["final_length_um"] if um_per_px else []
-        w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs for col in cols] + ["perbin_burst_frame"])
+        w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs for col in cols]
+                   + ["perbin_burst_frame", "perbin_flags"])
         for gid in ids:
             g0 = by_run[first][gid]
             row = [gid, g0.get("x"), g0.get("y")]
@@ -84,7 +85,8 @@ def write_per_grain(work: Path, runs: dict, seconds: float, um_per_px: float | N
                     row.append(round(iv[1] * s_per_frame / 60.0, 2) if iv[1] is not None else None)
                 if um_per_px:
                     row.append(round(float(g.get("final_length_px") or 0.0) * um_per_px, 2))
-            w.writerow(row + [by_run["perbin"].get(gid, {}).get("burst_frame")])
+            pb = by_run["perbin"].get(gid, {})
+            w.writerow(row + [pb.get("burst_frame"), " ".join(pb.get("flags", []))])
     lines = [f"{len(ids)} grains ({seconds:.0f} s); per-grain results in {work / 'per_grain.csv'}"]
     for name, pred in runs.items():
         st = [g.get("status") for g in pred["grains"]]

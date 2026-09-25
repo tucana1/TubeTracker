@@ -276,4 +276,16 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
   - On `sample_movie.avi` (real footage, no labels) the traces lie on the visible tubes. Where the decoder's
     reading of a bin fades, the trace is taken from the last bin it saw the tube that long, never stretched. Where
     two grains touch, a trace can follow a tube between them, and the reviewer decides whose it is.
+- **Review hints from real footage** (`sample_movie.avi`, no labels, 37 grains). The per-bin decoder calls 36
+  grains germinated and SparseTrack 30. Its review pictures show two ways it goes wrong in a crowded real field:
+  - a grain that drifts away leaves its place to whatever passes, read as its tube (g017);
+  - in a web of crossing tubes, the region touching the rim switches to another tube (g021: 100 px, nothing for 16
+    frames, then 350 px).
+  - Two flags now mark these, and the readings are unchanged. `no_grain_after:<frame>` means the grain's disc has
+    lost half its contrast against its surroundings for 5 bins or more. `unsteady:<k>/<n>` means at least 30% of
+    bins read far from the fitted curve.
+  - Together they mark 6 of the 7 grains where the two decoders disagree on germination. On two synthetic movies
+    (60 grains, drifting ones included) neither fired.
+  - The review gallery shows `no_grain` grains first. Pre-fill lists flagged grains to check first, and the CSVs
+    carry the flags.
 

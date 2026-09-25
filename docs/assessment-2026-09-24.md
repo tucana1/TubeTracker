@@ -674,6 +674,14 @@ bright-cored tubes; the network has never seen its tubes.
     Scored benchmarks exclude such grains, but per-grain outputs include them.
   - Where a real tube's contrast changes, the learned probability can fade. The burst safeguard then keeps the
     length reached, which was the right call here.
+  - With that fixed, the per-bin decoder calls 36 of the 37 grains germinated, against 30 for SparseTrack. Two
+    crowded-field failures account for the gap:
+    - a grain that drifts away leaves its place to whatever passes;
+    - where tubes cross, the region touching the rim switches to another tube.
+  - Two review flags now mark these: `no_grain_after:<frame>` for a grain whose disc has lost its contrast, and
+    `unsteady:<k>/<n>` for a reading that keeps jumping off its fit.
+  - They mark 6 of the 7 grains where the two decoders disagree, and none of 60 grains on two synthetic movies. The
+    gallery and the pre-filled review show them first. `ld` is a low-density movie, so these should be rarer there.
 - **A growth-arrest frame cannot be read reliably off the length curves.** Tried on the seven development movies (49
   truth arrests, 106 tubes still growing at the end):
   - The rule "first bin within δ of the final length, flat for at least n bins" finds at most 22 of 49 arrests

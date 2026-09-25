@@ -62,6 +62,7 @@ def main(argv=None):
     model_path = path.with_suffix(".model.json")
     model = json.loads(model_path.read_text()) if model_path.exists() else {"labels": {}}
     um, spf = args.um_per_px, args.s_per_frame
+    hints = (doc.get("prefill") or {}).get("check_first") or {}
     out = path.parent
     grains_rows, trace_rows = [], []
     n_on = n_on_checked = n_on_changed = n_tr = n_tr_checked = n_tr_changed = 0
@@ -100,12 +101,12 @@ def main(argv=None):
             round(fv * spf / 60.0, 2) if spf and fv is not None else "",
             "yes" if on_checked else "no", "yes" if on_changed else ("no" if on_checked else ""),
             last["bin"] if last else "", round(last_len, 2) if last else "",
-            round(last_len * um, 2) if (um and last) else "", f"{checked}/{len(traces)}"])
+            round(last_len * um, 2) if (um and last) else "", f"{checked}/{len(traces)}", " ".join(hints.get(gid, []))])
     with open(out / "reviewed_grains.csv", "w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["grain", "x", "y", "onset_verdict", "onset_after_frame", "onset_by_frame", "onset_after_min",
                     "onset_by_min", "onset_checked", "onset_changed", "last_traced_bin", "last_length_px",
-                    "last_length_um", "traces_checked"])
+                    "last_length_um", "traces_checked", "model_flags"])
         w.writerows(grains_rows)
     with open(out / "reviewed_traces.csv", "w", newline="") as fh:
         w = csv.writer(fh)

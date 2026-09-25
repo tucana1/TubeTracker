@@ -26,6 +26,7 @@ from pathlib import Path
 import numpy as np
 
 MODEL_NAME = "per-bin decoder (learned evidence)"
+REVIEW_HINTS = ("no_grain_after", "unsteady", "burst_after", "crop_grown")  # reach_grain's flags worth a look
 
 
 def simplify(pts: np.ndarray, eps: float = 1.0, max_gap: float = 25.0) -> np.ndarray:
@@ -129,7 +130,7 @@ def main(argv=None):
     bench = Bench(field, building, annotator=MODEL_NAME)  # the tool's own records, built in a scratch file
     census = bench.doc["grains"]
     physical = [g for g in census.values() if g.get("exclude_reason") != "not_a_grain"]
-    n_traces, differ = 0, []
+    n_traces, differ, check_first = 0, [], {}
     for res in pred["grains"]:
         g = census.get(res["id"])
         if g is None or g.get("excluded"):
@@ -139,6 +140,9 @@ def main(argv=None):
         read = reach_grain(RP, R_img, meta, g, others, paths=tuple(range(nb - rs)), **dec)
         if (read["status"], read["final_length_px"]) != (res.get("status"), res.get("final_length_px")):
             differ.append(g["id"])
+        hints = [f for f in read["flags"] if f.startswith(REVIEW_HINTS)]
+        if hints:
+            check_first[g["id"]] = hints
         body = onset_body(read, fpb)
         bench.set_onset(g["id"], body)
         if body["verdict"] not in ("emerged_within", "emerged_at_start"):
@@ -154,7 +158,8 @@ def main(argv=None):
             if rec:
                 rec["review_origin"] = "model"
     info = {"source": str(pred_path), "decoder": pred.get("decoder"), "method": pred.get("method"),
-            "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "grains": len(doc["labels"]), "traces": n_traces}
+            "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "grains": len(doc["labels"]), "traces": n_traces,
+            "check_first": check_first}
     doc["prefill"] = info
     doc["updated"] = info["created"]
     out.write_text(json.dumps(doc, indent=1))
@@ -163,6 +168,9 @@ def main(argv=None):
                                                              "payload": info}) + "\n")
     for f in (building, building.with_suffix(".journal.jsonl")):
         f.unlink(missing_ok=True)
+    if check_first:
+        print("check these first (the grain left its place, or the reading keeps jumping):\n  "
+              + "\n  ".join(f"{gid}: {', '.join(v)}" for gid, v in sorted(check_first.items())))
     if differ:
         print(f"note: {len(differ)} grains read differently from {pred_path} (settings changed since?): "
               f"{', '.join(differ[:8])}{' ...' if len(differ) > 8 else ''}; the review holds this reading")

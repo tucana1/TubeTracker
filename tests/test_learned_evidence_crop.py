@@ -83,3 +83,22 @@ def test_per_grain_csv_with_the_per_bin_run_alone(tmp_path):
     write_per_grain(tmp_path, {"perbin": perbin}, 1.0, um_per_px=0.5, s_per_frame=6.0)
     (row,) = list(csv.DictReader(open(tmp_path / "per_grain.csv")))
     assert row["grain"] == "g1" and row["perbin_final_length_um"] == "21.0" and row["perbin_onset_by_min"] == "45.0"
+
+
+def test_grain_gone_sees_a_grain_leave_but_not_the_light_change():
+    from prototypes.learned_evidence.reach import grain_gone
+
+    half, gr, n = 40, 9.0, 30
+    yy, xx = np.mgrid[0:2 * half, 0:2 * half]
+    centre = half - 0.5
+    rg = np.hypot(xx - centre, yy - centre)
+    grain = np.where(rg < gr, 100.0, 180.0)
+    stack_ = np.stack([grain.copy() for _ in range(n)])
+    ls = np.zeros((n, 2))
+    brighter = stack_ * np.linspace(1.0, 1.3, n)[:, None, None]  # the whole movie brightens: not a departure
+    assert grain_gone(brighter, ls, centre, gr, rg) is None
+    stack_[12:] = 180.0  # from bin 12 the grain has gone
+    assert grain_gone(stack_, ls, centre, gr, rg) == 12
+    blink = np.stack([grain.copy() for _ in range(n)])
+    blink[5:8] = 180.0  # three bins covered, then back: shorter than a run
+    assert grain_gone(blink, ls, centre, gr, rg) is None
