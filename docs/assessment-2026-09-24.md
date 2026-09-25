@@ -309,6 +309,15 @@ Looser tolerances for 0.4.0:
 - **Later (after prototype v1):** review-mode corrections. Every accept or fix in the review loop is a new label.
   Label a third held-out movie once movie 2 has scored two or three frozen versions. Label dense-field grains (clumps
   and crossings) only when the prototype expands past sparse fields.
+- **What the next annotations buy (25 Sep).**
+  - Movie 2 scores the versions frozen when its labels arrive, once. Anything built after that (section 7 and the
+    work in progress on the gap between synthetic and real footage) needs a third labelled movie for an honest
+    number. So label a third movie with the same tool and sampling, and keep it unopened until a version is frozen
+    for it.
+  - The traced polylines, not only the lengths, are what the anchored decoder needs. Keep clicking the exit first
+    and the centreline to the apex.
+  - A retest of 15 traces gives the length ceiling, the counterpart of the onset retest. Without it nobody can tell
+    whether 85–90% within tolerance is near what a second pass by the same person would reach.
 
 ---
 
