@@ -69,6 +69,28 @@ def burst_cut(raw: np.ndarray, min_px: float = 8.0, frac: float = 0.3, hold: flo
     return None
 
 
+def smooth_length(pts: np.ndarray, eps: float = 1.0) -> float:
+    """A pixel path's length as a smooth curve: Douglas-Peucker to ``eps`` px, then the polyline's length.
+    Through pixel centres (diagonal steps sqrt 2) a straight tube reads up to 8% long, 5% on average,
+    where it runs between the axes and the diagonals; a traced polyline does not."""
+    pts = np.asarray(pts, float)
+    if len(pts) < 3:
+        return float(np.sum(np.hypot(*np.diff(pts, axis=0).T))) if len(pts) == 2 else 0.0
+    keep, stack = {0, len(pts) - 1}, [(0, len(pts) - 1)]
+    while stack:
+        a, b = stack.pop()
+        if b <= a + 1:
+            continue
+        t = pts[b] - pts[a]
+        dev = np.abs((pts[a + 1:b, 0] - pts[a, 0]) * t[1] - (pts[a + 1:b, 1] - pts[a, 1]) * t[0]) / (np.hypot(*t) + 1e-9)
+        k = a + 1 + int(np.argmax(dev))
+        if dev[k - a - 1] > eps:
+            keep.add(k)
+            stack += [(a, k), (k, b)]
+    q = pts[sorted(keep)]
+    return float(np.sum(np.hypot(*np.diff(q, axis=0).T)))
+
+
 def grain_gone(img: np.ndarray, ls: np.ndarray, centre: float, gr: float, rg: np.ndarray, run: int = 5) -> int | None:
     """First bin from which the grain is no longer where it was, for ``run`` bins or more: its inner disc
     (registered on the grain) has lost more than half its early contrast against the ground round it (the
@@ -94,7 +116,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
                 tip: str = "const", big: int | None = None, burst: bool = False, keep: tuple = (),
-                paths: tuple = ()) -> dict:
+                paths: tuple = (), length: str = "path") -> dict:
     """Length per bin, then a monotone fit. ``seed`` chooses how the bin's length is read:
     ``"skeleton"`` (the default, frozen on the development seed): geodesic length along the region's
     medial axis from its pixels nearest the grain centre, plus their distance from the rim, so a
@@ -112,6 +134,9 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     bins whose reading is returned as a path under ``_paths``: from the grain's rim along the medial
     axis to its far end, in reference coordinates at that bin (the grain's own drift included, as
     the labelling tool's ``path_xy_ref``), for pre-filling review labels (``prefill.py``).
+    ``length="smooth"`` measures the medial axis as a smooth curve (``smooth_length``) instead of a path
+    through pixel centres, which reads up to 8% long where a tube runs between the axes and the
+    diagonals; the default stays "path" (frozen) unless development and a fresh test say otherwise.
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
@@ -186,8 +211,9 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if not ok.any():
             continue
         far = np.unravel_index(int(np.argmax(np.where(ok, cum, -1.0))), cum.shape)
-        if i in paths:  # the exit on the rim, then the medial axis to the far end (crop cols, rows -> reference x, y)
-            route = np.asarray(mcp.traceback(far), float)[:, ::-1]
+        if i in paths or length == "smooth":
+            route = np.asarray(mcp.traceback(far), float)[:, ::-1]  # crop cols, rows
+        if i in paths:  # the exit on the rim, then the medial axis to the far end (-> reference x, y)
             # where the region crosses the grain's ring (a wide tube's medial axis wanders along the rim there)
             ey, ex = np.nonzero(region & own_ring)
             v = (np.array([ex.mean(), ey.mean()]) if len(ex) else route[0]) - centre
@@ -197,12 +223,13 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         end = end_px
         if tip == "dt":  # the medial axis stops about a half-width short of the tube's end
             end += float(cv2.distanceTransform(region.astype(np.uint8), cv2.DIST_L2, 3)[far])
-        raw[i] = max(0.0, float(cum[far]) + offset + end)  # a negative end_px must not make lengths negative
+        along = smooth_length(route) if length == "smooth" else float(cum[far])
+        raw[i] = max(0.0, along + offset + end)  # a negative end_px must not make lengths negative
         width[i] = float(region.sum()) / max(float(cum[far]) + 1.0, 1.0)
     if edge and big and half < big:
         res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,
                           onset_px=onset_px, min_tube_px=min_tube_px, rim_band=rim_band, seed=seed, end_px=end_px,
-                          tip=tip, big=big, burst=burst, keep=keep, paths=paths)
+                          tip=tip, big=big, burst=burst, keep=keep, paths=paths, length=length)
         res["flags"].append(f"crop_grown:{big}")
         return res
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]

@@ -102,3 +102,19 @@ def test_grain_gone_sees_a_grain_leave_but_not_the_light_change():
     blink = np.stack([grain.copy() for _ in range(n)])
     blink[5:8] = 180.0  # three bins covered, then back: shorter than a run
     assert grain_gone(blink, ls, centre, gr, rg) is None
+
+
+def test_smooth_length_reads_a_pixel_staircase_as_the_line_it_steps_along():
+    from skimage.draw import line
+
+    from prototypes.learned_evidence.reach import smooth_length
+
+    for x1, y1 in ((100, 0), (92, 38), (87, 50), (71, 71)):  # 0, 22.5, 30 and 45 degrees
+        rr, cc = line(0, 0, y1, x1)
+        pts = np.c_[cc, rr].astype(float)
+        stair = np.hypot(*np.diff(pts, axis=0).T).sum()
+        assert smooth_length(pts) == pytest.approx(np.hypot(x1, y1), abs=0.01)
+        assert stair >= np.hypot(x1, y1) - 1e-9  # through pixel centres: never shorter, up to 8% longer
+    bend = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]])
+    assert smooth_length(bend) == pytest.approx(20.0)  # a real bend is kept
+    assert smooth_length(bend[:1]) == 0.0
