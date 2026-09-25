@@ -80,6 +80,11 @@ scored on `ld_v1` and a paired bootstrap of the difference.
 `python -m prototypes.learned_evidence.adapt` runs this, then the calibration and fine-tuning below, in that order
 (each skipped once its report exists), and writes `runs/learned_evidence/SUMMARY.md`.
 
+**Only the per-bin decoder.** `--only-perbin` skips the two comparison runs: the same per-bin results, review gallery
+and curves (identical on `sample_movie.avi`, 37 of 37 grains), in 160 s instead of 355 s once the probability cache
+exists. Use it once the dev test has shown the per-bin decoder is the one to use. In `Analyze_Movie_Learned.command`,
+set `ONLY_PERBIN=1` at the top.
+
 **Any movie, no labels.** Leave out `--labels` to run all three on a new movie. The pipeline then writes each run's
 `predictions.json` and a `per_grain.csv` (status, onset interval and final length per run) instead of scores. For
 example, add `--field runs/sparsetrack/<movie> --model runs/learned_evidence/ld/unet.pt`.

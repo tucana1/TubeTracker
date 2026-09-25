@@ -8,6 +8,7 @@
 # The per-bin decoder's end offset: as calibrated on your dev movie's traces when that was adopted
 # (runs/learned_evidence/ld_cal/decoder.json), else the default.
 cd "$(dirname "$0")" || exit 1
+ONLY_PERBIN=0  # 1: only the per-bin decoder (about twice as fast), once the dev test has shown it is the one to use
 MOVIE=$(osascript -e 'POSIX path of (choose file with prompt "Choose a pollen movie to analyse")' 2>/dev/null)
 [ -z "$MOVIE" ] && { echo "No movie chosen."; exit 0; }
 NAME=$(.venv/bin/python -c 'import re, sys; from pathlib import Path; print(re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(sys.argv[1]).stem).strip("_."))' "$MOVIE")
@@ -27,6 +28,7 @@ MODEL="runs/learned_evidence/ld_ft/unet_ft.pt"
 [ -f "$MODEL" ] || MODEL="prototypes/learned_evidence/models/unet_v2_sample_field.pt"
 DECODER=()
 [ -f "runs/learned_evidence/ld_cal/decoder.json" ] && DECODER=(--decoder "runs/learned_evidence/ld_cal/decoder.json")
+[ "$ONLY_PERBIN" = 1 ] && DECODER+=(--only-perbin)
 echo "Analysing with $MODEL ${DECODER[*]} (about 10-20 minutes on a laptop)..."
 .venv/bin/python -m prototypes.learned_evidence.pipeline --field "$CACHE" --work "runs/learned_evidence/$NAME" \
     --model "$MODEL" "${DECODER[@]}" || { echo "Analysis failed."; read; exit 1; }

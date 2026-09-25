@@ -64,7 +64,8 @@ def write_per_grain(work: Path, runs: dict, seconds: float, um_per_px: float | N
     """Without labels: one row per grain with each run's status, onset interval and final length
     (also in um and minutes when the pixel size and frame interval are given)."""
     import csv
-    ids = [g["id"] for g in runs["sparsetrack"]["grains"]]
+    first = next(iter(runs))
+    ids = [g["id"] for g in runs[first]["grains"]]
     by_run = {name: {g["id"]: g for g in pred["grains"]} for name, pred in runs.items()}
     with open(work / "per_grain.csv", "w", newline="") as fh:
         w = csv.writer(fh)
@@ -73,7 +74,7 @@ def write_per_grain(work: Path, runs: dict, seconds: float, um_per_px: float | N
         cols += ["final_length_um"] if um_per_px else []
         w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs for col in cols] + ["perbin_burst_frame"])
         for gid in ids:
-            g0 = by_run["sparsetrack"][gid]
+            g0 = by_run[first][gid]
             row = [gid, g0.get("x"), g0.get("y")]
             for name in runs:
                 g = by_run[name].get(gid, {})
@@ -117,6 +118,9 @@ def main(argv=None):
                          "for good (by default that is read as a burst: growth is fitted up to it)")
     ap.add_argument("--decoder", default=None,
                     help="per-bin decoder settings fitted on the dev movie's traces by calibrate.py (decoder.json)")
+    ap.add_argument("--only-perbin", action="store_true",
+                    help="run only the per-bin decoder on the learned evidence (about twice as fast), once the dev "
+                         "test has shown it is the one to use; without the two comparison runs")
     ap.add_argument("--fixed-crop", action="store_true",
                     help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
                          "(by default such grains are read again at +/-300 px, in both runs)")
@@ -135,12 +139,17 @@ def main(argv=None):
         train.main(["--shards", *shards, "--out", str(model_path), "--steps", str(args.steps)])
     net = load_model(str(model_path))
     pcache = evaluate.prob_cache(field, net, work / f"prob_{field.name}")
-    with contextlib.nullcontext() if args.fixed_crop else evaluate.adaptive_crop():
-        base = evaluate.run_baseline(field, work, grains_path=labels_path)
-        learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
+    if args.only_perbin:  # SparseTrack's automatic speed cap, probed as its learned run would
+        from .finetune import speed_cap
+        base = learned = None
+        vmax = speed_cap(pcache, field, labels_path or field / "grains.json")
+    else:
+        with contextlib.nullcontext() if args.fixed_crop else evaluate.adaptive_crop():
+            base = evaluate.run_baseline(field, work, grains_path=labels_path)
+            learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
+        vmax = float(learned.get("params", {}).get("vmax_px", 4.0))  # SparseTrack's speed cap
     # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
-    kw = dict(big=None if args.fixed_crop else 300, burst=not args.no_burst,
-              vmax=float(learned.get("params", {}).get("vmax_px", 4.0)))  # SparseTrack's speed cap
+    kw = dict(big=None if args.fixed_crop else 300, burst=not args.no_burst, vmax=vmax)
     kw.update(calibrate.decoder_settings(args.decoder, model_path))
     perbin = reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, **kw)
     perbin["decoder"] = {k: v for k, v in kw.items() if k != "vmax"} | {"vmax": kw["vmax"], "from": args.decoder}
@@ -151,11 +160,16 @@ def main(argv=None):
     review.write_review(pcache, field, perbin, work / "perbin", grains_path=labels_path, **kw)
     write_population(perbin, work / "perbin")
     write_growth_curves(perbin, work / "perbin", [g["id"] for g in perbin["grains"] if g.get("status") == "emerged_within"])
+    runs = {"perbin": perbin} if args.only_perbin else {"sparsetrack": base, "learned": learned, "perbin": perbin}
     if labels_path is None:
-        write_per_grain(work, {"sparsetrack": base, "learned": learned, "perbin": perbin}, time.time() - started,
-                        um_per_px=args.um_per_px, s_per_frame=args.s_per_frame)
+        write_per_grain(work, runs, time.time() - started, um_per_px=args.um_per_px, s_per_frame=args.s_per_frame)
         return
     labels = load(labels_path)
+    if args.only_perbin:
+        lines = [f"{labels_path.name}: {time.time() - started:.0f} s", evaluate.e2e_summary("per-bin", score(labels, perbin))]
+        print("\n".join(lines))
+        (work / "report.txt").write_text("\n".join(lines) + "\n")
+        return
     rb, rl, rp = score(labels, base), score(labels, learned), score(labels, perbin)
     tol = rb["onset"]["tolerance_frames"]
     pb = evaluate.paired_bootstrap(rl, rb, tol)

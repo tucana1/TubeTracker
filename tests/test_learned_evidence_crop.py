@@ -71,3 +71,15 @@ def test_burst_cut_finds_a_collapse_that_lasts():
     assert burst_cut(np.concatenate([grow, [0, 0], np.full(18, 41.0)])) is None  # a two-bin gap, then the tube again
     assert burst_cut(np.concatenate([grow, np.full(20, 40.0)])) is None  # it stopped growing, still visible
     assert burst_cut(np.concatenate([np.linspace(0, 5, 30), np.zeros(20)])) is None  # never a tube (< 8 px)
+
+
+def test_per_grain_csv_with_the_per_bin_run_alone(tmp_path):
+    import csv
+
+    from prototypes.learned_evidence.pipeline import write_per_grain
+
+    perbin = {"grains": [{"id": "g1", "x": 10.0, "y": 20.0, "status": "emerged_within", "onset_interval": [150, 450],
+                          "final_length_px": 42.0, "burst_frame": None}]}
+    write_per_grain(tmp_path, {"perbin": perbin}, 1.0, um_per_px=0.5, s_per_frame=6.0)
+    (row,) = list(csv.DictReader(open(tmp_path / "per_grain.csv")))
+    assert row["grain"] == "g1" and row["perbin_final_length_um"] == "21.0" and row["perbin_onset_by_min"] == "45.0"

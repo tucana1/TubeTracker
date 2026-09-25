@@ -823,6 +823,8 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
   labels, and opens the review gallery. It uses the model trained on your dev movie once that exists.
 - **Any movie, no labels:** leave out `--labels`. The pipeline then writes all three runs' predictions and a
   `per_grain.csv` instead of scores. Add `--um-per-px` and `--s-per-frame` to get µm and minutes.
+- **Only the per-bin decoder:** once `ld_v1` has shown it is the one to use, `--only-perbin` (or `ONLY_PERBIN=1` in the
+  launcher) skips the two comparison runs. The results are the same and it runs about twice as fast.
 - **For review, in `perbin/`:**
   - a gallery of every grain drawn on the movie itself: six bins from onset to the end, with the region read and its
     length curve;
