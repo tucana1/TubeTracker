@@ -149,3 +149,5 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
     (5 of 28 within ±2 bins).
 - **Real footage** (qualitative, `show.py`): tube-specific, near zero on grain bodies, but misses wide, dark-walled
   tubes whose profile is outside the synthetic range.
+  - Training with four extra movies of 1.3–2.5× wider tubes (`v5w`) did not fix it (model v3, not adopted).
+  - Thin-tube lengths were unchanged, and onsets improved +7 with the per-bin decoder.

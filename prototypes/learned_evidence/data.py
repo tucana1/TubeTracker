@@ -65,12 +65,24 @@ def tip_heatmap(tips, cx: float, cy: float, half: int, sigma: float = TIP_SIGMA)
     return hm
 
 
+# presets beyond sparsetrack.synth's: name -> (base preset, SynthConfig overrides)
+EXTRA_PRESETS = {
+    "v5w": ("v5", {"width": (1.3, 2.5)}),  # v5 with wide tubes (thick, dark-walled real tubes)
+}
+
+
+def synth_config(preset_name: str, seed: int):
+    """``sparsetrack.synth.preset`` for its own presets and for ``EXTRA_PRESETS``."""
+    base, extra = EXTRA_PRESETS.get(preset_name, (preset_name, {}))
+    return preset(base, seed=seed, **extra)
+
+
 def build(field_cache: str | Path, movie_cache: str | Path, preset_name: str, seed: int, out: str | Path,
           n_bins: int = 70, crops_per_bin: int = 16, half: int = 48, pos_frac: float = 0.65,
           rng_seed: int = 0, log=print) -> Path:
     """Write one shard of training samples for a synthetic movie built by
     ``sparsetrack synth FIELD_CACHE --preset P --seed S`` and binned into ``movie_cache``."""
-    scene = Scene(field_cache, preset(preset_name, seed=seed))
+    scene = Scene(field_cache, synth_config(preset_name, seed))
     view = CacheView(movie_cache)
     grains = json.loads((Path(field_cache) / "grains.json").read_text())["grains"]
     rng = np.random.default_rng(rng_seed + 1000 * seed)

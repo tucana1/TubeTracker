@@ -632,6 +632,14 @@ bright-cored tubes; the network has never seen its tubes.
   outside the synthetic profiles, which is the gap the next training round must close: wider profiles in `synth`,
   then fine-tuning on the 127 real `ld` traces.
 - It also flags one small out-of-focus particle.
+- **Wider synthetic tubes did not close the gap (model v3, not adopted).** Four more training movies had tubes
+  1.3–2.5× wider (`data.EXTRA_PRESETS["v5w"]`).
+  - On the thin-tube held-out movies the lengths did not move (−2 and −4 traces against v2, 95% CIs about ±27), and
+    onsets improved (+7 with the per-bin decoder, CI +1 to +14).
+  - On the sample movie it did not help. It still called 16 grains tubeless, and it marked less of one thick tube
+    than v2.
+  - Real thick tubes are not simply wider synthetic ones. What closes the gap is fine-tuning on real traces, or
+    measuring their cross-section for `synth`. v2 stays the shipped model.
 - **End to end on the same movie, without labels, the three runs disagree widely.** `pipeline.py` now runs without
   `--labels` and writes a per-grain CSV.
   - The learned evidence calls 16 of 37 grains tubeless, where SparseTrack calls 7.

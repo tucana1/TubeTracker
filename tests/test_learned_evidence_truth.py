@@ -73,3 +73,12 @@ def test_truth_clamps_frames_past_the_movie_end(field):
     last = frame_truth(scene, cfg.n_frames - 1)
     past = frame_truth(scene, cfg.n_frames + 7)  # the centre of a partial last bin
     assert np.array_equal(last["body"], past["body"])
+
+
+def test_extra_presets_extend_the_generator():
+    from prototypes.learned_evidence.data import synth_config
+    from sparsetrack.synth import preset
+
+    assert synth_config("v5w", seed=3).width == (1.3, 2.5)  # wide tubes
+    assert synth_config("v5w", seed=3).p_sway == preset("v5", seed=3).p_sway  # otherwise v5
+    assert synth_config("v5", seed=3) == preset("v5", seed=3)

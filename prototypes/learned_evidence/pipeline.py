@@ -28,7 +28,7 @@ import numpy as np
 from sparsetrack import stack
 from sparsetrack.cli import write_census
 from sparsetrack.evaluate import load, score
-from sparsetrack.synth import make_movie, preset
+from sparsetrack.synth import make_movie
 
 from . import data, evaluate, reach, review, train
 from .model import load as load_model
@@ -47,7 +47,7 @@ def ensure_synthetic(field: Path, work: Path, spec: str, keep_caches: bool, log=
         return shard
     movie = work / "synth" / f"{name}.mp4"
     if not movie.exists():
-        make_movie(field, work / "synth", preset(pr, seed=seed), name=name, log=log)
+        make_movie(field, work / "synth", data.synth_config(pr, seed), name=name, log=log)
     cache = work / "synth" / f"{pr}s{seed}_cache"
     if not (cache / "grains.json").exists():
         with contextlib.redirect_stdout(io.StringIO()):
