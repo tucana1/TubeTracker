@@ -136,7 +136,10 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     the labelling tool's ``path_xy_ref``), for pre-filling review labels (``prefill.py``).
     ``length="smooth"`` measures the medial axis as a smooth curve (``smooth_length``) instead of a path
     through pixel centres, which reads up to 8% long where a tube runs between the axes and the
-    diagonals; the default stays "path" (frozen) unless development and a fresh test say otherwise.
+    diagonals. Unbiased, it still put fewer lengths in tolerance on synthetic development movies
+    (1364 against 1368 of 1792; 67 against 80 of the 100 longest tubes): the staircase's excess
+    brings some of the under-reads (a region stopping short of the tip) inside tolerance. So the
+    default stays "path".
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test

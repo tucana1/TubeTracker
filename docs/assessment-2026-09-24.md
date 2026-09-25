@@ -758,6 +758,20 @@ and then applied to a fresh one:
   your movies. So "onsets no worse" was a loose guard here. Lengths are unaffected. The main held-out tables above
   use ±2 bins, and on `ld` both tools score onsets at ±2 bins.
 
+**How the per-bin decoder measures length (a negative result, 25 Sep).** It takes the path through the medial
+axis's pixel centres, a diagonal step counting √2. Where a tube runs between the axes and the diagonals, that
+staircase reads up to 8% longer than the line it follows, 5% on average. Human traces are smooth polylines.
+- A smooth measure of the same path (`reach.py`, `length="smooth"`) removed the bias. On a movie-2-length synthetic
+  movie (tubes up to 320 px), median error from 60 px up went from +2–6% to about 0.
+- It still put fewer lengths in tolerance there: at best 292 of 393 against 295, and 67 against 80 of the 100
+  longest. On the seven development movies it gained only 8 of 1399.
+- The reason is that the errors have a long tail of under-reads, where the region stops short of the tip. The
+  staircase's proportional excess brings some of those inside ±10%, while correct reads stay inside.
+- Over all development movies the path measure kept the most lengths (1368 against 1364), so it stays. No fresh test
+  was run, because the candidate did not pass development.
+- Pre-filled review traces now come out at the reported length. Before this they were about 5% short, because they
+  were cut along the staircase and then smoothed.
+
 **What these results do and don't show.**
 - **Do:**
   - With geometry held fixed, learned evidence from synthetic data alone is decisively better than SparseTrack's
