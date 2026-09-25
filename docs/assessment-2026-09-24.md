@@ -1025,8 +1025,13 @@ polyline with 0.5 px of hand jitter. Scoring used only the traces before the anc
   the end state: foreign tubes, missed tubes, grains that jump. One human trace supplies exactly that.
 - **It also shows what one end-state trace cannot fix:** tubes that turn past 45°, grains that jump or drift. The
   labelling tool already asks for three or four traces per grain, and anchoring each stretch of the movie on its
-  next trace would cover those. The label-free shared fixes come first: evidence for thick and dark tubes, a
-  per-bin frame-edge mask, trackers that survive jumps, and no ghost grains.
+  next trace would cover those.
+  - Tried on synthetic development movies, with simulated traces at every bin the tool asks for: 80.6% of lengths
+    within tolerance, against 80.5% for the latest trace alone (+1, 95% CI −24 to +23).
+  - So there is no gain where deformations stay within the decoder's models. Whether it helps where they do not,
+    as with the sample movie's turns and jumps, needs labels on such footage. It is not in the repository.
+- **The label-free shared fixes come first:** evidence for thick and dark tubes, a per-bin frame-edge mask, trackers
+  that survive jumps, and no ghost grains.
 
 **Human repeatability sets the onset ceiling.** In your blind retest (section 1), 4 of 7 onsets fell within ±2 bins
 of the first pass; the other three moved by 5, 8 and 19 bins.
