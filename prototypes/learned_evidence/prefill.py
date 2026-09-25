@@ -113,7 +113,7 @@ def main(argv=None):
 
     field, work = Path(args.field), Path(args.work)
     out = Path(args.out) if args.out else work / "review_labels.json"
-    if "benchmark" in out.resolve().parts:
+    if Path("benchmark").resolve() in out.resolve().parents:
         raise SystemExit("review labels are the model's proposals: keep them out of benchmark/")
     if out.exists():
         raise SystemExit(f"{out} exists and may hold your corrections: move it aside to pre-fill again")
@@ -122,7 +122,8 @@ def main(argv=None):
     if not pred_path.exists() or not (pcache / "meta.json").exists():
         raise SystemExit(f"run pipeline.py on {field} with --work {work} first (needs {pred_path} and {pcache})")
     pred = json.loads(pred_path.read_text())
-    dec = {k: v for k, v in (pred.get("decoder") or {}).items() if k in ("big", "burst", "vmax", "end_px")}
+    dec = {k: v for k, v in (pred.get("decoder") or {}).items()
+           if k in ("big", "burst", "vmax", "end_px", "onset_px")}
     if not dec:  # predictions from before the pipeline recorded its settings: its defaults then
         learned = work / "learned" / "predictions.json"
         vmax = json.loads(learned.read_text()).get("params", {}).get("vmax_px", 4.0) if learned.exists() else 4.0

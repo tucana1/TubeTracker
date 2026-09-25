@@ -48,13 +48,20 @@ def test_trace_answer_is_the_reported_length_in_the_tools_view():
     assert P.trace_body(res, rs + 5, rs, follow)["state"] == "no_tube"  # not grown yet
 
 
-def test_refuses_to_overwrite_or_write_into_benchmark(tmp_path):
+def test_refuses_to_overwrite_or_write_into_benchmark(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)  # the repository
     out = tmp_path / "review_labels.json"
     out.write_text("{}")
     with pytest.raises(SystemExit, match="corrections"):
         P.main(["--field", str(tmp_path), "--work", str(tmp_path), "--out", str(out)])
     with pytest.raises(SystemExit, match="benchmark"):
-        P.main(["--field", str(tmp_path), "--work", str(tmp_path), "--out", str(tmp_path / "benchmark/x.json")])
+        P.main(["--field", str(tmp_path), "--work", str(tmp_path), "--out", "benchmark/labels/x.json"])
+    # a folder called benchmark above the repository is no reason to refuse
+    elsewhere = tmp_path / "benchmark" / "repo"
+    elsewhere.mkdir(parents=True)
+    monkeypatch.chdir(elsewhere)
+    with pytest.raises(SystemExit, match="run pipeline.py"):
+        P.main(["--field", str(tmp_path), "--work", str(elsewhere / "runs" / "w")])
 
 
 def test_decoder_paths_are_in_the_tools_reference_coordinates(tmp_path):

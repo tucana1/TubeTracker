@@ -22,14 +22,14 @@ def _trace(b, length, origin, state="full"):
 
 def test_export_counts_what_was_checked_and_changed(tmp_path):
     model = {"frames_per_bin": 300, "n_bins": 100, "grains": {"g1": {}, "g2": {}, "g3": {"excluded": True}},
-             "labels": {"g1": {"onset": _onset(30, "model"), "traces": {"40": _trace(40, 20.0, "model")}},
-                        "g2": {"onset": _onset(50, "model"), "traces": {"60": _trace(60, 30.0, "model")}},
+             "labels": {"g1": {"onset": _onset(30, "model"), "traces": {"36": _trace(36, 20.0, "model")}},
+                        "g2": {"onset": _onset(50, "model"), "traces": {"69": _trace(69, 30.0, "model")}},
                         "g3": {"onset": _onset(10, "model")}}}
     reviewed = json.loads(json.dumps(model))
     reviewed["labels"]["g1"]["onset"] = _onset(30, "human")                 # confirmed
-    reviewed["labels"]["g1"]["traces"]["40"] = _trace(40, 21.0, "human")   # confirmed, within tolerance
+    reviewed["labels"]["g1"]["traces"]["36"] = _trace(36, 21.0, "human")   # confirmed, within tolerance
     reviewed["labels"]["g2"]["onset"] = _onset(55, "human")                 # moved
-    reviewed["labels"]["g2"]["traces"]["60"] = _trace(60, 45.0, "human")   # longer
+    reviewed["labels"]["g2"]["traces"]["69"] = _trace(69, 45.0, "human")   # longer
     path = tmp_path / "review_labels.json"
     path.write_text(json.dumps(reviewed))
     path.with_suffix(".model.json").write_text(json.dumps(model))
@@ -50,3 +50,47 @@ def test_population_input_uses_the_reviewed_onsets():
     got = {g["id"]: g for g in E.population_input(doc)["grains"]}
     assert got["a"]["onset_interval"] == [3 * 300 + 150, 4 * 300 + 150] and got["a"]["status"] == "emerged_within"
     assert got["b"]["status"] == "no_emergence_by_end" and got["a"]["length"]["frames"] == [150, 9 * 300 + 150]
+
+
+def _write(tmp_path, model, reviewed, with_model=True):
+    path = tmp_path / "review_labels.json"
+    path.write_text(json.dumps(reviewed))
+    if with_model:
+        path.with_suffix(".model.json").write_text(json.dumps(model))
+    return path
+
+
+def test_only_the_traces_the_tool_asks_for_now_are_results(tmp_path, capsys):
+    # the model traced bins 36, 69 and 98 (onset at bin 30); the reviewer moves the onset to 40, which moves
+    # the first trace to 46, traces it, and marks the tube burst at 69: the model's 36 and 98 are left out
+    model = {"frames_per_bin": 300, "n_bins": 100, "grains": {"g1": {}},
+             "labels": {"g1": {"onset": _onset(30, "model"),
+                               "traces": {str(b): _trace(b, 10.0 + b / 10, "model") for b in (36, 69, 98)}}}}
+    reviewed = json.loads(json.dumps(model))
+    lab = reviewed["labels"]["g1"]
+    lab["onset"] = _onset(40, "human")
+    path = _write(tmp_path, model, reviewed)
+    E.main(["--labels", str(path)])
+    assert "1 traces still to answer" in capsys.readouterr().out  # bin 46: the model had nothing there
+    lab["traces"]["46"] = _trace(46, 12.0, "human")
+    lab["traces"]["69"] = _trace(69, 0.0, "human", state="burst")
+    path = _write(tmp_path, model, reviewed)
+    E.main(["--labels", str(path)])
+    assert "2 of the model's traces left out" in capsys.readouterr().out
+    rows = list(csv.DictReader(open(tmp_path / "reviewed_traces.csv")))
+    assert [(r["bin"], r["state"], r["checked"], r["changed"]) for r in rows] == [
+        ("46", "full", "yes", "yes"), ("69", "burst", "yes", "yes")]
+    g = list(csv.DictReader(open(tmp_path / "reviewed_grains.csv")))[0]
+    assert (g["last_traced_bin"], g["traces_checked"], g["onset_changed"]) == ("46", "2/2", "yes")
+
+
+def test_no_tube_after_all_leaves_no_traces_and_a_lost_model_file_is_said(tmp_path, capsys):
+    model = {"frames_per_bin": 300, "n_bins": 100, "grains": {"g1": {}},
+             "labels": {"g1": {"onset": _onset(30, "model"), "traces": {"36": _trace(36, 8.0, "model")}}}}
+    reviewed = json.loads(json.dumps(model))
+    reviewed["labels"]["g1"]["onset"] = {"verdict": "no_emergence_by_end", "review_origin": "human"}
+    E.main(["--labels", str(_write(tmp_path, model, reviewed, with_model=False))])
+    assert "can't be told" in capsys.readouterr().out
+    assert list(csv.DictReader(open(tmp_path / "reviewed_traces.csv"))) == []
+    g = list(csv.DictReader(open(tmp_path / "reviewed_grains.csv")))[0]
+    assert (g["onset_checked"], g["onset_changed"], g["last_traced_bin"]) == ("yes", "", "")

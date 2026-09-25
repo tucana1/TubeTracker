@@ -11,6 +11,18 @@ NAME=$(.venv/bin/python -c 'import re, sys; from pathlib import Path; print(re.s
 CACHE="runs/sparsetrack/$NAME/cache"
 WORK="runs/learned_evidence/$NAME"
 [ -f "$WORK/perbin/predictions.json" ] || { echo "Analyse $MOVIE first (Analyze_Movie_Learned.command)."; read; exit 1; }
+if [ -f "$WORK/review_labels.json" ] && [ "$WORK/perbin/predictions.json" -nt "$WORK/review_labels.model.json" ]; then
+  echo "This movie was analysed again after its review was pre-filled."
+  read "ans?Start a new review of the new analysis? Your earlier review is kept, whole, in a folder beside it. [y/N] "
+  if [[ "$ans" == [yY]* ]]; then
+    KEEP="$WORK/review_$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$KEEP" && mv "$WORK"/review_labels.*(N) "$WORK"/reviewed_*(N) "$WORK"/population.*(N) "$KEEP"/ \
+        || { echo "Could not move the earlier review aside."; read; exit 1; }
+    echo "Earlier review kept in $KEEP"
+  else
+    echo "Carrying on with the earlier review (the proposals from the earlier analysis, and your answers)."
+  fi
+fi
 if [ ! -f "$WORK/review_labels.json" ]; then
   echo "Pre-filling the review with the model's answers (a minute or two)..."
   .venv/bin/python -m prototypes.learned_evidence.prefill --field "$CACHE" --work "$WORK" \

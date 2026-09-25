@@ -74,3 +74,19 @@ def test_prefill_review_export(analysed):
     assert [(r["checked"], r["changed"]) for r in rows] == [("yes", "yes")] + [("no", "")] * (len(plan) - 1)
     grains = list(csv.DictReader(open(work / "reviewed_grains.csv")))
     assert grains[0]["onset_checked"] == "no" and grains[0]["traces_checked"] == f"1/{len(plan)}"
+
+
+def test_prefill_reads_with_the_recorded_onset_length(analysed):
+    from prototypes.learned_evidence import prefill
+
+    field, work = analysed
+    first = {}
+    for onset_px in (None, 8.0):
+        pred_path = work / "perbin" / "predictions.json"
+        pred = json.loads(pred_path.read_text())
+        pred["decoder"] = {"burst": True, "vmax": 4.0, **({"onset_px": onset_px} if onset_px else {})}
+        pred_path.write_text(json.dumps(pred))
+        out = prefill.main(["--field", str(field), "--work", str(work),
+                            "--out", str(work / f"review_{onset_px}.json")])
+        first[onset_px] = json.loads(out.read_text())["labels"]["g001"]["onset"]["first_visible_bin"]
+    assert first[8.0] > first[None]  # a longer onset length calls the onset later, as calibration adopted it
