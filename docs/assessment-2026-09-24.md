@@ -799,6 +799,17 @@ limits, and the review is where they get caught.
   5 px of a neighbour's rim: about 4% of the dev movie's traces. Movie 2 runs about twice as long, so its tubes
   are longer and these cases likelier. (Its labels were not looked at.)
 
+**Why onsets come late (25 Sep).** On the ten development movies, 159 of 214 onsets fall within ±2 bins, and 50 of
+the 55 misses are late (18 of them by 8 bins or more). In 37 of those 50, the network shows nothing at the grain's
+rim until the tube is a few px long: peak P there stays near 0 after the true onset. No threshold recovers these,
+and the onset-length calibration cannot either, because the fit is zero before the first detection.
+- Extrapolating back from the first detection, along the growth the fit shows after it, gained at most 8 of 214
+  onsets. That was the best of 18 settings on the same movies, and early misses rose from 5 to 12. So the onset
+  rule stays as it is.
+- On your movies a bin holds 300 frames, so a tube is usually seen within a bin or two of emerging. The lever is
+  evidence for very young tubes: fine-tuning on your onset brackets, or young-tube emphasis in the synthetic
+  training.
+
 **What these results do and don't show.**
 - **Do:**
   - With geometry held fixed, learned evidence from synthetic data alone is decisively better than SparseTrack's
