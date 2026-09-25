@@ -31,4 +31,5 @@ echo "Analysing with $MODEL ${DECODER[*]} (about 10-20 minutes on a laptop)..."
 .venv/bin/python -m prototypes.learned_evidence.pipeline --field "$CACHE" --work "runs/learned_evidence/$NAME" \
     --model "$MODEL" "${DECODER[@]}" || { echo "Analysis failed."; read; exit 1; }
 open "runs/learned_evidence/$NAME/perbin/index.html"
-echo "Done. Results: runs/learned_evidence/$NAME/ (per_grain.csv, perbin/). You can close this window."
+echo "Done. Results: runs/learned_evidence/$NAME/ (per_grain.csv, perbin/)."
+echo "To check and correct them in the labelling tool: Review_Movie_Learned.command. You can close this window."

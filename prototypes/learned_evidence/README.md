@@ -33,6 +33,8 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
    - Press Ctrl-C in the window when you stop. `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`
      are then written next to the results, saying which answers you checked and which you changed.
    - Run it again to carry on; answers not yet checked stay the model's.
+   - Each analysed movie keeps its probability cache (`prob_cache/`, about 0.5 GB) for the review. Once the review
+     is pre-filled, it can be deleted; re-running the analysis rebuilds it.
 
 For physical units, run the pipeline command below with `--um-per-px` and `--s-per-frame`.
 
