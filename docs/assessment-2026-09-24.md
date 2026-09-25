@@ -777,7 +777,8 @@ than 10% short, all in four grains. The evidence showed those tubes; the decoder
 - A speck touching the rim nearer the grain than the tube's base. The length was measured from the speck alone:
   7 px for a 120 px tube.
 - A neighbour's rim near the tube's base. The split between grains gave that neighbour most of the tube.
-- A curl closing into a loop. Measured to its farthest point, a closed loop is only half-way round.
+- A curl lying back against its own grain. The reading starts from every medial-axis pixel nearest the grain, so
+  it starts from both contacts (or from the tip), and the farthest point is half-way along the curl.
 
 Two fixes were tried on development movies (the long one and nine ordinary ones), and neither was kept:
 - Measuring from every piece of the region fixed the speck case: +11 lengths on the long movie. On the ordinary
