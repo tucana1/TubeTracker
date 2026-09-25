@@ -772,6 +772,21 @@ staircase reads up to 8% longer than the line it follows, 5% on average. Human t
 - Pre-filled review traces now come out at the reported length. Before this they were about 5% short, because they
   were cut along the staircase and then smoothed.
 
+**Why long tubes read short (25 Sep).** On the same movie-2-length synthetic movie, 35 traces over 60 px read more
+than 10% short, all in four grains. The evidence showed those tubes; the decoder's reading lost them in three ways:
+- A speck touching the rim nearer the grain than the tube's base. The length was measured from the speck alone:
+  7 px for a 120 px tube.
+- A neighbour's rim near the tube's base. The split between grains gave that neighbour most of the tube.
+- A curl closing into a loop. Measured to its farthest point, a closed loop is only half-way round.
+
+Two fixes were tried on development movies (the long one and nine ordinary ones), and neither was kept:
+- Measuring from every piece of the region fixed the speck case: +11 lengths on the long movie. On the ordinary
+  movies it lost 5, because a longer foreign piece sometimes won instead.
+- Holding the longest reading while its path is still shown lost 125 lengths: it held over-reads too.
+
+The review flags two of the four grains for unsteady readings; curls are not flagged. For movie 2 these are known
+limits, and the review is where they get caught.
+
 **What these results do and don't show.**
 - **Do:**
   - With geometry held fixed, learned evidence from synthetic data alone is decisively better than SparseTrack's
