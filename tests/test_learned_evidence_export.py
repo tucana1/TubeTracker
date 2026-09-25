@@ -106,3 +106,22 @@ def test_a_partly_checked_review_also_gets_the_checked_onsets_alone(tmp_path, ca
     E.main(["--labels", str(path)])
     assert (tmp_path / "population.csv").exists() and (tmp_path / "checked_only" / "population.csv").exists()
     assert "checked onsets alone" in capsys.readouterr().out
+
+
+def test_trace_once_anchors_are_the_checked_latest_traces(tmp_path):
+    def traced(b, L, origin):
+        return {**_trace(b, L, origin), "path_xy_ref": [[0.0, 0.0], [L, 0.0]]}
+
+    plan = [36, 40, 69, 98]  # the tool's trace bins for an onset at bin 30 in a 100-bin movie
+    doc = {"frames_per_bin": 300, "n_bins": 100, "grains": {"g1": {}, "g2": {}, "g3": {}, "g4": {"excluded": True}},
+           "labels": {"g1": {"onset": _onset(30, "model"),
+                             "traces": {str(b): traced(b, 10.0 + b, "human" if b == 98 else "model") for b in plan}},
+                      "g2": {"onset": _onset(30, "model"),  # its latest trace is still the model's
+                             "traces": {"36": traced(36, 9.0, "human"), "98": traced(98, 40.0, "model")}},
+                      "g3": {"onset": _onset(30, "human"), "traces": {"98": _trace(98, 30.0, "human")}},  # no path
+                      "g4": {"onset": _onset(30, "human"), "traces": {"98": traced(98, 30.0, "human")}}}}
+    anchors = E.checked_anchors(doc)
+    assert set(anchors) == {"g1"} and anchors["g1"]["bin"] == 98 and anchors["g1"]["length_px"] == 108.0
+    path = _write(tmp_path, doc, doc)
+    with pytest.raises(SystemExit, match="probability cache"):  # decoding needs the movie's probability cache
+        E.main(["--labels", str(path), "--anchored", "--field", str(tmp_path / "cache")])

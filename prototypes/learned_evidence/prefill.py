@@ -168,7 +168,7 @@ def main(argv=None):
         for rec in [lab.get("onset") or {}, *(lab.get("traces") or {}).values()]:
             if rec:
                 rec["review_origin"] = "model"
-    info = {"source": str(pred_path), "decoder": pred.get("decoder"), "method": pred.get("method"),
+    info = {"source": str(pred_path), "field": str(field), "decoder": pred.get("decoder"), "method": pred.get("method"),
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "grains": len(doc["labels"]), "traces": n_traces,
             "check_first": check_first}
     doc["prefill"] = info

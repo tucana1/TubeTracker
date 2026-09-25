@@ -117,3 +117,17 @@ def test_trace_in_grain_frame_orders_from_the_grain(renderers):
     xy = PF.trace_in_grain_frame(G, [[EXIT_X + 30.0, GY], [EXIT_X, GY]], G.T - 1)
     assert np.hypot(*(xy[0] - G.centre)) < np.hypot(*(xy[-1] - G.centre))
     assert xy[0] == pytest.approx([G.centre + GR - G.ls[-1][0], G.centre - G.ls[-1][1]])
+
+
+def test_support_fusion_lets_the_image_add_evidence_but_not_veto(renderers, monkeypatch):
+    RP, R_img, meta = renderers
+
+    def hostile(G, best, X, Y, NX, NY, p):  # an image term that says "no tube" everywhere near the exit
+        return -np.ones((G.T, X.shape[1], int(round(p.img_s_max / p.step)) + 1), np.float32), {}
+
+    monkeypatch.setattr(PF, "image_evidence", hostile)
+    off = PF.decode_grain(RP, R_img, meta, GRAIN, [], PF.Params(half=60, big=60, image_term=False))
+    support = PF.decode_grain(RP, R_img, meta, GRAIN, [], PF.Params(half=60, big=60, img_fuse="support"))
+    vetoed = PF.decode_grain(RP, R_img, meta, GRAIN, [], PF.Params(half=60, big=60, img_fuse="sum"))
+    assert support["length"]["px"] == off["length"]["px"]
+    assert vetoed["onset_frame"] is None or vetoed["onset_frame"] > off["onset_frame"]

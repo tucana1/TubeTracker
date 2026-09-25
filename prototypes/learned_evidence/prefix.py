@@ -11,9 +11,10 @@ whole movie is explained at once by
     the tube, or a tube held by the substrate while its grain drifts),
 
 found jointly by exact dynamic programming over time x (deformation, length).  The evidence is the learned tube
-probability read along the deformed path (log-odds), fused with an image term near the exit.  Candidate end-state
-paths and deformation models are compared by their whole-movie score; a candidate that leaves the rim tangentially,
-or whose far part was there before its base, is another grain's tube.
+probability read along the deformed path (log-odds), plus an image term near the exit that can add evidence for a
+young tube the network misses but never veto one it sees.  Candidate end-state paths and deformation models are
+compared by their whole-movie score; a candidate that leaves the rim tangentially, or whose far part was there before
+its base, is another grain's tube.
 
 Anchored mode (``anchors``): the end state is given as a trace in the labelling tool's form, a polyline in
 reference coordinates at a bin (a human's trace, or a machine proposal a human accepted).  Path search and the
@@ -22,13 +23,16 @@ evidence within ``anchor_snap_px``, and the length at the trace's bin is pinned 
 
 Output is in SparseTrack's prediction schema (as ``reach.analyze``), so ``sparsetrack.evaluate.score`` applies.
 
-On five held-out synthetic movies (186 grains, scored once per frozen version) it put 84.3% of lengths within
-tolerance against the per-bin decoder's 71.0% (82.1% without ``ref="auto"``); scored as the labelling tool
-brackets and traces, +45 and +41 lengths over the per-bin decoder (annotators at 2 and 4 px). Onsets were no
-better: both call them early against one-bin human brackets, which the onset calibration (``calibrate.py``)
-addresses.  Designed on synthetic movies; on real footage it has been checked only on the sample movie, where
-without ``ref="auto"`` it called 18 of 37 grains tubeless (8 with it; the per-bin decoder found a tube on every
-grain).
+On five held-out synthetic movies (186 grains; each version frozen before its one look) it put 84.6% of lengths
+within tolerance, against the per-bin decoder's 71.0%. Scored as the labelling tool records brackets and traces, it
+put 85% and 84% within tolerance, against 71% and 70% (annotators at 2 and 4 px). Anchored on simulated human traces
+it reached 86.7% on the traces before the anchor. Onsets are called early against one-bin human brackets, like the
+per-bin decoder's; the onset calibration (``calibrate.py``) addresses that.
+
+Designed on synthetic movies of thin tubes. On the sample movie, which is real but has thick double-walled tubes and
+grains moving tens of px, it is not yet reliable: it called 8 of 37 grains tubeless, where the per-bin decoder found
+a tube on every one. A synthetic thick-tube movie showed the same gap. The image term used to veto young tubes that
+did not yet look mature there, hence "support".
 """
 
 from __future__ import annotations
@@ -115,7 +119,7 @@ class Params:
     img_t0: float = 4.0          # image evidence 0 at this many noise sigmas...
     img_tk: float = 2.0          # ...and +/-1 this many sigmas either side
     img_sig_floor_gl: float = 0.3
-    img_fuse: str = "sum"        # "sum" (E_P + img_weight * E_img) or "max"
+    img_fuse: str = "support"    # "support" (E_P + img_weight * max(E_img, 0)), "sum" (the image may also veto) or "max"
     img_ctrl_deg: tuple = (60.0, 120.0, 180.0, 240.0, 300.0)
     img_state_band: int = 3      # image pass: deformation states within this of the learned-evidence track
     img_min_amp: float = 3.0     # grey levels: fainter templates are not used
@@ -649,6 +653,8 @@ def refine_with_image(G: GrainStack, best: dict, p: Params, pin_level: int | Non
     m = E_img.shape[2]
     if p.img_fuse == "max":
         E[:, :, :m] = np.maximum(E[:, :, :m], E_img)
+    elif p.img_fuse == "support":  # the image may find a young tube the network misses, never veto one it sees
+        E[:, :, :m] += p.img_weight * np.maximum(E_img, 0.0)
     else:
         E[:, :, :m] += p.img_weight * E_img
     vmax = max(1, int(round(p.vmax_px / p.step)))

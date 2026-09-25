@@ -109,7 +109,7 @@ example, add `--field runs/sparsetrack/<movie> --model runs/learned_evidence/ld/
 its tip, so every earlier tube is the later one, shorter. It is scored against the per-bin decoder (`prefix/` holds
 its predictions). `trace_once.py`, step 4 of `adapt.py`, anchors it on each grain's latest traced tube in your labels
 and scores it on your earlier traces and onsets. If one trace per grain gives the rest within tolerance, labelling a
-movie comes down to one trace per grain. On synthetic movies (assessment, section 7) the anchored decoder put 88% of
+movie comes down to one trace per grain. On synthetic movies (assessment, section 7) the anchored decoder put 87% of
 held-out lengths within tolerance, against 71% for the per-bin decoder; the real test is your labels.
 
 **Quick first look (about 10 minutes).** Add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
