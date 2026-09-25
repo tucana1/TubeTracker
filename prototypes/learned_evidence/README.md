@@ -61,7 +61,7 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `train.py` | Training: dihedral, gain, offset and noise augmentation; BCE + Dice for the body; weighted BCE for tips. CPU, MPS or CUDA |
 | `evaluate.py` | Probability caches; end-to-end SparseTrack runs (baseline, learned, and "perfect" = exact truth masks as evidence); the adaptive crop (below); oracle-path fronts; paired bootstrap over grains |
 | `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
-| `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins. Real-footage fixes on by default: a frame-edge mask per bin, readings held while the grain has left its place, out-of-focus ghost discs dropped from the census, and a fit that cannot fall below lengths the tube was steadily grown to |
+| `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins. Real-footage fixes on by default: a frame-edge mask per bin, readings held while the grain has left its place, out-of-focus ghost discs dropped from the census (pre-fill excludes them for review, where they can be included again), and a fit that cannot fall below lengths the tube was steadily grown to |
 | `prefix.py` | The prefix decoder: the whole movie as prefixes of the tube's end state (tip growth), with monotone growth and a smooth deformation found jointly by dynamic programming; optionally anchored on a trace (a human's, or a proposal accepted in review). `pipeline.py --prefix` runs it beside the per-bin decoder |
 | `track.py` | Grain tracking by the grain's own look (disc-and-rim template), for the prefix decoder |
 | `trace_once.py` | On a labelled movie: the prefix decoder anchored on each grain's latest trace, scored on the grain's earlier traces and onset against the per-bin decoder and the prefix decoder on its own (step 4 of `adapt.py`) |
@@ -315,4 +315,8 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
     carry the flags.
   - Pre-fill answers "unsure" for a grain's traces after it left its place. The points are kept for the reviewer, but
     the length is not counted unless confirmed.
+  - Since the real-footage defaults (25 Sep), a grain that leaves and comes back is flagged `gone:<first>-<last>`
+    (frames) instead, and only the traces in that spell are "unsure". Census discs judged out-of-focus ghosts are
+    excluded in the review file as "not a grain" (the model's call) and listed to check first. The export names
+    them; include one again in the tool if it is a grain.
 

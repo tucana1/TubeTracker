@@ -26,7 +26,9 @@ earlier frozen decoder. The others were tried and are off (``track``, ``burst_ru
   towards an edge keeps its tube in the bins where it is visible.
 * ``gone="hold"``: bins where the grain is no longer at its tracked position (its disc has lost its
   contrast for a run of bins, ``gone_bins``) are not readings: the growth fit skips them, so what is read
-  at an empty spot (a tube passing by, a neighbour's) is not the grain's.
+  at an empty spot (a tube passing by, a neighbour's) is not the grain's. They are returned under
+  ``gone_bins`` and flagged: ``no_grain_after:`` when the grain does not come back, ``gone:first-last`` (frames)
+  for a spell away that ends.
 * ``track="reacquire"``: when the grain is gone from the tracked position, look for it again nearby
   (``reacquire``) and follow it from there: grains that jump or are dragged tens of px.
 * ``fit="grown"``: the growth fit may not drop below the lengths the tube has been *grown* to
@@ -39,7 +41,8 @@ earlier frozen decoder. The others were tried and are off (``track``, ``burst_ru
 * ``owner="passby"``: another grain's ring that the region only passes tangentially does not split the
   region (``passby``): a tube growing past a neighbour is not cut at the neighbour's ring.
 * ``analyze(..., ghosts=True)``: census discs that are soft and faint in every early window (out-of-focus
-  ghosts, smears of grains still landing) are not analysed and not treated as grains (``census_ghosts``).
+  ghosts, smears of grains still landing) are not analysed and not treated as grains (``census_ghosts``); the
+  review pre-fill excludes them as "not_a_grain", so a person can re-include one.
 """
 
 from __future__ import annotations
@@ -158,9 +161,10 @@ def burst_cut(raw: np.ndarray, min_px: float = 8.0, frac: float = 0.3, hold: flo
     bins (at least ``min_bins`` of them). A burst tube leaves nothing to trace, so its reading collapses
     for good; a monotone fit over the whole movie would instead pull its growth down.
 
-    NaN readings (grain gone) are not counted. With ``run`` > 1 the burst must start a run of that many
-    consecutive collapsed readings (one low reading followed by long ones is a failed reading, not a
-    burst); bins flagged in ``skip`` (just after an abrupt field-wide change) cannot start one."""
+    NaN readings (grain gone) are not counted, neither as collapsed readings nor towards ``min_bins``. With
+    ``run`` > 1 the burst must start a run of that many consecutive collapsed readings (one low reading
+    followed by long ones is a failed reading, not a burst); bins flagged in ``skip`` (just after an abrupt
+    field-wide change) cannot start one."""
     raw = np.asarray(raw, float)
     ok = np.isfinite(raw)
     r = np.where(ok, raw, np.nan)
@@ -171,6 +175,8 @@ def burst_cut(raw: np.ndarray, min_px: float = 8.0, frac: float = 0.3, hold: flo
         lim = frac * peak[b - 1]
         if peak[b - 1] >= min_px and r[b] < lim:
             rest = r[b:][ok[b:]]
+            if len(rest) < min_bins:
+                continue
             if run > 1:
                 head = rest[:run]
                 if len(head) < run or np.any(head >= lim):
@@ -280,7 +286,7 @@ def _hp(img: np.ndarray, sigma: float = 4.0) -> np.ndarray:
 
 def reacquire(img: np.ndarray, ls: np.ndarray, contrast: np.ndarray, gone: np.ndarray, centre: float, gr: float,
               rg: np.ndarray, search: float = 60.0, ncc_min: float = 0.6, frac: float = 0.5, pad: float = 12.0,
-              ref_bins: int = 10, abrupt: np.ndarray | None = None, max_search: float = 90.0
+              ref_bins: int = 10, max_search: float = 90.0
               ) -> tuple[np.ndarray, np.ndarray]:
     """Follow a grain that ``local_shifts`` lost (it jumped or was dragged beyond its window).
 
@@ -390,7 +396,7 @@ def abrupt_bins(d: np.ndarray, factor: float = 2.5, local: float = 2.0, window: 
     for b in range(2, len(d)):
         lo, hi = max(1, b - window), min(len(d), b + window + 1)
         med = float(np.median(d[lo:hi]))
-        if d[b] >= factor * med and d[b] >= local * max(d[b - 1], d[b - 2]):
+        if med > 0 and d[b] >= factor * med and d[b] >= local * max(d[b - 1], d[b - 2]):
             out.append(b)
     return out
 
@@ -422,24 +428,29 @@ def _disc_sharpness(ref: np.ndarray, x: float, y: float, r: float) -> tuple[floa
 def census_ghosts(R_img: Renderer, census: list[dict], starts: tuple = (0, 4, 8, 12, 16, 20),
                   slope_max: float = 0.3, focus_max: float = 0.65) -> dict[str, tuple[float, float]]:
     """Census discs that are not grains: soft and faint in every early window. In each window (mean of 3 bins from
-    ``ref_start`` + s), the disc is re-fitted within 8 px (``grains.rim_fit``: grains still landing) and its rim
-    slope and focus are taken relative to the census median on the reference window. A disc whose median over the
-    windows is below ``slope_max`` and ``focus_max`` is out of focus (a ghost) or a smear left by a grain that was
-    still landing; an in-focus grain has a sharp dark rim (on the sample movie the two ghost discs read 0.12 and 0.19
-    of the median slope, the softest grain 0.54). Returns {id: (slope, focus)} of the discs judged not grains."""
+    ``ref_start`` + s) the disc's rim slope and focus are taken relative to the median of the included discs (not
+    ``excluded``) on the first window; in later windows the disc is first re-fitted within 8 px (``grains.rim_fit``:
+    grains still landing). A disc whose sharpest window stays below ``slope_max`` and ``focus_max`` is out of focus
+    (a ghost) or a smear left by a grain that was still landing; an in-focus grain has a sharp dark rim (on the
+    sample movie the two ghost discs read at most 0.13 and 0.23 of the median slope; the softest grains' medians over
+    the windows are 0.54 and 0.59). The first window is at the census position by construction, so a grain that
+    moves beyond the re-fit's reach early on is still judged sharp there. Every disc given is judged, excluded ones
+    too (an annotator's "out of focus" disc must not block its neighbours' tubes either). Returns {id: (slope,
+    focus)} of the discs judged not grains."""
     from sparsetrack.cli import registered_mean
     rs, nb = R_img.ref_start, R_img.n_bins
     wins = [registered_mean(R_img.bins, R_img.meta["shifts"], [rs + s, rs + s + 1, rs + s + 2])
             for s in starts if rs + s + 2 < nb]
-    if not wins or len(census) < 5:
+    included = np.array([not g.get("excluded") for g in census], bool)
+    if not wins or included.sum() < 5:
         return {}
     feats = np.zeros((len(census), len(wins), 2))
     for j, w in enumerate(wins):
         for i, g in enumerate(census):
             dx, dy, _ = census_mod.rim_fit(w, g["x"], g["y"], g["r"]) if j else (0.0, 0.0, 0.0)
             feats[i, j] = _disc_sharpness(w, g["x"] + dx, g["y"] + dy, g["r"])
-    med = np.median(feats[:, 0, :], axis=0)
-    rel = np.median(feats / np.maximum(med[None, None, :], 1e-6), axis=1)
+    med = np.median(feats[included, 0, :], axis=0)
+    rel = np.max(feats / np.maximum(med[None, None, :], 1e-6), axis=1)
     return {g["id"]: (round(float(rel[i, 0]), 3), round(float(rel[i, 1]), 3)) for i, g in enumerate(census)
             if rel[i, 0] < slope_max and rel[i, 1] < focus_max}
 
@@ -556,8 +567,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     earlier frozen decoder): ``edge_mask``
     ("movie" | "bin") and ``edge_margin`` (px); ``gone`` ("flag" | "hold"); ``track`` ("local" | "reacquire");
     ``fit`` ("l1" | "grown", ``fit_kw`` for ``grown_floor``); ``burst_run``; ``abrupt`` (analysed-bin indices just
-    after an abrupt change); ``owner`` ("geodesic" | "passby"). The grain's disc contrast is always measured, and
-    the bins where it is gone are returned under ``gone_bins`` (a diagnostic unless ``gone="hold"``).
+    after an abrupt change); ``owner`` ("geodesic" | "passby"). With ``gone="hold"`` (or ``track="reacquire"``)
+    the bins where the grain is gone are returned under ``gone_bins``.
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
@@ -583,7 +594,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
               (at[:, 1] >= gr + 14) & (at[:, 1] < R_img.height - gr - 14))
     absent = gone_bins(con, testable=inside)
     if track == "reacquire" and absent.any():
-        ls, absent = reacquire(img, ls, con, absent, centre, gr, rg, abrupt=abrupt_mask)
+        ls, absent = reacquire(img, ls, con, absent, centre, gr, rg)
     blocked = rg < gr - 1.0
     # pixels whose source leaves the movie in any bin are not evidence (as in SparseTrack): near an
     # edge, the padded border shows up as straight streaks that the network can take for tubes
@@ -681,7 +692,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     fit_ = fit_len
     on = np.nonzero(fit_ >= onset_px)[0]
     flags = []
-    if fit_[-1] < min_tube_px:
+    if fit_[-1] < min_tube_px or not len(on):  # (never reaching a calibrated onset_px > min_tube_px: no onset)
         status, onset, fit_ = "no_emergence_by_end", None, np.zeros_like(fit_)
     elif on[0] == 0:
         status, onset = "emerged_at_start", frames[0]
@@ -693,8 +704,9 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     # review hints (the readings are unchanged): the grain has left its place, so what is read there is
     # not its tube; or the reading keeps jumping off the fit, as when a crossing tube takes over the region
     if gone == "hold" or track == "reacquire":
-        if absent.any():
-            flags.append(f"no_grain_after:{frames[int(np.argmax(absent))]}")
+        edges = np.flatnonzero(np.diff(np.r_[0, absent.astype(np.int8), 0]))
+        for a, z in zip(edges[::2], edges[1::2]):  # runs [a, z) of bins where the grain is not at its place
+            flags.append(f"no_grain_after:{frames[a]}" if z == absent.size else f"gone:{frames[a]}-{frames[z - 1]}")
     else:
         g_ = grain_gone(img, ls, centre, gr, rg)
         if g_ is not None:
@@ -711,7 +723,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
             "burst_frame": frames[cut] if cut is not None and status != "no_emergence_by_end" else None,
             "width_px": (round(float(np.nanmedian(width[raw >= min_tube_px])), 2)
                          if np.any((raw >= min_tube_px) & np.isfinite(width)) else None),
-            **({"gone_bins": [int(i) for i in np.nonzero(absent)[0]]} if absent.any() else {}),
+            **({"gone_bins": [int(i) for i in np.nonzero(absent)[0]]}
+               if absent.any() and (gone == "hold" or track == "reacquire") else {}),
             **({"_track": ls.round(2).tolist()} if track == "reacquire" else {}),
             **({"_views": views, "_centre": centre} if keep else {}),
             **({"_paths": {i: routes[i].round(2).tolist() for i in routes}} if paths else {})}
@@ -719,9 +732,10 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
 
 def analyze(pcache: str | Path, image_cache: str | Path, grains_path: str | Path | None = None, log=print,
             ghosts: bool = True, abrupt: bool = False, **kw) -> dict:
-    """Decode every census grain. ``ghosts``: census discs judged not grains (``census_ghosts``) are neither
-    analysed nor treated as other grains' discs. ``abrupt``: bins just after an abrupt field-wide change
-    (``abrupt_bins``) cannot start a burst."""
+    """Decode every census grain. ``ghosts``: census discs judged not grains (``census_ghosts``, excluded discs
+    included) are neither analysed nor treated as other grains' discs; they are listed under "ghosts" (the review
+    pre-fill excludes them as "not_a_grain", to be re-included there if one is a grain). ``abrupt``: bins just after
+    an abrupt field-wide change (``abrupt_bins``) cannot start a burst."""
     import json
     bins_p, meta = stack.load(pcache)
     RP = Renderer(bins_p, meta)
@@ -731,7 +745,7 @@ def analyze(pcache: str | Path, image_cache: str | Path, grains_path: str | Path
     census = list(doc["grains"].values()) if isinstance(doc["grains"], dict) else doc["grains"]
     extra = {}
     if ghosts:
-        judged = census_ghosts(R_img, [g for g in census if not g.get("excluded")])
+        judged = census_ghosts(R_img, [g for g in census if g.get("exclude_reason") != "not_a_grain"])
         census = [dict(g, excluded=True, exclude_reason="not_a_grain", ghost=judged[g["id"]]) if g["id"] in judged
                   else g for g in census]
         extra["ghosts"] = judged

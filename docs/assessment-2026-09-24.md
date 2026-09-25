@@ -1094,6 +1094,43 @@ Results:
     the current tracker. On the sample movie, though, what it then reads is unreadable or foreign.
 - **The prefix decoder** takes the same frame-edge mask; no scored held-out grain changed.
 
+**A code review of those defaults** found seven defects. All are fixed and tested:
+- **Sharp grains dropped as ghosts.** The ghost test could drop a sharp grain that moved more than about 8 px in the
+  first bins. It took the median over six early windows, and the later windows missed the moved grain. It now takes
+  each disc's sharpest window; the first window is at the census position by construction.
+- **Ghosts left in the review file.** Ghost discs stayed there as grains to answer. The pre-fill now excludes them as
+  "not a grain" (marked as the model's call) and lists them to check first, and the export names them. You can
+  include one again in the tool.
+- **Excluded discs still cutting tubes.** A disc you had excluded for another reason, such as out of focus, was never
+  tested and still cut its neighbours' tubes.
+- **False bursts.** A burst could be declared from one low reading just before the grain left for good.
+- **A crash on some calibrations.** An onset length calibrated above the 8 px minimum tube could crash the decoder.
+  The frozen decoder had this bug too.
+- **"Grain gone" too broad.** It was flagged to the end of the movie even when the grain came back, so the pre-fill
+  marked every later trace unsure. A spell away is now flagged with its own frames.
+- **A miscount in the synthetic summary.** In the end-to-end summary, a grain left unanalysed counted as a tube
+  called on a control.
+
+The frozen options now reproduce the old decoder's outputs exactly, and a new test pins them. The effect of the
+fixes:
+- **Development movies:** none. Lengths are 576 of 793 and onsets 60, before and after.
+- **Real movie:**
+  - the same two ghosts are flagged;
+  - one end length moved out of the ±25% band: g032 went from 161.5 to 145.5 px, against about 200 estimated.
+    The old value had risen on a single 391 px foreign reading, which the false burst had made the last one.
+
+**Fitting a tube model to each grain's frames (inverse rendering): a negative result.** The method fits each tube's
+own appearance from its end state (dark walls, bright core, any width). It then runs the prefix decoder's joint
+dynamic programme on that evidence.
+- **Development movies:** −57 lengths (95% CI −113 to −2) and −19 onsets (−30 to −7) against the per-bin decoder.
+  It loses most on curls, crossings and docked particles.
+- **Real movie:** it recovers the thick tubes the network misses on g005, g019, g020 and g036. It loses others: jumps,
+  drags, the ghost discs and coils.
+- **As a refinement only where the network's evidence is weak:** 6 of 10 switches on the real movie helped and 4
+  hurt, and the development movies lost 8 lengths (−24 to 0).
+- **Not integrated.** What it shows is that the thick, double-walled tubes can be recovered from the frames. That
+  information is better spent training the network on such tubes.
+
 **Human repeatability sets the onset ceiling.** In your blind retest (section 1), 4 of 7 onsets fell within ±2 bins
 of the first pass; the other three moved by 5, 8 and 19 bins.
 - With the calibration, the decoders place about half the onsets within ±2 bins of one-bin human-style brackets on

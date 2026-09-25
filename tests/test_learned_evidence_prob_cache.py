@@ -54,3 +54,16 @@ def test_a_cache_from_before_fingerprints_is_built_again(image_cache, tmp_path):
     (out / "meta.json").write_text(json.dumps(meta))
     evaluate.prob_cache(image_cache, _net(0), out, log=notes.append)
     assert any("another model" in n for n in notes) and "model_sha1" in json.loads((out / "meta.json").read_text())
+
+
+def test_e2e_summary_counts_a_grain_left_unanalysed_apart_from_false_positives():
+    from prototypes.learned_evidence.evaluate import e2e_summary
+    rep = {"onset": {"hits": 1, "n_human_emerged_within": 1, "median_abs_error": 0.0},
+           "length_full": {"within_tolerance": 3, "n": 4, "median_abs_error": 1.0, "bias": 0.0},
+           "absences": {"correct": 2, "n": 2},
+           "germination_confusion": {"emerged_within": {"emerged_within": 1},
+                                     "no_emergence_by_end": {"no_emergence_by_end": 1, "missing": 1}}}
+    line = e2e_summary("x", rep)
+    assert "control false positives 0/2" in line and "labelled grains not analysed 1" in line
+    rep["germination_confusion"]["no_emergence_by_end"]["emerged_within"] = 1
+    assert "control false positives 1/3" in e2e_summary("x", rep)

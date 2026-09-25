@@ -6,7 +6,9 @@ has analysed, with the decoder's answers in the tool's own format (it goes throu
 - a traced tube at each bin the tool asks for (6 bins after onset, 40% and 70% through the movie, the
   last bin): the decoder's path from the grain's rim along the tube, as long as the length it reports.
 Every answer is marked ``review_origin: model``; the tool marks what you answer ``human``, so a grain you
-confirm or fix is told apart from one not yet looked at. The file sits with the pipeline's results
+confirm or fix is told apart from one not yet looked at. Census discs the analysis judged not grains (out-of-focus
+ghosts, ``reach.census_ghosts``) are excluded as "not_a_grain" (``exclude_origin: model``) and listed to check
+first: include one again in the tool if it is a grain, and answer it there. The file sits with the pipeline's results
 (``review_labels.json``, and the proposals as made in ``review_labels.model.json``), never with the
 benchmark labels, and an existing one is not overwritten. ``export_review.py`` turns it into results.
 
@@ -26,7 +28,7 @@ from pathlib import Path
 import numpy as np
 
 MODEL_NAME = "per-bin decoder (learned evidence)"
-REVIEW_HINTS = ("no_grain_after", "unsteady", "burst_after")  # reach_grain's flags that ask for a look first
+REVIEW_HINTS = ("no_grain_after", "gone:", "unsteady", "burst_after")  # reach_grain's flags that ask for a look first
 
 
 def simplify(pts: np.ndarray, eps: float = 1.0, max_gap: float = 25.0) -> np.ndarray:
@@ -100,6 +102,13 @@ def left_at(flags) -> int | None:
     return next((int(f.split(":")[1]) for f in flags if f.startswith("no_grain_after:")), None)
 
 
+def away(read: dict, b: int, rs: int, bin_centre) -> bool:
+    """The grain was not at its place in bin ``b``: in one of the decoder's ``gone_bins`` (it may come back), or
+    after it left for good (``no_grain_after``)."""
+    left = left_at(read["flags"])
+    return (b - rs) in set(read.get("gone_bins") or ()) or (left is not None and bin_centre(b) >= left)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--field", required=True, help="the movie's prepared cache, as given to pipeline.py")
@@ -138,9 +147,16 @@ def main(argv=None):
         f.unlink(missing_ok=True)
     bench = Bench(field, building, annotator=MODEL_NAME)  # the tool's own records, built in a scratch file
     census = bench.doc["grains"]
-    ghosts = set(pred.get("ghosts") or {})  # census discs the analysis judged not grains (reach.census_ghosts)
+    ghosts = pred.get("ghosts") or {}  # census discs the analysis judged not grains (reach.census_ghosts)
     physical = [g for g in census.values() if g.get("exclude_reason") != "not_a_grain" and g["id"] not in ghosts]
     n_traces, differ, check_first = 0, [], {}
+    for gid, (slope, focus) in sorted(ghosts.items()):
+        g = census.get(gid)
+        if g is None or g.get("excluded"):  # already excluded (by an annotator, for any reason): left as it is
+            continue
+        bench.set_exclusion(gid, {"excluded": True, "reason": "not_a_grain"})
+        g["exclude_origin"], g["ghost"] = "model", [slope, focus]
+        check_first[gid] = [f"not_a_grain?:rim {slope:.2f},focus {focus:.2f} of the median"]
     for res in pred["grains"]:
         g = census.get(res["id"])
         if g is None or g.get("excluded"):
@@ -159,10 +175,8 @@ def main(argv=None):
             continue
         plan = trace_bins(body.get("first_visible_bin", 0), nb)
         follow = bench.follow(g["id"])
-        left = left_at(read["flags"])
         for b in plan:
-            bench.set_trace(g["id"], trace_body(read, b, rs, follow,
-                                                unsure=left is not None and bench.bin_centre(b) >= left))
+            bench.set_trace(g["id"], trace_body(read, b, rs, follow, unsure=away(read, b, rs, bench.bin_centre)))
             n_traces += 1
     doc = bench.doc
     for lab in doc["labels"].values():
@@ -181,7 +195,8 @@ def main(argv=None):
     for f in (building, building.with_suffix(".journal.jsonl")):
         f.unlink(missing_ok=True)
     if check_first:
-        print("check these first (the grain left its place, the reading keeps jumping, or the tube may have burst):\n  "
+        print("check these first (the grain left its place, the reading keeps jumping, the tube may have burst, or "
+              "the disc was judged not a grain and excluded: include it again in the tool if it is one):\n  "
               + "\n  ".join(f"{gid}: {', '.join(v)}" for gid, v in sorted(check_first.items())))
     if differ:
         print(f"note: {len(differ)} grains read differently from {pred_path} (settings changed since?): "

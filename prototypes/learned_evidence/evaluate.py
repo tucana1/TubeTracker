@@ -365,12 +365,15 @@ def e2e_summary(name: str, rep: dict) -> str:
     o, L, a = rep["onset"], rep["length_full"], rep["absences"]
     conf = rep["germination_confusion"]
     ctrl = conf.get("no_emergence_by_end", {})
-    fp = sum(v for k, v in ctrl.items() if k != "no_emergence_by_end")
+    fp = sum(v for k, v in ctrl.items() if k in ("emerged_within", "emerged_at_start"))  # a tube called on a control
     missed = sum(v for k, v in conf.get("emerged_within", {}).items() if k != "emerged_within")
+    # labelled grains with no prediction (e.g. judged not a grain): their traces are not scored at all
+    missing = sum(c.get("missing", 0) for c in conf.values())
     return (f"{name:9s} onset {o['hits']:3d}/{o['n_human_emerged_within']:<3d} (median |err| "
             f"{(o['median_abs_error'] or 0):5.0f} frames, missed {missed}) | lengths {L['within_tolerance']:3d}/{L['n']:<3d} "
             f"(median |err| {L['median_abs_error'] or 0:.2f} px, bias {L['bias'] or 0:+.2f}) | absences "
-            f"{a['correct']}/{a['n']} | control false positives {fp}/{sum(ctrl.values())}")
+            f"{a['correct']}/{a['n']} | control false positives {fp}/{sum(ctrl.values())}"
+            + (f" | labelled grains not analysed {missing}" if missing else ""))
 
 
 def main(argv=None):

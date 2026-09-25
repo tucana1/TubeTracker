@@ -223,6 +223,10 @@ def main(argv=None):
                      "tube burst, or no tube)")
     if not have_model:
         lines.append(f"no {model_path.name}: what changed from the model's proposals can't be told")
+    ghosts = sorted(gid for gid, g in doc["grains"].items() if g.get("excluded") and g.get("exclude_origin") == "model")
+    if ghosts:
+        lines.append(f"{len(ghosts)} census discs the model judged not grains are left out ({', '.join(ghosts)}): "
+                     "include one again in the tool if it is a grain, answer it, then export again")
     if n_on_checked < n_on or n_tr_checked < n_tr or n_open:
         lines.append("answers not yet checked are the model's: carry on reviewing, then export again")
     if 0 < n_on_checked < n_on:

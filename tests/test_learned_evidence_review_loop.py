@@ -90,3 +90,51 @@ def test_prefill_reads_with_the_recorded_onset_length(analysed):
                             "--out", str(work / f"review_{onset_px}.json")])
         first[onset_px] = json.loads(out.read_text())["labels"]["g001"]["onset"]["first_visible_bin"]
     assert first[8.0] > first[None]  # a longer onset length calls the onset later, as calibration adopted it
+
+
+def test_a_disc_judged_not_a_grain_is_excluded_for_review_and_can_come_back(tmp_path, capsys):
+    """Six sharp grains and an out-of-focus ghost disc: the analysis leaves the ghost out, the pre-fill excludes it
+    in the tool (model's call, listed to check first), the export says so, and the reviewer can include it again."""
+    import cv2
+    from sparsetrack.bench.server import Bench
+
+    from prototypes.learned_evidence import export_review, prefill, reach
+
+    size, T = 400, 30
+    pos = [(80.5, 80.5), (200.5, 80.5), (320.5, 80.5), (80.5, 250.5), (200.5, 250.5), (320.5, 250.5), (200.5, 350.5)]
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    im = np.full((size, size), 180.0)
+    for k, (x, y) in enumerate(pos):
+        d = np.hypot(xx - x, yy - y)
+        disc = np.where(d < 12, -60.0, 0.0) + np.where((d >= 10) & (d < 13), -40.0, 0.0)
+        im += cv2.GaussianBlur(disc.astype(np.float32), (0, 0), 5.0) * 0.5 if k == 6 else disc
+    rng = np.random.default_rng(0)
+    img = np.stack([im + rng.normal(0, 2.0, im.shape) for _ in range(T)])
+    grains = [{"id": f"g{k + 1:03d}", "x": x, "y": y, "r": 12.0, "isolated": True} for k, (x, y) in enumerate(pos)]
+    field, work = tmp_path / "cache", tmp_path / "work"
+    for path, bins in ((field, img), (work / "prob_cache", np.zeros_like(img))):
+        path.mkdir(parents=True)
+        np.save(path / "bins.npy", bins.astype(np.float16))
+        (path / "meta.json").write_text(json.dumps({
+            "schema": stack.SCHEMA, "frames_per_bin": 300, "n_bins": T, "shifts": [[0.0, 0.0]] * T,
+            "movie": {"name": "t.mp4", "size_bytes": 1, "n_frames": 300 * T, "width": size, "height": size}}))
+        (path / "grains.json").write_text(json.dumps({"grains": grains}))
+    dec = {"burst": True, "vmax": 4.0}
+    pred = reach.analyze(work / "prob_cache", field, log=lambda *a: None, **dec)
+    assert set(pred["ghosts"]) == {"g007"} and len(pred["grains"]) == 6
+    (work / "perbin").mkdir()
+    (work / "perbin" / "predictions.json").write_text(json.dumps({**pred, "decoder": dec}))
+    out = prefill.main(["--field", str(field), "--work", str(work)])
+    doc = json.loads(out.read_text())
+    g7 = doc["grains"]["g007"]
+    assert g7["excluded"] and g7["exclude_reason"] == "not_a_grain" and g7["exclude_origin"] == "model"
+    assert set(doc["prefill"]["check_first"]) == {"g007"}
+    bench = Bench(field, out, annotator="reviewer")
+    assert bench.state()["progress"]["grains"] == 6  # the tool does not ask for the ghost
+    capsys.readouterr()
+    export_review.main(["--labels", str(out)])
+    assert "judged not grains are left out (g007)" in capsys.readouterr().out
+    grains_csv = list(csv.DictReader(open(work / "reviewed_grains.csv")))
+    assert "g007" not in {r["grain"] for r in grains_csv} and len(grains_csv) == 6
+    bench.set_exclusion("g007", {"excluded": False})  # the reviewer disagrees: it is a grain
+    assert bench.state()["progress"]["grains"] == 7

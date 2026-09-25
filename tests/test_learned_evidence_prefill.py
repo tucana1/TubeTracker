@@ -131,3 +131,12 @@ def test_after_the_grain_left_the_proposal_is_unsure():
     body = P.trace_body(res, 3, 0, np.zeros((4, 2)), unsure=True)
     assert body["state"] == "unsure" and len(body["points"]) >= 2  # the points stay for the reviewer
     assert P.left_at(["burst_after:900", "no_grain_after:1350"]) == 1350 and P.left_at([]) is None
+
+
+def test_a_spell_away_makes_only_its_own_proposals_unsure():
+    def centre(b):
+        return b * 300 + 150
+    back = {"flags": ["gone:900-1200"], "gone_bins": [3, 4]}  # away in bins 3-4, then back
+    assert [P.away(back, b, 0, centre) for b in (2, 3, 4, 5, 9)] == [False, True, True, False, False]
+    left = {"flags": ["no_grain_after:1350"]}  # gone for good from bin 4
+    assert [P.away(left, b, 0, centre) for b in (3, 4, 9)] == [False, True, True]
