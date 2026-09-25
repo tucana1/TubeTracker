@@ -44,6 +44,7 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
 | `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins |
 | `review.py` | Review pictures for the per-bin decoder on the movie itself (six registered bins with the region read and its medial axis, then the length curve), in SparseTrack's own review gallery |
+| `calibrate.py` | Fits the per-bin decoder's end offset on a movie's human traces, with a check over folds of grains; writes `decoder.json` only if the gain is clear of noise |
 | `finetune.py` | Fine-tuning on a movie's human traces, with a check that holds out grains and traced frames; writes the tuned model only if it reads more right |
 | `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
 | `models/unet_v2_sample_field.pt` | The trained v2 model (ten synthetic movies on the sample movie's field), for a quick first look |
@@ -82,12 +83,29 @@ flag. Movie 2's longest tubes pass ±128 px, so both runs use `evaluate.adaptive
 - On a synthetic movie of movie 2's length it takes the traces that leave the crop from 9/20 to 20/20 in tolerance.
   The other 33 grains are bit-identical.
 
+**Calibrate the decoder on your traces (after the dev test, about 10 minutes).** The per-bin decoder adds a constant
+to every length it reads, because the medial axis stops short of a tube's end. How far short depends on how the
+evidence looks at tube ends. `calibrate.py` fits that one number on the `ld` traces:
+
+```bash
+.venv/bin/python -m prototypes.learned_evidence.calibrate --field runs/sparsetrack/ld \
+    --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_cal
+```
+
+- It decodes with offsets from −6 to +3 px and picks the one with the most lengths and onsets in tolerance.
+- The check reads each third of the grains with the offset the other two thirds picked.
+- It writes `decoder.json` only if the 95% interval for the gain in lengths lies above zero and onsets are no worse.
+  Picking the best of ten on the same traces flatters small gains, hence the stricter rule.
+- `pipeline.py --decoder`, `finetune.py --decoder` and `Analyze_Movie_Learned.command` use it.
+- Fit it on a model that was not tuned on the same traces. It refuses a model fine-tuned on them.
+
 **Fine-tune on your traces (after the dev test, about 45 minutes).** `finetune.py` tunes the network on the `ld`
 traces and checks whether that helps before anything uses the result:
 
 ```bash
 .venv/bin/python -m prototypes.learned_evidence.finetune --field runs/sparsetrack/ld \
-    --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft
+    --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft \
+    --decoder runs/learned_evidence/ld_cal/decoder.json      # only if calibration was adopted
 ```
 
 - **What it learns from.** Tube along each traced line, and background in a band beside it that starts past the
@@ -115,6 +133,10 @@ traces and checks whether that helps before anything uses the result:
     --labels benchmark/labels/m2_v1.json --model runs/learned_evidence/ld/unet.pt \
     --work runs/learned_evidence/m2 --heldout-once
 ```
+
+- If fine-tuning was adopted, pass `--model runs/learned_evidence/ld_ft/unet_ft.pt` instead.
+- If calibration was adopted, add `--decoder runs/learned_evidence/ld_cal/decoder.json`.
+- Whatever is frozen is scored once.
 
 ## Results so far
 
@@ -200,3 +222,19 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
   - The check's verdict matched the truth on all three.
   - The gains are real but small, and a tuned model is worse on movies unlike the one it was tuned on. Use it only
     for movies taken under the same conditions as `ld`.
+- **Calibrating the decoder's end offset on sparse traces** (`calibrate.py`; the same synthetic movies and traces).
+  The offset was picked on the development movie's traces, then applied to a fresh movie of the same kind:
+
+  | Movie | Check on the development traces (lengths, 95% CI) | Verdict | Fresh movie, lengths in tolerance |
+  |---|---|---|---|
+  | Thick tubes (read 5.6 px long) | +19 (+8 to +31), offset −5 | adopted | 41 → 90 |
+  | Faint tubes | +3 (−3 to +10), offset +3 | not adopted | would have been 119 → 114 |
+  | Wide tubes | +1 (−11 to +13), offset 0 | not adopted | would have been 156 → 149 |
+
+  - Where a movie's tubes all read long or short by about the same amount, one fitted number more than doubles the
+    lengths in tolerance. That is far more than fine-tuning gave on the same thick tubes, whose bias it barely
+    moved (+5.6 to +5.0 px).
+  - Faint tubes read short in proportion to their length, which no single offset fixes.
+  - Letting the traces pick the probability threshold as well made the full-truth scores worse (wide tubes: 191
+    against 201 lengths and onsets in tolerance), so only the offset is fitted.
+

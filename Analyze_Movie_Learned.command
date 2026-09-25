@@ -5,6 +5,8 @@
 # the population curve and growth curves. The model: fine-tuned on your dev movie's traces when the
 # cross-validated check adopted it (runs/learned_evidence/ld_ft/unet_ft.pt), else trained on your dev
 # movie's field (runs/learned_evidence/ld/unet.pt), else the one shipped in prototypes/learned_evidence/models/.
+# The per-bin decoder's end offset: as calibrated on your dev movie's traces when that was adopted
+# (runs/learned_evidence/ld_cal/decoder.json), else the default.
 cd "$(dirname "$0")" || exit 1
 MOVIE=$(osascript -e 'POSIX path of (choose file with prompt "Choose a pollen movie to analyse")' 2>/dev/null)
 [ -z "$MOVIE" ] && { echo "No movie chosen."; exit 0; }
@@ -23,8 +25,10 @@ fi
 MODEL="runs/learned_evidence/ld_ft/unet_ft.pt"
 [ -f "$MODEL" ] || MODEL="runs/learned_evidence/ld/unet.pt"
 [ -f "$MODEL" ] || MODEL="prototypes/learned_evidence/models/unet_v2_sample_field.pt"
-echo "Analysing with $MODEL (about 10-20 minutes on a laptop)..."
+DECODER=()
+[ -f "runs/learned_evidence/ld_cal/decoder.json" ] && DECODER=(--decoder "runs/learned_evidence/ld_cal/decoder.json")
+echo "Analysing with $MODEL ${DECODER[*]} (about 10-20 minutes on a laptop)..."
 .venv/bin/python -m prototypes.learned_evidence.pipeline --field "$CACHE" --work "runs/learned_evidence/$NAME" \
-    --model "$MODEL" || { echo "Analysis failed."; read; exit 1; }
+    --model "$MODEL" "${DECODER[@]}" || { echo "Analysis failed."; read; exit 1; }
 open "runs/learned_evidence/$NAME/perbin/index.html"
 echo "Done. Results: runs/learned_evidence/$NAME/ (per_grain.csv, perbin/). You can close this window."

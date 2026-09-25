@@ -30,7 +30,7 @@ from sparsetrack.cli import write_census
 from sparsetrack.evaluate import load, score
 from sparsetrack.synth import make_movie
 
-from . import data, evaluate, reach, review, train
+from . import calibrate, data, evaluate, reach, review, train
 from .model import load as load_model
 
 # ten movies (model v2): on held-out synthetic seeds, +35 lengths in tolerance over five (95% CI +6 to +70)
@@ -115,6 +115,8 @@ def main(argv=None):
     ap.add_argument("--no-burst", action="store_true",
                     help="per-bin decoder: fit growth over the whole movie even where a tube's reading collapses "
                          "for good (by default that is read as a burst: growth is fitted up to it)")
+    ap.add_argument("--decoder", default=None,
+                    help="per-bin decoder settings fitted on the dev movie's traces by calibrate.py (decoder.json)")
     ap.add_argument("--fixed-crop", action="store_true",
                     help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
                          "(by default such grains are read again at +/-300 px, in both runs)")
@@ -139,7 +141,9 @@ def main(argv=None):
     # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
     kw = dict(big=None if args.fixed_crop else 300, burst=not args.no_burst,
               vmax=float(learned.get("params", {}).get("vmax_px", 4.0)))  # SparseTrack's speed cap
+    kw.update(calibrate.decoder_settings(args.decoder, model_path))
     perbin = reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, **kw)
+    perbin["decoder"] = {k: v for k, v in kw.items() if k != "vmax"} | {"vmax": kw["vmax"], "from": args.decoder}
     (work / "perbin").mkdir(exist_ok=True)
     (work / "perbin" / "predictions.json").write_text(json.dumps(perbin))
     # what the lab reviews and reports: pictures on the movie itself, the population curve, growth curves

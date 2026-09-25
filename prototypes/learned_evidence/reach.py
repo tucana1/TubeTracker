@@ -163,7 +163,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         end = end_px
         if tip == "dt":  # the medial axis stops about a half-width short of the tube's end
             end += float(cv2.distanceTransform(region.astype(np.uint8), cv2.DIST_L2, 3)[far])
-        raw[i] = float(cum[far]) + offset + end
+        raw[i] = max(0.0, float(cum[far]) + offset + end)  # a negative end_px must not make lengths negative
         width[i] = float(region.sum()) / max(float(cum[far]) + 1.0, 1.0)
     if edge and big and half < big:
         res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,

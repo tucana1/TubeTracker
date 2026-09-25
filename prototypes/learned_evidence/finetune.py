@@ -448,15 +448,16 @@ def speed_cap(pcache: Path, field: Path, grains_path: Path) -> float:
 
 
 def read_perbin(net, field: Path, labels_path: Path, work: Path, tag: str, keep_cache: bool = False,
-                log=print) -> dict:
-    """The pipeline's per-bin run (learned evidence, grown crop, burst-aware fit) with this network."""
+                log=print, **decoder) -> dict:
+    """The pipeline's per-bin run (learned evidence, grown crop, burst-aware fit) with this network;
+    ``decoder`` holds settings from ``calibrate.py``."""
     from . import evaluate, reach
 
     pcache = evaluate.prob_cache(field, net, work / f"prob_{tag}", log=log)
     try:
         vmax = speed_cap(pcache, field, labels_path)
         return reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, big=300, burst=True,
-                             vmax=vmax)
+                             vmax=vmax, **decoder)
     finally:
         if not keep_cache:
             shutil.rmtree(pcache, ignore_errors=True)
@@ -478,6 +479,8 @@ def main(argv=None):
     ap.add_argument("--batch", type=int, default=16, help="real crops per batch (as many synthetic ones again)")
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--distill", type=float, default=0.5, help="weight holding unsupervised pixels to the start")
+    ap.add_argument("--decoder", default=None,
+                    help="per-bin decoder settings from calibrate.py (decoder.json), used by the check's readings")
     ap.add_argument("--no-final", action="store_true", help="only the cross-validated score")
     ap.add_argument("--keep-caches", action="store_true")
     ap.add_argument("--device", default=None)
@@ -496,12 +499,14 @@ def main(argv=None):
         print(*a, flush=True)
         print(*a, file=log_file, flush=True)
 
+    from .calibrate import decoder_settings
+    dec = decoder_settings(args.decoder, start, log=print)
     syn = load_shards(args.synthetic) if args.synthetic else None
     log(f"{labels_path.name}: starting from {start}; synthetic samples {len(syn['x']) if syn else 0}")
     kw = dict(syn=syn, steps=args.steps, batch=args.batch, lr=args.lr, distill=args.distill, device=args.device,
               seed=args.seed, log=log)
     info = dict(labels=str(labels_path), field=str(field), started_from=str(start),
-                **{k: getattr(args, k) for k in ("steps", "batch", "lr", "distill", "seed", "synthetic")})
+                **{k: getattr(args, k) for k in ("steps", "batch", "lr", "distill", "seed", "synthetic", "decoder")})
     if args.folds > 1:
         from sparsetrack.evaluate import score
 
@@ -525,9 +530,9 @@ def main(argv=None):
             net = tune(start, train, val=val, **kw)
             save(net, work / f"fold{k}" / "unet.pt", **info, fold=k, folds=args.folds, held_out=sorted(held),
                  held_out_bins=sorted(held_bins))
-            pred = read_perbin(net, field, labels_path, work, f"fold{k}", args.keep_caches, log)
+            pred = read_perbin(net, field, labels_path, work, f"fold{k}", args.keep_caches, log, **dec)
             cv.update({r["id"]: r for r in pred["grains"] if r["id"] in held})
-        base = read_perbin(load_model(str(start)), field, labels_path, work, "start", args.keep_caches, log)
+        base = read_perbin(load_model(str(start)), field, labels_path, work, "start", args.keep_caches, log, **dec)
         tuned = {**base, "grains": [cv.get(r["id"], r) for r in base["grains"]],
                  "method": f"per-bin decoder, fine-tuned ({args.folds}-fold cross-validated)"}
         (work / "perbin_start.json").write_text(json.dumps(base))
