@@ -30,9 +30,10 @@ DEV, CAL, FT = ROOT / "ld", ROOT / "ld_cal", ROOT / "ld_ft"
 
 
 def _here(path: Path) -> Path:
-    """``path`` relative to the working directory (the repository) when it lies inside it."""
+    """``path`` relative to the working directory (the repository) when it lies inside it. Links are
+    not followed: ``runs/`` in a worktree is a link to the main checkout's, and stays ``runs/...``."""
     try:
-        return path.resolve().relative_to(Path.cwd().resolve())
+        return Path(os.path.abspath(path)).relative_to(os.path.abspath(Path.cwd()))
     except ValueError:
         return path
 

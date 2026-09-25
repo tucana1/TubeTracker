@@ -82,3 +82,12 @@ def test_movie_2_and_a_missing_cache_are_refused(repo):
         adapt.main(["--field", "runs/sparsetrack/nothing"], steps={})
     with pytest.raises(SystemExit, match="no labels"):
         adapt.main(["--labels", "benchmark/labels/nothing.json"], steps={})
+
+
+def test_paths_in_the_summary_stay_inside_the_repository_through_links(repo, tmp_path_factory):
+    elsewhere = tmp_path_factory.mktemp("main_checkout")
+    (elsewhere / "learned_evidence").mkdir()
+    (repo / "runs" / "learned_evidence").symlink_to(elsewhere / "learned_evidence")  # runs/ linked to the main checkout
+    assert adapt._here(repo / "runs/learned_evidence/ld/unet.pt") == adapt.Path("runs/learned_evidence/ld/unet.pt")
+    assert adapt._here(adapt.Path("runs/learned_evidence/ld/unet.pt")) == adapt.Path("runs/learned_evidence/ld/unet.pt")
+    assert adapt._here(elsewhere / "x.pt") == elsewhere / "x.pt"  # outside the repository: left as it is
