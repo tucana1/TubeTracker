@@ -268,4 +268,7 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
     network marks one of the dark walls, and 22 of 73 lengths are within tolerance there.
   - Your labelling tool opens the file unchanged, asks for a new trace where a corrected onset moves the plan, and
     keeps the model's and your answers apart.
+  - On `sample_movie.avi` (real footage, no labels) the traces lie on the visible tubes. Where the decoder's
+    reading of a bin fades, the trace is taken from the last bin it saw the tube that long, never stretched. Where
+    two grains touch, a trace can follow a tube between them, and the reviewer decides whose it is.
 

@@ -45,8 +45,13 @@ def simplify(pts: np.ndarray, eps: float = 1.0, max_gap: float = 25.0) -> np.nda
     return pts[sorted(set(out))]
 
 
-def to_length(pts: np.ndarray, length: float) -> np.ndarray:
-    """The path cut to ``length`` px of arc, or carried on along its last direction to reach it."""
+def arc(pts) -> float:
+    return float(np.sum(np.hypot(*np.diff(np.asarray(pts, float), axis=0).T))) if len(pts) > 1 else 0.0
+
+
+def to_length(pts: np.ndarray, length: float, max_extend: float = 5.0) -> np.ndarray:
+    """The path cut to ``length`` px of arc, or carried on along its last direction to reach it, by at
+    most ``max_extend`` px: a trace left short is easy to fix in review, an invented one misleads."""
     seg = np.hypot(*np.diff(pts, axis=0).T)
     s = np.concatenate([[0.0], np.cumsum(seg)])
     if length <= s[-1]:
@@ -56,7 +61,7 @@ def to_length(pts: np.ndarray, length: float) -> np.ndarray:
     back = next((q for q in pts[-2::-1] if np.hypot(*(pts[-1] - q)) >= 3.0), pts[0])
     d = pts[-1] - back
     d = d / max(float(np.hypot(*d)), 1e-9)
-    return np.vstack([pts, pts[-1] + d * (length - s[-1])])
+    return np.vstack([pts, pts[-1] + d * min(length - s[-1], max_extend)])
 
 
 def onset_body(res: dict, fpb: int) -> dict:
@@ -70,15 +75,17 @@ def onset_body(res: dict, fpb: int) -> dict:
     return {"verdict": "no_emergence_by_end"}
 
 
-def trace_body(res: dict, b: int, rs: int, follow: np.ndarray, reach_back: int = 10) -> dict:
+def trace_body(res: dict, b: int, rs: int, follow: np.ndarray) -> dict:
     """The decoder's reading at bin ``b`` as the tool's trace answer (points in the tool's grain-following
-    view). A bin without a path of its own borrows the latest one within ``reach_back`` bins."""
+    view). The monotone fit can hold a length the bin's own reading fell short of (fading evidence, a
+    burst), so the path is the latest one up to this bin that was about that long, cut to the length."""
     i = b - rs
     length = float(res["length"]["px"][i])
-    paths = res.get("_paths", {})
-    src = next((paths[j] for j in range(i, max(-1, i - reach_back - 1), -1) if j in paths), None)
-    if length < 2.0 or src is None or len(src) < 2:
+    paths = {j: p for j, p in res.get("_paths", {}).items() if j <= i and len(p) >= 2}
+    if length < 2.0 or not paths:
         return {"bin": b, "state": "no_tube", "points": [], "view": "model"}
+    long_enough = [j for j in paths if arc(paths[j]) >= length - max(2.0, 0.1 * length)]
+    src = paths[max(long_enough)] if long_enough else max(paths.values(), key=arc)
     ref = simplify(to_length(np.asarray(src, float), length))
     view = ref - np.asarray(follow[b], float)
     return {"bin": b, "state": "full", "points": view.round(2).tolist(), "view": "model"}
@@ -108,6 +115,10 @@ def main(argv=None):
         raise SystemExit(f"run pipeline.py on {field} with --work {work} first (needs {pred_path} and {pcache})")
     pred = json.loads(pred_path.read_text())
     dec = {k: v for k, v in (pred.get("decoder") or {}).items() if k in ("big", "burst", "vmax", "end_px")}
+    if not dec:  # predictions from before the pipeline recorded its settings: its defaults then
+        learned = work / "learned" / "predictions.json"
+        vmax = json.loads(learned.read_text()).get("params", {}).get("vmax_px", 4.0) if learned.exists() else 4.0
+        dec = {"big": 300, "burst": True, "vmax": float(vmax)}
     bins_p, meta = stack.load(pcache)
     RP, R_img = Renderer(bins_p, meta), Renderer(*stack.load(field))
     fpb, rs, nb = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0)), int(meta["n_bins"])
@@ -118,18 +129,21 @@ def main(argv=None):
     bench = Bench(field, building, annotator=MODEL_NAME)  # the tool's own records, built in a scratch file
     census = bench.doc["grains"]
     physical = [g for g in census.values() if g.get("exclude_reason") != "not_a_grain"]
-    n_traces = 0
+    n_traces, differ = 0, []
     for res in pred["grains"]:
         g = census.get(res["id"])
         if g is None or g.get("excluded"):
             continue
-        body = onset_body(res, fpb)
+        others = [o for o in physical if o["id"] != g["id"]]
+        # read again, with its paths; onset and lengths both come from this reading, so they agree
+        read = reach_grain(RP, R_img, meta, g, others, paths=tuple(range(nb - rs)), **dec)
+        if (read["status"], read["final_length_px"]) != (res.get("status"), res.get("final_length_px")):
+            differ.append(g["id"])
+        body = onset_body(read, fpb)
         bench.set_onset(g["id"], body)
         if body["verdict"] not in ("emerged_within", "emerged_at_start"):
             continue
         plan = trace_bins(body.get("first_visible_bin", 0), nb)
-        others = [o for o in physical if o["id"] != g["id"]]
-        read = reach_grain(RP, R_img, meta, g, others, paths=tuple(range(nb - rs)), **dec)
         follow = bench.follow(g["id"])
         for b in plan:
             bench.set_trace(g["id"], trace_body(read, b, rs, follow))
@@ -149,6 +163,9 @@ def main(argv=None):
                                                              "payload": info}) + "\n")
     for f in (building, building.with_suffix(".journal.jsonl")):
         f.unlink(missing_ok=True)
+    if differ:
+        print(f"note: {len(differ)} grains read differently from {pred_path} (settings changed since?): "
+              f"{', '.join(differ[:8])}{' ...' if len(differ) > 8 else ''}; the review holds this reading")
     print(f"{out}: {info['grains']} grains, {n_traces} traces pre-filled ({time.time() - started:.0f} s). Review with:\n"
           f"  python -m sparsetrack bench {field} --labels {out}")
     return out

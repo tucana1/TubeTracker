@@ -90,3 +90,15 @@ def test_decoder_paths_are_in_the_tools_reference_coordinates(tmp_path):
     assert np.allclose(path[0], [100.5, 59.5], atol=1.0)  # on the rim, where the tube leaves
     assert np.abs(path[:, 0] - 100.5).max() <= 1.0  # along the tube's centre column (pixel 100 -> 100.5)
     assert abs(path[-1, 1] - 140.5) <= 2.0  # to its far end
+
+
+def test_a_held_length_takes_the_path_seen_at_that_length_and_is_not_invented():
+    rs, n = 0, 12
+    long_path = [[100.0, 50.0], [100.0, 90.0]]    # bin 5: the tube seen 40 px long
+    faded = [[100.0, 50.0], [104.0, 58.0]]         # bin 9: the evidence fades, 9 px read, pointing elsewhere
+    res = {"length": {"px": [0.0] * 3 + [20.0, 30.0, 40.0] + [40.0] * 6}, "_paths": {5: long_path, 9: faded}}
+    pts = np.asarray(P.trace_body(res, 9, rs, np.zeros((n, 2)))["points"])
+    assert np.allclose(pts[-1], [100.0, 90.0])  # the path from bin 5, not the faded one stretched 31 px
+    only_faded = {"length": res["length"], "_paths": {9: faded}}
+    short = np.asarray(P.trace_body(only_faded, 9, rs, np.zeros((n, 2)))["points"])
+    assert P.arc(short) <= np.hypot(4, 8) + 5.0 + 1e-6  # nothing better: left short, extended by 5 px at most
