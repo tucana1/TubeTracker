@@ -84,12 +84,13 @@ def trace_body(res: dict, b: int, rs: int, follow: np.ndarray, unsure: bool = Fa
     by then, so what the decoder read there may be anything passing."""
     i = b - rs
     length = float(res["length"]["px"][i])
-    paths = {j: p for j, p in res.get("_paths", {}).items() if j <= i and len(p) >= 2}
+    # smoothed first, then cut: the tool measures the clicked polyline, so the trace is the length reported
+    paths = {j: simplify(np.asarray(p, float)) for j, p in res.get("_paths", {}).items() if j <= i and len(p) >= 2}
     if length < 2.0 or not paths:
         return {"bin": b, "state": "no_tube", "points": [], "view": "model"}
     long_enough = [j for j in paths if arc(paths[j]) >= length - max(2.0, 0.1 * length)]
     src = paths[max(long_enough)] if long_enough else max(paths.values(), key=arc)
-    ref = simplify(to_length(np.asarray(src, float), length))
+    ref = to_length(src, length)
     view = ref - np.asarray(follow[b], float)
     return {"bin": b, "state": "unsure" if unsure else "full", "points": view.round(2).tolist(), "view": "model"}
 

@@ -48,6 +48,21 @@ def test_trace_answer_is_the_reported_length_in_the_tools_view():
     assert P.trace_body(res, rs + 5, rs, follow)["state"] == "no_tube"  # not grown yet
 
 
+def test_a_staircase_path_is_measured_as_the_tool_measures_the_trace():
+    # a pixel path at 22.5 deg: through pixel centres it is 8% longer than the line it steps along
+    from skimage.draw import line
+
+    rr, cc = line(0, 0, 38, 92)
+    path = np.c_[cc + 100.0, rr + 50.0]
+    stair = np.hypot(*np.diff(path, axis=0).T).sum()
+    straight = float(np.hypot(92, 38))
+    assert stair > 1.07 * straight
+    res = {"length": {"px": [0.0, 90.0]}, "_paths": {1: path.tolist()}}
+    pts = np.asarray(P.trace_body(res, 1, 0, np.zeros((2, 2)))["points"])
+    assert np.isclose(np.hypot(*np.diff(pts, axis=0).T).sum(), 90.0, atol=0.05)  # the length the model reported
+    assert np.hypot(*(pts[-1] - pts[0])) == pytest.approx(90.0, abs=0.5)  # along the line, not its staircase
+
+
 def test_refuses_to_overwrite_or_write_into_benchmark(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)  # the repository
     out = tmp_path / "review_labels.json"
