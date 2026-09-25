@@ -116,7 +116,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
                 tip: str = "const", big: int | None = None, burst: bool = False, keep: tuple = (),
-                paths: tuple = (), length: str = "path") -> dict:
+                paths: tuple = (), length: str = "path", pieces: bool = False, memory: bool = False) -> dict:
     """Length per bin, then a monotone fit. ``seed`` chooses how the bin's length is read:
     ``"skeleton"`` (the default, frozen on the development seed): geodesic length along the region's
     medial axis from its pixels nearest the grain centre, plus their distance from the rim, so a
@@ -140,6 +140,11 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     (1364 against 1368 of 1792; 67 against 80 of the 100 longest tubes): the staircase's excess
     brings some of the under-reads (a region stopping short of the tip) inside tolerance. So the
     default stays "path".
+    Two options under evaluation on long tubes (defaults off): ``pieces`` measures from each piece of
+    the region's own nearest pixels, not only from the piece nearest the grain (a speck touching the
+    rim could hide the tube); ``memory`` holds the longest reading so far while the evidence still
+    shows its path (a curl closing into a loop, or a neighbour's rim taking part of the tube, would
+    otherwise shorten it), taking a longer path only at a speed a tube can grow.
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
@@ -173,6 +178,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     width = np.full(nb - rs, np.nan)  # region area per px of length: the tube's full width
     edge = False  # the tube reaches the crop's edge: read the grain again with a bigger crop
     views, routes = {}, {}
+    mem = None  # (path pixels, reading, bin): the longest reading so far, held while the evidence still shows it
     for i, b in enumerate(range(rs, nb)):
         p = RP.crop(b, gx, gy, half) / scale
         dx, dy = ls[i]
@@ -183,6 +189,12 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
             views[i] = [cv2.warpAffine(img[i].astype(np.float32), shift, (2 * half, 2 * half),
                                        flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE), None, None]
         m = (p > thr) & ~blocked
+        if memory and mem is not None:  # a loop closing, a neighbour's rim, a break: the tube is still there
+            shown = cv2.dilate(m.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0  # 2 px of sway
+            if shown[mem[0]].mean() >= 0.9:
+                raw[i] = mem[1]
+            else:
+                mem = None  # gone (a burst, or the grain moved): readings start again from the evidence
         if not (m & own_ring).any():
             continue
         _, lab = cv2.connectedComponents(m.astype(np.uint8), connectivity=8)
@@ -200,7 +212,14 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if i in views:
             views[i][1], views[i][2] = region, comp
         seeds = comp & rim if seed == "rim" else np.zeros_like(comp)
-        offset = 0.0
+        offset, start = 0.0, {}
+        if not seeds.any() and pieces:  # each piece from its own nearest pixels: the nearest may be a speck
+            n_pc, lab_pc = cv2.connectedComponents(comp.astype(np.uint8), connectivity=8)
+            for c in range(1, n_pc):
+                pc = lab_pc == c
+                rmin_c = float(rg[pc].min())
+                seeds |= pc & (rg <= rmin_c + 0.5)
+                start[c] = max(0.0, rmin_c - gr)
         if not seeds.any():  # nearest pixels (or a faint base that starts beyond the rim)
             near = comp & own_ring if (comp & own_ring).any() else comp
             rmin = float(rg[near].min())
@@ -214,6 +233,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if not ok.any():
             continue
         far = np.unravel_index(int(np.argmax(np.where(ok, cum, -1.0))), cum.shape)
+        if start:
+            offset = start.get(int(lab_pc[far]), 0.0)
         if i in paths or length == "smooth":
             route = np.asarray(mcp.traceback(far), float)[:, ::-1]  # crop cols, rows
         if i in paths:  # the exit on the rim, then the medial axis to the far end (-> reference x, y)
@@ -227,12 +248,17 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if tip == "dt":  # the medial axis stops about a half-width short of the tube's end
             end += float(cv2.distanceTransform(region.astype(np.uint8), cv2.DIST_L2, 3)[far])
         along = smooth_length(route) if length == "smooth" else float(cum[far])
-        raw[i] = max(0.0, along + offset + end)  # a negative end_px must not make lengths negative
+        cur, held = max(0.0, along + offset + end), raw[i]  # a negative end_px must not make lengths negative
+        raw[i] = max(cur, held)
+        # a longer path is remembered only if it grew at a speed a tube can (not a crossing tube joining)
+        if memory and cur >= held and (mem is None or cur <= mem[1] + vmax * (i - mem[2]) + 10.0):
+            mem = (tuple(np.asarray(mcp.traceback(far)).T), cur, i)
         width[i] = float(region.sum()) / max(float(cum[far]) + 1.0, 1.0)
     if edge and big and half < big:
         res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,
                           onset_px=onset_px, min_tube_px=min_tube_px, rim_band=rim_band, seed=seed, end_px=end_px,
-                          tip=tip, big=big, burst=burst, keep=keep, paths=paths, length=length)
+                          tip=tip, big=big, burst=burst, keep=keep, paths=paths, length=length, pieces=pieces,
+                          memory=memory)
         res["flags"].append(f"crop_grown:{big}")
         return res
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
