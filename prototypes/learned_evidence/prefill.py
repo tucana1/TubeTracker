@@ -26,7 +26,7 @@ from pathlib import Path
 import numpy as np
 
 MODEL_NAME = "per-bin decoder (learned evidence)"
-REVIEW_HINTS = ("no_grain_after", "unsteady", "burst_after", "crop_grown")  # reach_grain's flags worth a look
+REVIEW_HINTS = ("no_grain_after", "unsteady", "burst_after")  # reach_grain's flags that ask for a look first
 
 
 def simplify(pts: np.ndarray, eps: float = 1.0, max_gap: float = 25.0) -> np.ndarray:
@@ -76,10 +76,12 @@ def onset_body(res: dict, fpb: int) -> dict:
     return {"verdict": "no_emergence_by_end"}
 
 
-def trace_body(res: dict, b: int, rs: int, follow: np.ndarray) -> dict:
+def trace_body(res: dict, b: int, rs: int, follow: np.ndarray, unsure: bool = False) -> dict:
     """The decoder's reading at bin ``b`` as the tool's trace answer (points in the tool's grain-following
     view). The monotone fit can hold a length the bin's own reading fell short of (fading evidence, a
-    burst), so the path is the latest one up to this bin that was about that long, cut to the length."""
+    burst), so the path is the latest one up to this bin that was about that long, cut to the length.
+    ``unsure`` answers "unsure" with the same points (the tool keeps them): the grain had left its place
+    by then, so what the decoder read there may be anything passing."""
     i = b - rs
     length = float(res["length"]["px"][i])
     paths = {j: p for j, p in res.get("_paths", {}).items() if j <= i and len(p) >= 2}
@@ -89,7 +91,12 @@ def trace_body(res: dict, b: int, rs: int, follow: np.ndarray) -> dict:
     src = paths[max(long_enough)] if long_enough else max(paths.values(), key=arc)
     ref = simplify(to_length(np.asarray(src, float), length))
     view = ref - np.asarray(follow[b], float)
-    return {"bin": b, "state": "full", "points": view.round(2).tolist(), "view": "model"}
+    return {"bin": b, "state": "unsure" if unsure else "full", "points": view.round(2).tolist(), "view": "model"}
+
+
+def left_at(flags) -> int | None:
+    """The frame from which the grain had left its place (reach_grain's ``no_grain_after`` flag)."""
+    return next((int(f.split(":")[1]) for f in flags if f.startswith("no_grain_after:")), None)
 
 
 def main(argv=None):
@@ -149,8 +156,10 @@ def main(argv=None):
             continue
         plan = trace_bins(body.get("first_visible_bin", 0), nb)
         follow = bench.follow(g["id"])
+        left = left_at(read["flags"])
         for b in plan:
-            bench.set_trace(g["id"], trace_body(read, b, rs, follow))
+            bench.set_trace(g["id"], trace_body(read, b, rs, follow,
+                                                unsure=left is not None and bench.bin_centre(b) >= left))
             n_traces += 1
     doc = bench.doc
     for lab in doc["labels"].values():
@@ -169,7 +178,7 @@ def main(argv=None):
     for f in (building, building.with_suffix(".journal.jsonl")):
         f.unlink(missing_ok=True)
     if check_first:
-        print("check these first (the grain left its place, or the reading keeps jumping):\n  "
+        print("check these first (the grain left its place, the reading keeps jumping, or the tube may have burst):\n  "
               + "\n  ".join(f"{gid}: {', '.join(v)}" for gid, v in sorted(check_first.items())))
     if differ:
         print(f"note: {len(differ)} grains read differently from {pred_path} (settings changed since?): "

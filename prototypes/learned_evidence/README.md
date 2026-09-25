@@ -288,4 +288,6 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
     (60 grains, drifting ones included) neither fired.
   - The review gallery shows `no_grain` grains first. Pre-fill lists flagged grains to check first, and the CSVs
     carry the flags.
+  - Pre-fill answers "unsure" for a grain's traces after it left its place. The points are kept for the reviewer, but
+    the length is not counted unless confirmed.
 

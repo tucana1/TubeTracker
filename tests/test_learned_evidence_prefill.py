@@ -102,3 +102,10 @@ def test_a_held_length_takes_the_path_seen_at_that_length_and_is_not_invented():
     only_faded = {"length": res["length"], "_paths": {9: faded}}
     short = np.asarray(P.trace_body(only_faded, 9, rs, np.zeros((n, 2)))["points"])
     assert P.arc(short) <= np.hypot(4, 8) + 5.0 + 1e-6  # nothing better: left short, extended by 5 px at most
+
+
+def test_after_the_grain_left_the_proposal_is_unsure():
+    res = {"length": {"px": [0.0, 10.0, 20.0, 30.0]}, "_paths": {3: [[100.0, 50.0], [100.0, 80.0]]}}
+    body = P.trace_body(res, 3, 0, np.zeros((4, 2)), unsure=True)
+    assert body["state"] == "unsure" and len(body["points"]) >= 2  # the points stay for the reviewer
+    assert P.left_at(["burst_after:900", "no_grain_after:1350"]) == 1350 and P.left_at([]) is None
