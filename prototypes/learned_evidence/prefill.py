@@ -138,7 +138,8 @@ def main(argv=None):
         f.unlink(missing_ok=True)
     bench = Bench(field, building, annotator=MODEL_NAME)  # the tool's own records, built in a scratch file
     census = bench.doc["grains"]
-    physical = [g for g in census.values() if g.get("exclude_reason") != "not_a_grain"]
+    ghosts = set(pred.get("ghosts") or {})  # census discs the analysis judged not grains (reach.census_ghosts)
+    physical = [g for g in census.values() if g.get("exclude_reason") != "not_a_grain" and g["id"] not in ghosts]
     n_traces, differ, check_first = 0, [], {}
     for res in pred["grains"]:
         g = census.get(res["id"])

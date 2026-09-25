@@ -1057,6 +1057,43 @@ polyline with 0.5 px of hand jitter. Scoring used only the traces before the anc
 - **The label-free shared fixes come first:** evidence for thick and dark tubes, a per-bin frame-edge mask, trackers
   that survive jumps, and no ghost grains.
 
+### 7.6 Round 2 (25 Sep, in progress): the gap between synthetic and real footage
+
+The real-footage audit found that both decoders mostly fail for reasons they share. Five agents work on that gap in
+parallel:
+- evidence trained on synthetic movies made to look like real tubes;
+- label-free adaptation of the network to each movie, with tip growth as the supervisor;
+- fixes to the decoder's front end;
+- a network that predicts when the tube reached each pixel from the whole movie;
+- fitting a tube model to each grain's frames.
+
+Each result is checked and scored once on held-out movies before it is kept. First in:
+
+**Front-end fixes in the per-bin decoder, now its defaults.** Label-free, one flag each:
+- a frame-edge mask per bin, so a grain drifting to an edge keeps its tube where it is visible;
+- readings held while the grain has left its place;
+- out-of-focus ghost discs dropped from the census;
+- a fit that cannot fall below 0.9 × lengths the tube was steadily grown to, so a long run of failed readings no
+  longer drags the whole curve down.
+
+Results:
+- **Development movies:** +2 lengths (95% CI −2 to +6), onsets unchanged.
+- **Held-out movies, one look with a rule fixed beforehand:** lengths +12 (−12 to +39), onsets unchanged, and +3 and
+  +3 human-style.
+- **Real sample movie, against the audit's estimates:**
+  - onsets within 6 bins: 26 → 29 of 35;
+  - lengths within ±25% at mid-movie: 11 → 17 of 35;
+  - lengths within ±25% at the end: 12 → 16 of 34.
+  - Fixed: g014's collapsed fit, g016 and g018 at the frame edge, g021 dragged away, and the ghost discs g024 and
+    g025.
+- **What is left needs better evidence, not decoder changes:** thick, dark or wide tubes, coils and tangles, and
+  crossings.
+- **Tried and left off:** a tracker that re-finds jumping grains, handling of abrupt frame changes, and ownership that
+  lets a tube run past a neighbour's rim.
+  - The re-finding tracker works on injected jumps: 221 of 304 traces after the jump within tolerance, against 87 for
+    the current tracker. On the sample movie, though, what it then reads is unreadable or foreign.
+- **The prefix decoder** takes the same frame-edge mask; no scored held-out grain changed.
+
 **Human repeatability sets the onset ceiling.** In your blind retest (section 1), 4 of 7 onsets fell within ±2 bins
 of the first pass; the other three moved by 5, 8 and 19 bins.
 - With the calibration, the decoders place about half the onsets within ±2 bins of one-bin human-style brackets on

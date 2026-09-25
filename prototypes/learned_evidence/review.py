@@ -73,7 +73,8 @@ def write_review(pcache: str | Path, image_cache: str | Path, pred: dict, out_di
     src = Path(grains_path) if grains_path else Path(pcache) / "grains.json"
     doc = json.loads(src.read_text())
     census = list(doc["grains"].values()) if isinstance(doc["grains"], dict) else doc["grains"]
-    physical = [g for g in census if g.get("exclude_reason") != "not_a_grain"]
+    ghosts = set(pred.get("ghosts") or {})  # census discs the analysis judged not grains (reach.census_ghosts)
+    physical = [g for g in census if g.get("exclude_reason") != "not_a_grain" and g["id"] not in ghosts]
     by_id = {g["id"]: g for g in census}
     fpb, rs, nb = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0)), int(meta["n_bins"])
     n = nb - rs

@@ -113,6 +113,11 @@ class Params:
     cap_max_px: float = 3.0
     stop_tol: float = 0.5
     tracker: str = "template"    # grain tracking: "template" (track.py) or "local_shifts" (SparseTrack)
+    # frame edge: "bin" takes a pixel whose source is outside the frame as no evidence (P = 0.5) in that bin only, so a
+    # grain drifting to an edge keeps its tube where it is visible; "movie" blocks it for the whole movie once it
+    # leaves the frame in any bin (the earlier behaviour)
+    edge_mask: str = "bin"
+    edge_margin: float = 1.0
     image_term: bool = True      # image evidence near the exit (see image_evidence)
     img_weight: float = 3.0
     img_s_max: float = 6.0
@@ -245,19 +250,25 @@ class GrainStack:
         size = (2 * half, 2 * half)
         self.P = np.empty((T, 2 * half, 2 * half), np.float32)
         self.img = np.empty_like(self.P)
+        shifts = R_img.shifts[self.rs:self.nb] + ls
+        j = np.arange(2 * half, dtype=np.float64) + 0.5
         for i, b in enumerate(range(self.rs, self.nb)):
             m = np.float32([[1, 0, -ls[i, 0]], [0, 1, -ls[i, 1]]])
             pb = np.nan_to_num(RP.crop(b, gx, gy, half) / p.scale).astype(np.float32)
             self.P[i] = cv2.warpAffine(pb, m, size, flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
             self.img[i] = cv2.warpAffine(img[i].astype(np.float32), m, size, flags=cv2.INTER_LINEAR,
                                          borderMode=cv2.BORDER_REPLICATE)
+            if p.edge_mask == "bin":  # outside the frame in this bin: no evidence either way
+                xs, ys = gx - half + j + shifts[i, 0], gy - half + j + shifts[i, 1]
+                self.P[i][((ys < p.edge_margin) | (ys >= R_img.height - p.edge_margin))[:, None] |
+                          ((xs < p.edge_margin) | (xs >= R_img.width - p.edge_margin))[None, :]] = 0.5
         yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float64)
         self.rg = np.hypot(xx - self.centre, yy - self.centre)
         blocked = self.rg < gr - 1.0
-        shifts = R_img.shifts[self.rs:self.nb] + ls
         ref_x, ref_y = gx - half + xx + 0.5, gy - half + yy + 0.5
-        blocked |= ~((ref_x + shifts[:, 0].min() >= 1) & (ref_x + shifts[:, 0].max() < R_img.width - 1) &
-                     (ref_y + shifts[:, 1].min() >= 1) & (ref_y + shifts[:, 1].max() < R_img.height - 1))
+        if p.edge_mask == "movie":
+            blocked |= ~((ref_x + shifts[:, 0].min() >= 1) & (ref_x + shifts[:, 0].max() < R_img.width - 1) &
+                         (ref_y + shifts[:, 1].min() >= 1) & (ref_y + shifts[:, 1].max() < R_img.height - 1))
         self.rings = []
         self.other_discs = np.zeros_like(blocked)
         for o in others:
