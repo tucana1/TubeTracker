@@ -33,15 +33,20 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
    - Press Ctrl-C in the window when you stop. `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`
      are then written next to the results, saying which answers you checked and which you changed.
    - Run it again to carry on; answers not yet checked stay the model's.
+   - If you move an onset or mark a tube burst, the tool stops asking for some of the model's traces; the results
+     leave those out too.
+   - If you analyse the movie again later (after adapting to your dev movie, say), the launcher offers to start a
+     new review of the new analysis, and keeps the earlier review whole in a folder beside it.
    - Each analysed movie keeps its probability cache (`prob_cache/`, about 0.5 GB) for the review. Once the review
-     is pre-filled, it can be deleted; re-running the analysis rebuilds it.
+     is pre-filled, it can be deleted; re-running the analysis rebuilds it, and so does analysing with another model.
 
 For physical units, run the pipeline command below with `--um-per-px` and `--s-per-frame`.
 
 **Once, after the dev labels are done:** double-click `Adapt_Learned_To_Dev_Movie.command` (about 2.5 hours the first
 time; it can be stopped and started again). It runs the dev test on your labels, then calibrates the decoder and
 fine-tunes the network on your traces, keeping each only if its check says so. `runs/learned_evidence/SUMMARY.md` then
-says what each step found and what the launcher above uses from now on.
+says what each step found and what the launcher above uses from now on. If you change the labels later, double-click
+it again: it offers to run every step again on them (about an hour; the model trained on your field is kept).
 
 **This is a prototype.** Its accuracy has been measured only on synthetic movies. Your dev benchmark (`ld_v1`,
 appendix B of the assessment) is the real test. Until it is done, trust the numbers only for grains whose card looks
@@ -78,7 +83,8 @@ cores, less on an Apple GPU) and a probability cache for the real movie. It prin
 scored on `ld_v1` and a paired bootstrap of the difference.
 
 `python -m prototypes.learned_evidence.adapt` runs this, then the calibration and fine-tuning below, in that order
-(each skipped once its report exists), and writes `runs/learned_evidence/SUMMARY.md`.
+(each skipped once its report exists), and writes `runs/learned_evidence/SUMMARY.md`. It notes a step run on labels
+that have changed since; `--redo` runs them all again on the current labels, keeping the trained model.
 
 **Only the per-bin decoder.** `--only-perbin` skips the two comparison runs: the same per-bin results, review gallery
 and curves (identical on `sample_movie.avi`, 37 of 37 grains), in 160 s instead of 355 s once the probability cache
