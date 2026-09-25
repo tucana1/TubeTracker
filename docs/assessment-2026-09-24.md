@@ -794,6 +794,10 @@ Two fixes were tried on development movies (the long one and nine ordinary ones)
 
 The review flags two of the four grains for unsteady readings; curls are not flagged. For movie 2 these are known
 limits, and the review is where they get caught.
+- How often they arise in your footage: `ld_v1` has 120 traced tubes, median 25 px, 90th percentile 74 px, one over
+  100 px. Three lie back against their own grain more than 30 px along (one of them at 31 px), and two pass within
+  5 px of a neighbour's rim: about 4% of the dev movie's traces. Movie 2 runs about twice as long, so its tubes
+  are longer and these cases likelier. (Its labels were not looked at.)
 
 **What these results do and don't show.**
 - **Do:**
