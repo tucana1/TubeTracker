@@ -890,6 +890,10 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
   your labels have changed since a step ran, it offers to run every step again on them (`--redo`; the trained model
   is kept). It ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and
   the movie-2 command.
+- **Checked end to end (25 Sep)** in a scratch copy of the repository, with a synthetic movie as the dev movie. The
+  one-command adaptation (`--quick`, 40 min) adopted a calibrated offset and kept the start model after
+  fine-tuning. Then `Analyze_Movie_Learned.command` picked up that offset by itself, and
+  `Review_Movie_Learned.command` pre-filled with the same settings, opened the tool and exported after Ctrl-C.
 - **Output:** three runs, each scored on `ld_v1`, with paired bootstraps of the differences:
   - SparseTrack 0.4.2 as it is;
   - learned evidence through SparseTrack's decoder;
