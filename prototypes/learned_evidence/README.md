@@ -122,6 +122,8 @@ evidence looks at tube ends. `calibrate.py` fits that one number on the `ld` tra
   Picking the best of ten on the same traces flatters small gains, hence the stricter rule.
 - `pipeline.py --decoder` uses it, and `finetune.py` and `Analyze_Movie_Learned.command` pick it up by themselves.
 - Fit it on a model that was not tuned on the same traces. It refuses a model fine-tuned on them.
+- It also tries calling germination at another length than 2 px (1–8 px), judged on onsets alone with the same kind
+  of check. Your "first visible" may come at a different length. On synthetic movies this was never adopted.
 
 **Fine-tune on your traces (after the dev test, about 45 minutes).** `finetune.py` tunes the network on the `ld`
 traces and checks whether that helps before anything uses the result:

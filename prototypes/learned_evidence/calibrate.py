@@ -1,4 +1,4 @@
-"""Calibrate the per-bin decoder's end offset on a movie's human traces.
+"""Calibrate the per-bin decoder's end offset (and onset length) on a movie's human traces.
 
 The per-bin decoder adds a constant ``end_px`` to every length it reads (``reach.py``: the medial
 axis stops short of a tube's end). How far short depends on how the evidence looks at a tube's end,
@@ -12,6 +12,11 @@ gains, so the calibration is adopted only if the paired 95% interval for lengths
 onsets are no worse. Then ``decoder.json`` holds the offset picked on every grain, for the model it
 was fitted on; ``pipeline.py --decoder`` reads it, and ``finetune.py`` and ``Analyze_Movie_Learned.command``
 pick it up from ``ADOPTED``. Not adopted, it is written as ``decoder_not_adopted.json``.
+
+It then does the same for the length at which a germination is called (``ONSETS``; lengths do not change
+with it), judged on onsets: human "first visible" may come at a different length than the decoder's 2 px.
+On synthetic tests it was never adopted: 2 px was about right there, and where an annotator called tubes
+visible only at 6 px, thick tubes' readings jumped past every threshold in one bin, so none could help.
 
 Fit it on a model that was not tuned on the same traces (its readings of them are in-sample).
 
@@ -31,6 +36,8 @@ import numpy as np
 
 ENDS = tuple(float(e) for e in range(-6, 4))
 DEFAULT_END = 1.0  # reach_grain's
+ONSETS = (1.0, 2.0, 3.0, 4.0, 6.0, 8.0)  # length (px) at which a germination is called
+DEFAULT_ONSET = 2.0  # reach_grain's
 ADOPTED = Path("runs/learned_evidence/ld_cal/decoder.json")  # where the launcher and finetune.py look
 
 
@@ -48,7 +55,7 @@ def decoder_settings(path: str | Path | None, model: str | Path | None = None, l
     doc = json.loads(Path(path).read_text())
     if model is not None and Path(doc.get("model", "")).resolve() != Path(model).resolve():
         log(f"note: {path} was fitted on {doc.get('model')}, not {model}")
-    return {"end_px": float(doc["end_px"])}
+    return {"end_px": float(doc["end_px"]), **({"onset_px": float(doc["onset_px"])} if "onset_px" in doc else {})}
 
 
 def _read(job):
@@ -82,31 +89,57 @@ def hits(labels: dict, preds: dict) -> dict[float, dict[str, tuple]]:
     return out
 
 
-def pick(table: dict[float, dict[str, tuple]], grains) -> float:
-    """The offset with the most lengths plus onsets in tolerance over ``grains`` (ties: nearest the default)."""
+def pick(table: dict[float, dict[str, tuple]], grains, default: float = DEFAULT_END) -> float:
+    """The setting with the most lengths plus onsets in tolerance over ``grains`` (ties: nearest the default)."""
     return max(table, key=lambda e: (sum(table[e][g][1] + (table[e][g][0] or 0) for g in grains if g in table[e]),
-                                     -abs(e - DEFAULT_END)))
+                                     -abs(e - default)))
 
 
-def cross_check(table: dict[float, dict[str, tuple]], folds: int = 3, seed: int = 0) -> dict:
-    """Each fold's grains read with the offset the other folds picked, against the default: paired
-    differences per grain, with a bootstrap over grains."""
-    grains = sorted(table[DEFAULT_END])
+def cross_check(table: dict[float, dict[str, tuple]], folds: int = 3, seed: int = 0, default: float = DEFAULT_END,
+                gain: str = "length") -> dict:
+    """Each fold's grains read with the setting the other folds picked, against the default: paired
+    differences per grain, with a bootstrap over grains. Adopted when the interval for ``gain``
+    ("length" or "onset") lies above zero and the other is no worse."""
+    grains = sorted(table[default])
     fold = {g: i % folds for i, g in enumerate(grains)}
     dl, do, picks = {}, {}, []
     for k in range(folds):
-        best = pick(table, [g for g in grains if fold[g] != k])
+        best = pick(table, [g for g in grains if fold[g] != k], default)
         picks.append(best)
         for g in (g for g in grains if fold[g] == k):
-            (oa, la, _), (ob, lb, _) = table[best][g], table[DEFAULT_END][g]
+            (oa, la, _), (ob, lb, _) = table[best][g], table[default][g]
             dl[g], do[g] = la - lb, (oa or 0) - (ob or 0)
     rng = np.random.default_rng(seed)
-    d = np.array([dl[g] for g in grains], float)
-    boot = [d[rng.integers(len(d), size=len(d))].sum() for _ in range(4000)] if len(d) else [0.0]
-    lo, hi = (float(v) for v in np.percentile(boot, [2.5, 97.5]))
+    draws = [rng.integers(len(grains), size=len(grains)) for _ in range(4000)] if grains else []
+
+    def ci(d):
+        d = np.array([d[g] for g in grains], float)
+        boot = [d[i].sum() for i in draws] or [0.0]
+        return [float(v) for v in np.percentile(boot, [2.5, 97.5])]
+
     length_diff, onset_diff = int(sum(dl.values())), int(sum(do.values()))
-    return {"grains": len(grains), "picks": picks, "length_diff": length_diff, "length_ci": [lo, hi],
-            "onset_diff": onset_diff, "adopted": lo > 0 and onset_diff >= 0}
+    length_ci, onset_ci = ci(dl), ci(do)
+    adopted = (length_ci[0] > 0 and onset_diff >= 0) if gain == "length" else (onset_ci[0] > 0 and length_diff >= 0)
+    return {"grains": len(grains), "picks": picks, "length_diff": length_diff, "length_ci": length_ci,
+            "onset_diff": onset_diff, "onset_ci": onset_ci, "gain": gain, "adopted": adopted}
+
+
+def with_onset(pred: dict, thr: float) -> dict:
+    """The predictions with germinations called where the fitted length first reaches ``thr`` px, as
+    ``reach_grain`` calls them (lengths unchanged; ``thr`` at most its ``min_tube_px``)."""
+    out = []
+    for r in pred["grains"]:
+        r = dict(r)
+        if r.get("status") in ("emerged_within", "emerged_at_start"):
+            fit, frames = np.asarray(r["length"]["px"], float), r["length"]["frames"]
+            on = np.nonzero(fit >= thr)[0]
+            if len(on) and on[0] == 0:
+                r.update(status="emerged_at_start", onset_frame=frames[0], onset_interval=None)
+            elif len(on):
+                r.update(status="emerged_within", onset_frame=frames[on[0]],
+                         onset_interval=[frames[on[0] - 1], frames[on[0]]])
+        out.append(r)
+    return {**pred, "grains": out}
 
 
 def main(argv=None):
@@ -139,13 +172,19 @@ def main(argv=None):
     pcache = evaluate.prob_cache(field, load_model(str(model)), work / "prob", log=print)
     try:
         vmax = speed_cap(pcache, field, labels_path)
-        table = hits(labels, readings(pcache, field, labels_path, vmax, workers=args.workers))
+        preds = readings(pcache, field, labels_path, vmax, workers=args.workers)
     finally:
         if not args.keep_caches:
             shutil.rmtree(pcache, ignore_errors=True)
+    table = hits(labels, preds)
     check = cross_check(table, args.folds)
     grains = sorted(table[DEFAULT_END])
     end = pick(table, grains)
+    # then the onset threshold, on the lengths read with the offset kept (lengths do not change with it)
+    base = preds[end if check["adopted"] else DEFAULT_END]
+    otable = hits(labels, {t: with_onset(base, t) for t in ONSETS})
+    ocheck = cross_check(otable, args.folds, default=DEFAULT_ONSET, gain="onset")
+    onset = pick(otable, grains, DEFAULT_ONSET)
     lines = [f"{labels_path.name}: per-bin decoder end offset on {model} ({time.time() - started:.0f} s)",
              "end offset: lengths, onsets in tolerance (every labelled grain)"]
     for e in ENDS:
@@ -157,12 +196,24 @@ def main(argv=None):
               f"lengths {check['length_diff']:+d} [{check['length_ci'][0]:+.0f}, {check['length_ci'][1]:+.0f}], "
               f"onsets {check['onset_diff']:+d} over {check['grains']} grains",
               ("adopted: the interval for lengths lies above zero and onsets are no worse" if check["adopted"] else
-               "not adopted: the gain is not clear of noise (or onsets are worse); keep the default offset")]
+               "not adopted: the gain is not clear of noise (or onsets are worse); keep the default offset"),
+              "germination called at: onsets in tolerance (every labelled grain)"]
+    for t in ONSETS:
+        lines.append(f"  {t:.0f} px: {sum(v[0] or 0 for v in otable[t].values()):4d}"
+                     + ("  (default)" if t == DEFAULT_ONSET else "") + ("  <- picked" if t == onset else ""))
+    lines += [f"check (picks {', '.join(f'{p:.0f}' for p in ocheck['picks'])} px): onsets {ocheck['onset_diff']:+d} "
+              f"[{ocheck['onset_ci'][0]:+.0f}, {ocheck['onset_ci'][1]:+.0f}]",
+              ("adopted: the interval for onsets lies above zero" if ocheck["adopted"] else
+               "not adopted: keep calling germination at 2 px")]
     print("\n".join(lines))
     (work / "report.txt").write_text("\n".join(lines) + "\n")
-    doc = {"end_px": end, "model": str(model), "labels": str(labels_path), "check": check,
-           "default_end_px": DEFAULT_END}
-    out = work / ("decoder.json" if check["adopted"] else "decoder_not_adopted.json")
+    doc = {"end_px": end if check["adopted"] else DEFAULT_END, "model": str(model), "labels": str(labels_path),
+           "check": check, "default_end_px": DEFAULT_END, "onset_check": ocheck, "default_onset_px": DEFAULT_ONSET}
+    if ocheck["adopted"]:
+        doc["onset_px"] = onset
+    if not (check["adopted"] or ocheck["adopted"]):
+        doc["end_px"], doc["picked_end_px"], doc["picked_onset_px"] = end, end, onset
+    out = work / ("decoder.json" if check["adopted"] or ocheck["adopted"] else "decoder_not_adopted.json")
     out.write_text(json.dumps(doc, indent=1))
     print(f"wrote {out}")
 

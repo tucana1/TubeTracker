@@ -749,6 +749,14 @@ and then applied to a fresh one:
   which picks nothing, keeps the plain rule, and that rule was right for it.
 - Letting the traces also pick the probability threshold lost against the full truth (wide tubes: 191 against 201
   lengths and onsets in tolerance). Only the offset is fitted.
+- `calibrate.py` also tries calling germination at another length (1–8 px instead of 2), judged on onsets. On these
+  movies it was never adopted, and rightly so. With truth-made labels 2 px was already about right. With an
+  annotator who calls tubes visible only at 6 px, thick tubes' readings jump past every threshold in one bin, so no
+  threshold helps. On `ld` it may: human "first visible" is where the benchmark's onsets are weakest.
+- **A caveat on onsets in these fine-tuning and calibration tests.** They were scored at the scorer's default of
+  600 frames, which on the synthetic movies (counted in keyframes) means ±24 bins, not the ±2 bins it means on
+  your movies. So "onsets no worse" was a loose guard here. Lengths are unaffected. The main held-out tables above
+  use ±2 bins, and on `ld` both tools score onsets at ±2 bins.
 
 **What these results do and don't show.**
 - **Do:**
