@@ -25,12 +25,20 @@ ROOT = Path("runs/learned_evidence")
 DEV, CAL, FT = ROOT / "ld", ROOT / "ld_cal", ROOT / "ld_ft"
 
 
+def _here(path: Path) -> Path:
+    """``path`` relative to the working directory (the repository) when it lies inside it."""
+    try:
+        return path.resolve().relative_to(Path.cwd().resolve())
+    except ValueError:
+        return path
+
+
 def in_use() -> tuple[Path, Path | None]:
     """The model and decoder settings the launcher picks, in its order."""
     from .finetune import SHIPPED
     model = next(p for p in (FT / "unet_ft.pt", DEV / "unet.pt", SHIPPED) if p.exists())
     decoder = CAL / "decoder.json"
-    return model, (decoder if decoder.exists() else None)
+    return _here(model), (decoder if decoder.exists() else None)
 
 
 def _report(path: Path) -> str:
@@ -78,7 +86,8 @@ Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
 
 ## Movie 2, once, when its labels are in
 
-Freeze what is above (do not run this command again after changing it), then:
+This scores the model and decoder above on movie 2. Run it once. Changing either afterwards and scoring again
+would turn movie 2 into a development set.
 
 ```bash
 {m2}
