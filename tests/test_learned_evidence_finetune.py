@@ -256,3 +256,15 @@ def test_a_stopped_final_tuning_resumes_without_redoing_the_check(movie, tmp_pat
     lab.write_text(json.dumps({**labels, "note": "more traces"}))  # other traces: the check is done again
     FT.main(argv[:5] + [str(work2)] + argv[6:])
     assert len(tuned) == 1 + 3 + 1
+
+
+def test_a_tuned_model_is_adopted_only_on_a_gain_clear_of_noise():
+    from prototypes.learned_evidence.finetune import adopted
+
+    def pb(length, length_ci, onset=0, onset_ci=(0, 0)):
+        return {"length_diff": length, "length_ci": list(length_ci), "onset_diff": onset, "onset_ci": list(onset_ci)}
+
+    assert adopted(pb(4, (1, 7)))  # lengths clearly better, onsets unchanged
+    assert not adopted(pb(2, (-1, 5)))  # a gain within noise: not a reason to replace the model
+    assert not adopted(pb(4, (1, 7), onset=-1, onset_ci=(-3, 0)))  # lengths better but onsets worse
+    assert adopted(pb(0, (-2, 2), onset=3, onset_ci=(1, 5)))  # onsets clearly better, lengths no worse

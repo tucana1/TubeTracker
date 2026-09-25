@@ -13,10 +13,16 @@ onsets are no worse. Then ``decoder.json`` holds the offset picked on every grai
 was fitted on; ``pipeline.py --decoder`` reads it, and ``finetune.py`` and ``Analyze_Movie_Learned.command``
 pick it up from ``ADOPTED``. Not adopted, it is written as ``decoder_not_adopted.json``.
 
-It then does the same for the length at which a germination is called (``ONSETS``; lengths do not change
-with it), judged on onsets: human "first visible" may come at a different length than the decoder's 2 px.
-On synthetic tests it was never adopted: 2 px was about right there, and where an annotator called tubes
-visible only at 6 px, thick tubes' readings jumped past every threshold in one bin, so none could help.
+Then the length at which a germination is called. The decoder's default, 2 px of its fitted length, calls
+tubes visible at about 1.3 px of true length on synthetic movies; an annotator marks "first visible" later
+(about 4 px on ``ld_v1``, from its traces), and every human bracket is one bin wide, so default onsets come
+early. The annotator's length is measured directly: for every labelled onset, the decoder's own fitted
+length midway between the last-absent and first-visible bins; the median is where germination is called
+(``onset_px``). Against simulated annotators calling at 2-6 px it recovered their length and roughly
+doubled onsets within 2 bins; from 28 grains it was never worse than the default in 200 draws, where a
+search over thresholds gated by an interval adopted only a third of the time. It is adopted with at least
+10 labelled onsets, unless a cross-validated check (each third of the grains called at the length the
+other two give) finds it clearly worse. Lengths do not change with it.
 
 Fit it on a model that was not tuned on the same traces (its readings of them are in-sample).
 
@@ -36,8 +42,9 @@ import numpy as np
 
 ENDS = tuple(float(e) for e in range(-6, 4))
 DEFAULT_END = 1.0  # reach_grain's
-ONSETS = (1.0, 2.0, 3.0, 4.0, 6.0, 8.0)  # length (px) at which a germination is called
+ONSETS = (1.0, 2.0, 3.0, 4.0, 6.0, 8.0)  # germination lengths (px) shown in the report
 DEFAULT_ONSET = 2.0  # reach_grain's
+MIN_ONSETS = 10  # labelled onsets needed to measure the annotator's germination length
 ADOPTED = Path("runs/learned_evidence/ld_cal/decoder.json")  # where the launcher and finetune.py look
 
 
@@ -138,6 +145,55 @@ def cross_check(table: dict[float, dict[str, tuple]], folds: int = 3, seed: int 
             "onset_diff": onset_diff, "onset_ci": onset_ci, "gain": gain, "adopted": adopted}
 
 
+def onset_readings(labels: dict, pred: dict) -> dict[str, float]:
+    """Per labelled grain germinated within the movie: the decoder's fitted length midway between the
+    annotator's last-absent and first-visible bins, i.e. how long the tube is, as the decoder reads it,
+    when the annotator calls it visible."""
+    from sparsetrack.evaluate import match_grains
+
+    grains = {g: v for g, v in labels["grains"].items() if not v.get("excluded") and v.get("isolated", True)}
+    matched = match_grains({"grains": grains}, pred.get("grains", []), radius=float(pred.get("match_radius_px", 12.0)))
+    out = {}
+    for gid, lab in labels.get("labels", {}).items():
+        on, p = lab.get("onset") or {}, matched.get(gid)
+        if on.get("verdict") != "emerged_within" or p is None or on.get("first_visible_frame") is None:
+            continue
+        fv = float(on["first_visible_frame"])
+        la = float(on["last_absent_frame"]) if on.get("last_absent_frame") is not None else fv
+        frames, fit = np.asarray(p["length"]["frames"], float), np.asarray(p["length"]["px"], float)
+        out[gid] = 0.5 * float(np.interp(la, frames, fit) + np.interp(fv, frames, fit))
+    return out
+
+
+def onset_estimate(readings, seed: int = 0) -> tuple[float, list[float]]:
+    """The germination length: the median reading (1-12 px), with a bootstrap 95% interval."""
+    v = np.asarray(list(readings.values() if isinstance(readings, dict) else readings), float)
+    rng = np.random.default_rng(seed)
+    boot = [np.median(v[rng.integers(len(v), size=len(v))]) for _ in range(2000)]
+    lo, hi = (float(np.clip(x, 1.0, 12.0)) for x in np.percentile(boot, [2.5, 97.5]))
+    return round(float(np.clip(np.median(v), 1.0, 12.0)), 1), [round(lo, 1), round(hi, 1)]
+
+
+def onset_check(labels: dict, pred: dict, readings: dict[str, float], folds: int = 3, seed: int = 0) -> dict:
+    """Each fold's grains called at the germination length the other folds' readings give, against the
+    default: paired onset hits per grain, with a bootstrap over grains."""
+    grains = sorted(readings)
+    fold = {g: i % folds for i, g in enumerate(grains)}
+    default = hits(labels, {0: with_onset(pred, DEFAULT_ONSET)})[0]
+    diff, picks = {}, []
+    for k in range(folds):
+        est, _ = onset_estimate([readings[g] for g in grains if fold[g] != k])
+        picks.append(est)
+        mine = hits(labels, {0: with_onset(pred, est)})[0]
+        for g in (g for g in grains if fold[g] == k):
+            diff[g] = (mine.get(g, (0,))[0] or 0) - (default.get(g, (0,))[0] or 0)
+    d = np.array([diff[g] for g in grains], float)
+    rng = np.random.default_rng(seed)
+    boot = [d[rng.integers(len(d), size=len(d))].sum() for _ in range(4000)] if len(d) else [0.0]
+    return {"grains": len(grains), "picks": picks, "onset_diff": int(d.sum()),
+            "onset_ci": [float(v) for v in np.percentile(boot, [2.5, 97.5])]}
+
+
 def with_onset(pred: dict, thr: float) -> dict:
     """The predictions with germinations called where the fitted length first reaches ``thr`` px, as
     ``reach_grain`` calls them (lengths unchanged; ``thr`` at most its ``min_tube_px``)."""
@@ -197,8 +253,12 @@ def main(argv=None):
     # then the onset threshold, on the lengths read with the offset kept (lengths do not change with it)
     base = preds[end if check["adopted"] else DEFAULT_END]
     otable = hits(labels, {t: with_onset(base, t) for t in ONSETS})
-    ocheck = cross_check(otable, args.folds, default=DEFAULT_ONSET, gain="onset")
-    onset = pick(otable, grains, DEFAULT_ONSET)
+    on_reads = onset_readings(labels, base)
+    onset, onset_ci, ocheck = DEFAULT_ONSET, None, None
+    if len(on_reads) >= MIN_ONSETS:
+        onset, onset_ci = onset_estimate(on_reads)
+        ocheck = onset_check(labels, base, on_reads, args.folds)
+    adopt_onset = ocheck is not None and ocheck["onset_ci"][1] >= 0 and onset != DEFAULT_ONSET  # unless clearly worse
     lines = [f"{labels_path.name}: per-bin decoder end offset on {model} ({time.time() - started:.0f} s)",
              "end offset: lengths, onsets in tolerance (every labelled grain)"]
     for e in ENDS:
@@ -214,19 +274,28 @@ def main(argv=None):
               "germination called at: onsets in tolerance (every labelled grain)"]
     for t in ONSETS:
         lines.append(f"  {t:.0f} px: {sum(v[0] or 0 for v in otable[t].values()):4d}"
-                     + ("  (default)" if t == DEFAULT_ONSET else "") + ("  <- picked" if t == onset else ""))
-    lines += [f"check (picks {', '.join(f'{p:.0f}' for p in ocheck['picks'])} px): onsets {ocheck['onset_diff']:+d} "
-              f"[{ocheck['onset_ci'][0]:+.0f}, {ocheck['onset_ci'][1]:+.0f}]",
-              ("adopted: the interval for onsets lies above zero" if ocheck["adopted"] else
-               "not adopted: keep calling germination at 2 px")]
+                     + ("  (default)" if t == DEFAULT_ONSET else ""))
+    if ocheck is None:
+        lines.append(f"not adopted: {len(on_reads)} labelled onsets (at least {MIN_ONSETS} are needed); "
+                     "keep calling germination at 2 px")
+    else:
+        lines += [f"the annotator's first-visible length, as the decoder reads it: {onset:.1f} px "
+                  f"[{onset_ci[0]:.1f}, {onset_ci[1]:.1f}] (median over {len(on_reads)} labelled onsets)",
+                  f"check ({args.folds} folds, each called at the length the others give: "
+                  f"{', '.join(f'{p:.1f}' for p in ocheck['picks'])} px): onsets {ocheck['onset_diff']:+d} "
+                  f"[{ocheck['onset_ci'][0]:+.0f}, {ocheck['onset_ci'][1]:+.0f}] against 2 px",
+                  (f"adopted: germination is called at {onset:.1f} px, where the annotator calls tubes visible"
+                   if adopt_onset else "not adopted: " + ("it is the default already" if onset == DEFAULT_ONSET else
+                                                          "clearly worse in the check; keep calling germination at 2 px"))]
     print("\n".join(lines))
     doc = {"end_px": end if check["adopted"] else DEFAULT_END, "model": str(model), "labels": str(labels_path),
-           "check": check, "default_end_px": DEFAULT_END, "onset_check": ocheck, "default_onset_px": DEFAULT_ONSET}
-    if ocheck["adopted"]:
+           "check": check, "default_end_px": DEFAULT_END, "onset_check": ocheck, "default_onset_px": DEFAULT_ONSET,
+           "onset_estimate": onset, "onset_interval": onset_ci}
+    if adopt_onset:
         doc["onset_px"] = onset
-    if not (check["adopted"] or ocheck["adopted"]):
-        doc["end_px"], doc["picked_end_px"], doc["picked_onset_px"] = end, end, onset
-    out = work / ("decoder.json" if check["adopted"] or ocheck["adopted"] else "decoder_not_adopted.json")
+    if not (check["adopted"] or adopt_onset):  # a record of what was found; its end_px stays the default
+        doc["picked_end_px"], doc["picked_onset_px"] = end, onset
+    out = work / ("decoder.json" if check["adopted"] or adopt_onset else "decoder_not_adopted.json")
     out.write_text(json.dumps(doc, indent=1))
     (work / "report.txt").write_text("\n".join(lines) + "\n")  # last: adapt.py takes it to mean the step is done
     print(f"wrote {out}")

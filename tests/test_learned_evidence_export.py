@@ -94,3 +94,15 @@ def test_no_tube_after_all_leaves_no_traces_and_a_lost_model_file_is_said(tmp_pa
     assert list(csv.DictReader(open(tmp_path / "reviewed_traces.csv"))) == []
     g = list(csv.DictReader(open(tmp_path / "reviewed_grains.csv")))[0]
     assert (g["onset_checked"], g["onset_changed"], g["last_traced_bin"]) == ("yes", "", "")
+
+
+def test_a_partly_checked_review_also_gets_the_checked_onsets_alone(tmp_path, capsys):
+    model = {"frames_per_bin": 300, "n_bins": 100, "grains": {"g1": {}, "g2": {}},
+             "labels": {"g1": {"onset": _onset(30, "model")}, "g2": {"onset": _onset(50, "model")}}}
+    reviewed = json.loads(json.dumps(model))
+    reviewed["labels"]["g1"]["onset"] = _onset(32, "human")
+    path = _write(tmp_path, model, reviewed)
+    assert [g["id"] for g in E.population_input(reviewed, checked_only=True)["grains"]] == ["g1"]
+    E.main(["--labels", str(path)])
+    assert (tmp_path / "population.csv").exists() and (tmp_path / "checked_only" / "population.csv").exists()
+    assert "checked onsets alone" in capsys.readouterr().out

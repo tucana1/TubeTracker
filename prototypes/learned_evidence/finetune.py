@@ -430,6 +430,13 @@ def save(net: UNet, path: Path, **info) -> Path:
     return path
 
 
+def adopted(pb: dict) -> bool:
+    """Tuned beats start on lengths or onsets beyond noise (paired 95% interval above zero), and is worse on
+    neither. With ~30 scored traces a gain above zero is a coin flip when tuning changes nothing, and an
+    adopted model becomes the launcher's default for every later movie."""
+    return bool((pb["length_ci"][0] > 0 and pb["onset_diff"] >= 0) or (pb["onset_ci"][0] > 0 and pb["length_diff"] >= 0))
+
+
 def _sha1(path: Path) -> str:
     import hashlib
     return hashlib.sha1(Path(path).read_bytes()).hexdigest()
@@ -568,16 +575,17 @@ def main(argv=None):
         (work / "labels_cv.json").write_text(json.dumps(scored))
         rs, rt = score(scored, base), score(scored, tuned)
         pb = evaluate.paired_bootstrap(rt, rs, rs["onset"]["tolerance_frames"])
-        # better on lengths or onsets, and worse on neither: onsets make the germination curve
-        adopt = min(pb["length_diff"], pb["onset_diff"]) >= 0 and max(pb["length_diff"], pb["onset_diff"]) > 0
+        adopt = adopted(pb)
         lines = [f"{labels_path.name}: {rs['grains_scored']} grains scored, each at its fold's traced bins by a model "
                  f"tuned without that grain and without any label within {GUARD_BINS} bins of those bins",
                  evaluate.e2e_summary("per-bin, start", rs), evaluate.e2e_summary("per-bin, tuned", rt),
                  f"tuned - start over {pb['grains']} grains: onset {pb['onset_diff']:+.0f} "
                  f"[{pb['onset_ci'][0]:+.0f}, {pb['onset_ci'][1]:+.0f}], lengths {pb['length_diff']:+.0f} "
                  f"[{pb['length_ci'][0]:+.0f}, {pb['length_ci'][1]:+.0f}] (95% paired bootstrap over grains)",
-                 "adopted: the tuned model reads more lengths or onsets right than the start, and neither fewer"
+                 "adopted: the tuned model reads more lengths or onsets right than the start (95% interval above "
+                 "zero), and neither fewer"
                  if adopt else "not adopted: the tuned model does not read more lengths or onsets right than the start "
+                 "beyond noise (95% interval above zero) "
                  "without reading fewer of the other"]
         log("\n".join(lines))
         (work / "scores.json").write_text(json.dumps({"start": rs, "tuned_cv": rt, "paired": pb, "adopted": adopt,

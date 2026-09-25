@@ -110,3 +110,40 @@ def test_no_note_for_a_model_fine_tuned_with_the_decoder(tmp_path):
     assert C.decoder_settings(f, tuned, log=notes.append) == {"end_px": -2.0} and not notes
     torch.save({"state": {}, "args": {"decoder": None}}, tuned)  # tuned and checked without it
     assert C.decoder_settings(f, tuned, log=notes.append) == {"end_px": -2.0} and notes
+
+
+def _annotated(n=12, fpb=300, nb=60, rate=0.5, start=10, at_px=4.0):
+    """Labels whose annotator calls a tube visible when it is at_px long, and predictions whose fitted length
+    grows rate px/bin from bin start: the decoder's 2 px comes 4 bins before the annotator's 4 px."""
+    frames = [b * fpb + fpb // 2 for b in range(nb)]
+    fit = [max(0.0, rate * (b - start)) for b in range(nb)]
+    fv = next(b for b in range(nb) if fit[b] >= at_px)
+    grains, labs, preds = {}, {}, []
+    for i in range(n):
+        gid = f"g{i:02d}"
+        x, y = 40.0 + 60 * i, 50.0
+        grains[gid] = {"id": gid, "x": x, "y": y, "r": 10.0}
+        labs[gid] = {"onset": {"verdict": "emerged_within", "last_absent_frame": frames[fv - 1],
+                               "first_visible_frame": frames[fv]}}
+        on = next(b for b in range(nb) if fit[b] >= 2.0)
+        preds.append({"id": f"p{i}", "x": x, "y": y, "status": "emerged_within", "onset_frame": frames[on],
+                      "onset_interval": [frames[on - 1], frames[on]], "length": {"frames": frames, "px": fit}})
+    return {"grains": grains, "labels": labs, "frames_per_bin": fpb, "n_bins": nb}, {"grains": preds}
+
+
+def test_germination_length_is_measured_where_the_annotator_calls_tubes_visible():
+    labels, pred = _annotated()
+    reads = C.onset_readings(labels, pred)
+    assert len(reads) == 12 and all(abs(v - 3.75) < 1e-9 for v in reads.values())  # midway between 3.5 and 4.0 px
+    est, (lo, hi) = C.onset_estimate(reads)
+    assert est == 3.8 and lo <= est <= hi
+    check = C.onset_check(labels, pred, reads)
+    assert check["onset_diff"] == 12 and check["onset_ci"][0] > 0  # every onset: 4 bins early at 2 px, right at 3.8 px
+    assert C.with_onset(pred, est)["grains"][0]["onset_frame"] == labels["labels"]["g00"]["onset"]["first_visible_frame"]
+
+
+def test_germination_length_ignores_grains_without_a_timed_onset():
+    labels, pred = _annotated(n=3)
+    labels["labels"]["g00"]["onset"] = {"verdict": "no_emergence_by_end"}
+    labels["grains"]["g01"]["excluded"] = True
+    assert set(C.onset_readings(labels, pred)) == {"g02"}

@@ -59,14 +59,15 @@ def asked_bins(onset: dict, saved: dict, n_bins: int) -> list[int]:
             if burst is None or b <= burst or (saved.get(str(b)) or {}).get("review_origin") == "human"]
 
 
-def population_input(doc: dict) -> dict:
-    """The reviewed onsets in the form ``sparsetrack.report.write_population`` reads."""
+def population_input(doc: dict, checked_only: bool = False) -> dict:
+    """The reviewed onsets in the form ``sparsetrack.report.write_population`` reads (with ``checked_only``,
+    only the onsets answered in the tool, not the model's still unchecked)."""
     fpb, nb = int(doc["frames_per_bin"]), int(doc["n_bins"])
     frames = [fpb // 2, (nb - 1) * fpb + fpb // 2]
     grains = []
     for gid, lab in doc.get("labels", {}).items():
         on = lab.get("onset") or {}
-        if doc["grains"].get(gid, {}).get("excluded") or not on:
+        if doc["grains"].get(gid, {}).get("excluded") or not on or (checked_only and on.get("review_origin") != "human"):
             continue
         la, fv = on.get("last_absent_frame"), on.get("first_visible_frame")
         grains.append({"id": gid, "status": on.get("verdict"), "length": {"frames": frames},
@@ -143,7 +144,12 @@ def main(argv=None):
         w = csv.writer(fh)
         w.writerow(["grain", "bin", "frame", "minutes", "state", "length_px", "length_um", "checked", "changed"])
         w.writerows(trace_rows)
-    write_population(population_input(doc), out, label="reviewed grains")
+    # the curve says how much of it was checked; a partly checked review also gets the checked onsets alone
+    write_population(population_input(doc), out, label=f"review, {n_on_checked} of {n_on} onsets checked")
+    if 0 < n_on_checked < n_on:
+        (out / "checked_only").mkdir(exist_ok=True)
+        write_population(population_input(doc, checked_only=True), out / "checked_only",
+                         label=f"the {n_on_checked} checked onsets only")
     lines = [f"{path}: {n_on} grains",
              f"onsets checked {n_on_checked}/{n_on} ({n_on_changed} changed from the model's)",
              f"traces checked {n_tr_checked}/{n_tr} ({n_tr_changed} changed by more than max(2 px, 10%))"]
@@ -156,6 +162,8 @@ def main(argv=None):
         lines.append(f"no {model_path.name}: what changed from the model's proposals can't be told")
     if n_on_checked < n_on or n_tr_checked < n_tr or n_open:
         lines.append("answers not yet checked are the model's: carry on reviewing, then export again")
+    if 0 < n_on_checked < n_on:
+        lines.append(f"the germination curve of the checked onsets alone: {out / 'checked_only' / 'population.png'}")
     lines.append(f"wrote {out / 'reviewed_grains.csv'}, {out / 'reviewed_traces.csv'}, {out / 'population.png'}")
     print("\n".join(lines))
     return out
