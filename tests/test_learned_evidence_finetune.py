@@ -256,3 +256,25 @@ def test_a_stopped_final_tuning_resumes_without_redoing_the_check(movie, tmp_pat
     lab.write_text(json.dumps({**labels, "note": "more traces"}))  # other traces: the check is done again
     FT.main(argv[:5] + [str(work2)] + argv[6:])
     assert len(tuned) == 1 + 3 + 1
+
+
+def test_onset_supervision_marks_the_young_tube_at_the_exit(movie):
+    import copy
+
+    from prototypes.learned_evidence.finetune import real_samples
+
+    cache, labels = movie
+    labels = copy.deepcopy(labels)
+    labels["labels"]["g1"]["onset"] = {"verdict": "emerged_within", "first_visible_bin": 2, "last_absent_bin": 1}
+    plain = real_samples(cache, labels, grains={"g1"}, jitter=0.0)
+    young = real_samples(cache, labels, grains={"g1"}, jitter=0.0, onset_px=3.0)
+    added = [i for i, (g, b, *_rest) in enumerate(young["info"]) if b in (2, 4)]
+    assert not any(b in (2, 4) for _, b, *_rest in plain["info"]) and len(added) == 2  # bins 2 and 4, before bin 5
+    for i in added:
+        _, b, cx, cy = young["info"][i]
+        ys, xs = np.nonzero(young["body"][i])
+        # tube only within reach of the first 3 px from the exit (100.5, 60.5), not along the rest of the trace
+        assert len(xs) and np.hypot(xs + cx - 48 + 0.5 - 100.5, ys + cy - 48 + 0.5 - 60.5).max() <= 3.0 + 2.0 + 1.0
+        ring = np.hypot(np.arange(96)[None, :] + cx - 48 + 0.5 - 100.5, np.arange(96)[:, None] + cy - 48 + 0.5 - 50.5)
+        w = young["w"][i].astype(bool)
+        assert w[(ring > 12) & (ring < 20) & ~young["body"][i].astype(bool)].mean() > 0.3  # background round the grain
