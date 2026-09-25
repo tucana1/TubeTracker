@@ -64,13 +64,25 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
    floor with a keyframe every 12 frames: about 0.9 KB per frame for faint 2–5 px tubes. For new experiments, record
    lossless time-lapse (one 16-bit frame every 10–20 s, about 1 GB/h) with hardware autofocus. Every method gets
    easier.
+7. **A new direction from a breakthrough search: read each movie backwards from its end state, and let one human
+   trace anchor it (section 7).** A pollen tube grows only at its tip, so every earlier tube is a prefix of the
+   later one.
+   - A decoder built on that (`prefix.py`) put 84.6% of held-out synthetic lengths within tolerance, against 71.0%
+     for the per-bin decoder.
+   - Anchored on one simulated human trace per grain, it put 87% of that grain's other lengths within tolerance.
+   - On real footage unlike yours (thick tubes, grains moving tens of px) it is behind the per-bin decoder: judged
+     by eye, 4 grains where only it is right against 8 the other way. A machine-made anchor gains nothing: the value
+     is in a human's end-state trace.
+   - `Adapt_Learned_To_Dev_Movie.command` now tests exactly this on `ld_v1`. If it holds, labelling a movie comes
+     down to one trace per grain.
 
 **This week:**
 1. Finish the movie-2 labels (about an hour, section 3.5).
 2. Freeze 0.4.3 with the long-tube fix (section 3.3), then score 0.4.0 and 0.4.3 on movie 2, once each.
 3. Answer the five questions in section 6.
 4. Run the learned-evidence test on `ld`, then calibrate the decoder on the same traces (appendix B). One
-   double-click does both, and fine-tuning after them: `Adapt_Learned_To_Dev_Movie.command`.
+   double-click does both, then fine-tuning, then the trace-once check (section 7):
+   `Adapt_Learned_To_Dev_Movie.command`.
 5. Try prototype v1's loop on a movie: `Analyze_Movie_Learned.command`, then `Review_Movie_Learned.command`, which
    opens your labelling tool pre-filled with the model's answers and exports the reviewed results. `pipeline.py`
    also writes a review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV, in µm
@@ -799,15 +811,27 @@ limits, and the review is where they get caught.
   5 px of a neighbour's rim: about 4% of the dev movie's traces. Movie 2 runs about twice as long, so its tubes
   are longer and these cases likelier. (Its labels were not looked at.)
 
-**Why onsets come late (25 Sep).** On the ten development movies, 159 of 214 onsets fall within ±2 bins, and 50 of
-the 55 misses are late (18 of them by 8 bins or more). In 37 of those 50, the network shows nothing at the grain's
-rim until the tube is a few px long: peak P there stays near 0 after the true onset. No threshold recovers these,
-and the onset-length calibration cannot either, because the fit is zero before the first detection.
+**Onsets: late against synthetic brackets, early against yours (25 Sep; corrected the same day).** Against the
+synthetic truth files, onsets looked late. On the ten development movies 159 of 214 fell within ±2 bins, and 50 of
+the 55 misses were late (18 of them by 8 bins or more). That verdict is mostly an artefact of the synthetic brackets,
+which the red team found (section 7). A synthetic bracket runs from the tube's physical start to the first bin at
+2 px, a median of 9.1 bins wide, so an early call almost always lands inside it and only a late one can miss. Every
+`ld_v1` bracket is one bin wide.
+- Re-scored as the labelling tool would record it, the frozen per-bin decoder's onsets on twelve held-out and test
+  movies fall from 75% within ±2 bins to 39%: a one-bin bracket at the first bin with a 2 px tube. They fall to 22%
+  at 4 px. The misses become early calls: 108 and 185 of 276, against 7 against the truth files.
+- The fix that matters is calling germination at the length your annotator first sees a tube. `calibrate.py` now
+  measures that length from your own brackets (section 7).
+- What follows still holds for the late misses that remain.
+
+In 37 of the 50 late misses, the network shows nothing at the grain's rim until the tube is a few px long: peak P
+there stays near 0 after the true onset. No threshold recovers these, and the onset-length calibration cannot either,
+because the fit is zero before the first detection.
 - Extrapolating back from the first detection, along the growth the fit shows after it, gained at most 8 of 214
   onsets. That was the best of 18 settings on the same movies, and early misses rose from 5 to 12. So the onset
   rule stays as it is.
-- The synthetic movies bin time as `ld` does (176 bins of 25 keyframes, which is 300 frames), so the same
-  lateness may well show on your movies.
+- The synthetic movies bin time as `ld` does (176 bins of 25 keyframes, which is 300 frames), so these late misses
+  may well show on your movies too.
 - Teaching fine-tuning the young tube directly did not help. From each bin marked first visible, the first 3 px of
   the path were labelled tube, where before onset the same place is background. On the faint-tube movie, whose
   onsets are the latest (11 of 18 late for the starting model), it got 6 of 18 onsets, against 5 for plain
@@ -847,6 +871,169 @@ and the onset-length calibration cannot either, because the fit is zero before t
 4. Is there GPU access (for example Brown CCV's Oscar) for the fine-tuning step, or is CPU/MPS the budget? The
    experiment here was CPU-only.
 5. Who else could label 10 grains, so there is an inter-rater number?
+
+---
+
+## 7. Breakthrough search (25 Sep): read the movie backwards from the end state
+
+Three agents searched in parallel, each with its own brief, and I checked every claim before keeping it:
+- a red team, to find where the current numbers would not survive your labels;
+- a scout, to test what 2025–2026 video models can do on this footage;
+- a first-principles redesign of the decoder.
+
+Their findings point the same way. Start from the end state, where the tube is longest and clearest, and read the
+movie backwards. The biology licenses it: a pollen tube grows only at its tip, so every earlier tube is a prefix of a
+later one.
+
+### 7.1 Red team: what would not have held
+
+- **Onset brackets.** Section 5 has the details. Synthetic brackets are 9.1 bins wide against one bin in `ld_v1`, so
+  synthetic onset scores flattered every method. Against brackets the labelling tool would record, the per-bin
+  decoder's onsets fall from 75% within ±2 bins to 39% (annotator at 2 px) and 22% (at 4 px), almost all early.
+- **What `ld_v1` can tell.** Human-style scoring of synthetic movies, resampled to 28 grains like `ld_v1`, predicts:
+  - per-bin lengths within tolerance 70% (90% range 60–79%) against SparseTrack's 52% (40–63%);
+  - onsets 39% (2 px annotator) and 21% (4 px), about the same as SparseTrack's.
+
+  With 28 grains, a real length gain of this size comes out significant only about half the time. One dev movie
+  cannot settle small differences.
+- **Fixes, committed on 25 Sep:**
+  - `calibrate.py` measures your germination length from your own brackets. It takes the median of the decoder's
+    fitted length midway through each bracket, needs at least 10 labelled onsets, and keeps the estimate only if a
+    check over folds of grains does not lose onsets.
+    - On synthetic annotators it recovered the threshold (2 px → 2.5, 3 → 2.5–3, 4 → 3.5–4, 6 → 5.5).
+    - It roughly doubled onsets within ±2 bins for a 4 px annotator (24% → 47%).
+    - Drawing 28 grains at a time, it never made things worse in 200 draws.
+  - Fine-tuning is adopted only if the 95% interval of its gain is above zero.
+  - Review curves say how many onsets were checked, and a partly checked review also gets the curve of the checked
+    onsets alone.
+
+### 7.2 Scout: video foundation models
+
+- **EdgeTAM** (a SAM-2-family video segmenter, Apache-2.0) was prompted with the tube's mask at the end of the movie
+  and propagated backwards. On the real sample movie it followed tubes back through their growth, checked by eye on
+  its panels.
+- **Point trackers** (the CoTracker and TAPIR family) lost the thin, growing, textureless tubes.
+- **Cost.** EdgeTAM took 15–25 minutes per grain on this container's CPU (176 bins), against 1–4 minutes for the
+  U-Net. It needs a GPU to be practical, a mask prompt per grain, and a score it does not yet have.
+- **Not integrated.** It supports the same principle independently: the end state is the easy place to start.
+
+### 7.3 Redesign: the prefix decoder (`prefix.py`)
+
+**How it works.** Per grain, the whole movie is explained at once by three things:
+- one path, traced at the grain's last well-visible state;
+- a growth curve along it that never shrinks;
+- a smooth deformation of the path: turning with the grain, swaying, or held by the substrate while the grain
+  drifts.
+
+Dynamic programming finds all three together, exactly. It reads the same learned evidence as the per-bin decoder,
+plus the image itself for the first 6 px of the tube.
+
+**Held-out synthetic movies** (5 movies, 186 grains; each version frozen before its one look):
+
+| Lengths within tolerance | Per-bin | Prefix: end state at the last bins | + last well-visible state | + image evidence only supports (default) |
+|---|---|---|---|---|
+| Truth files | 71.0% | 82.1% (+113, 95% CI +40 to +191) | 84.3% (+22, +0 to +52) | 84.6% (+3, −7 to +14) |
+| Human-style at 2 px | 70.8% | 80.6% | 83.3% (+10, +1 to +23) | 85.3% (+7, +1 to +14) |
+| Human-style at 4 px | 69.6% | 78.2% | 81.4% (+11, +2 to +23) | 83.7% (+8, +3 to +15) |
+
+Each column was a new frozen version, scored once with a rule fixed beforehand. The rule kept a change only if
+neither lengths nor onsets were shown worse.
+
+- Onsets are no better than the per-bin decoder's before calibration: both call them early against one-bin
+  brackets.
+- With the annotator's germination length measured as above, on development movies with a 4 px annotator, its onsets
+  within ±2 bins went from 12 to 50 of 89 (per-bin: 23 to 43).
+- **Real footage.** The sample movie is real but unlike yours: thicker, double-walled tubes, grains that move tens of
+  px, one frame per bin. There the prefix decoder is not yet reliable.
+  - A separate agent judged all 37 grains by eye, from panels of both decoders over the movie. No labels exist for
+    this movie, and its estimates are good to about ±10–20%.
+    - The per-bin decoder was right where the prefix decoder was wrong on 8 grains, and the reverse on 4. Both
+      were fine on 1, both wrong on 23, and 1 could not be told.
+    - 7 of the prefix decoder's 8 "tubeless" calls are wrong (18 before the last-well-visible rule). The per-bin
+      decoder calls a tube on every grain.
+    - Onsets within 6 bins of what it saw: per-bin 26 of 33, prefix 12.
+    - The prefix decoder's end state is another grain's tube, or none, on 11 grains. When that happens, nothing in the
+      earlier bins pulls it back.
+    - Both decoders fail for shared reasons:
+      - the network misses thick, dark or defocused tubes;
+      - grains that jump or drift are lost;
+      - the frame-edge mask blocks a pixel in every bin if it leaves the frame in any bin;
+      - two census "grains" are out-of-focus ghosts;
+      - the recording jumps between some frames.
+    - The per-bin decoder's monotone fit can also collapse. g014's raw readings reach 120 px by bin 64 (checked on its
+      film), then about 45 bins of failed readings drag the fit down to 18 px for the whole movie.
+  - Anchored on the per-bin decoder's end-state traces, it put germination in the last few bins for 10 grains whose
+    tube shows from about bin 10. Looking at them found three causes:
+    1. The image term, which scores the first 6 px against the tube's mature cross-section, vetoed young tubes that
+       did not look mature yet. Without it, g015's onset moved from bin 124 to 9 (per-bin: 8), and g034's from 123 to
+       15. An image term that can only add evidence fixed these without losing anything on synthetic movies (table
+       above). It is the default now.
+    2. Grains that move tens of px (up to about 50 here) with unreliable tracking: the end-state path falls off the
+       early tube.
+    3. Wrong machine anchors: g006's end-state trace follows a neighbour's tube that passes it late.
+  - The synthetic thick-tube movie used to test the Adapt journey tells the same story, scored on the 51 human-style
+    traces before the anchor. The per-bin decoder with its calibrated end offset put 22 within tolerance, the prefix
+    decoder 17 and the anchored one 19. Thick tubes read long, and only the per-bin decoder has a calibrated correction.
+  - So the synthetic lead does not carry over to this movie. The per-bin decoder degrades more gracefully and stays
+    the default. Whether the lead holds for thin tubes like `ld`'s, your labels will show.
+- **In the repository:** `pipeline.py --prefix` runs it beside the per-bin decoder in the dev test. The movie-2
+  command in `SUMMARY.md` scores it alongside the per-bin decoder in its single run. The per-bin decoder stays the
+  default until your labels say otherwise.
+
+### 7.4 Trace once: the decoder anchored on one human trace
+
+The prefix decoder's weak step on real footage is finding the grain's own tube at the end state, and that is what a
+human does best. Given one trace per grain, it skips that step and decodes everything else. The trace is the
+labelling tool's polyline at one bin; the trace's end fixes the length at that bin.
+
+**Synthetic test.** Human traces were simulated from the true tube at the tool's last trace bin, clicked as a
+polyline with 0.5 px of hand jitter. Scoring used only the traces before the anchor.
+
+| Scored on traces before the anchor | Per-bin | Prefix on its own | Prefix anchored on one trace |
+|---|---|---|---|
+| Development movies, truth files | 72.5% | 77.6% | 81.3% |
+| **Held-out movies, truth files (one look)** | 71.0% | 84.3% | **87.8%** |
+| Held-out movies, human-style at 2 px | 71.4% | 82.3% | 85.9% |
+
+- Held-out, anchored against per-bin: lengths +170 (95% CI +96 to +250). Against the prefix decoder on its own:
+  +35 (+0 to +74), and onsets +12 (+5 to +20).
+- With image evidence that only supports (the default since), the anchored run put 86.7% within tolerance on truth
+  files (−11 against the table, 95% CI −22 to +0, right at the rule's edge) and 87.5% human-style.
+- **Tracing quality** (development movies):
+  - a careful tracer reached 79.7%, a sloppy one (coarser clicks, apex up to 2 px short) 78.4%;
+  - fixing the length at the trace's end is what matters: without it, 74.7%.
+- **The per-bin decoder's own trace as the anchor** (no human; what the review pre-fills today): no gain.
+  - On development movies it put 72.4% of lengths within tolerance, against 72.5% for the per-bin decoder alone.
+  - It was 41 lengths behind the prefix decoder on its own (95% CI −70 to −16).
+  - A machine trace carries the machine's end-state errors, and fixing the length at its end keeps them.
+  - The gain comes from the trace being right: your check of the end-state trace is what it adds. The review should
+    therefore propose the prefix decoder's end-state trace where it finds one, not the per-bin decoder's.
+- **The real test is your labels.** `trace_once.py`, step 4 of `Adapt_Learned_To_Dev_Movie.command`, anchors on your
+  latest full trace of each grain. It then scores your earlier traces and onset brackets against the per-bin
+  decoder and the prefix decoder on its own. It runs by itself the next time you double-click Adapt.
+
+### 7.5 What it would change
+
+- **Today:** a labelled grain costs an onset bracket and up to four traces, and the model's answers are checked the
+  same way.
+- **Trace once:** one trace per grain at its end state, and the movie gives the rest: every bin's length, the growth
+  curve, and the onset at your germination length. The review would then check one trace per grain and the onset.
+  Every length would come from the same measurement, which humans cannot keep up across hundreds of bins.
+- **In the review loop:** `export_review.py --anchored` already decodes each reviewed grain along its checked latest
+  trace, into `trace_once/`. It is off by default, and becomes the recommended path if `ld_v1` confirms it.
+- **The audit strengthens the case for the human anchor.** On real footage the machine's weakest link is identity and
+  the end state: foreign tubes, missed tubes, grains that jump. One human trace supplies exactly that.
+- **It also shows what one end-state trace cannot fix:** tubes that turn past 45°, grains that jump or drift. The
+  labelling tool already asks for three or four traces per grain, and anchoring each stretch of the movie on its
+  next trace would cover those. The label-free shared fixes come first: evidence for thick and dark tubes, a
+  per-bin frame-edge mask, trackers that survive jumps, and no ghost grains.
+
+**Human repeatability sets the onset ceiling.** In your blind retest (section 1), 4 of 7 onsets fell within ±2 bins
+of the first pass; the other three moved by 5, 8 and 19 bins.
+- With the calibration, the decoders place about half the onsets within ±2 bins of one-bin human-style brackets on
+  synthetic movies. That is close to what a second pass by the same person reaches.
+- Agreement with a single human pass cannot go much higher. Lengths, within max(2 px, 10%), are where methods
+  separate.
 
 ---
 
