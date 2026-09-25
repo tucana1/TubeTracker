@@ -7,7 +7,8 @@ has analysed, with the decoder's answers in the tool's own format (it goes throu
   last bin): the decoder's path from the grain's rim along the tube, as long as the length it reports.
 Every answer is marked ``review_origin: model``; the tool marks what you answer ``human``, so a grain you
 confirm or fix is told apart from one not yet looked at. The file sits with the pipeline's results
-(``review_labels.json``), never with the benchmark labels, and an existing one is not overwritten.
+(``review_labels.json``, and the proposals as made in ``review_labels.model.json``), never with the
+benchmark labels, and an existing one is not overwritten. ``export_review.py`` turns it into results.
 
     python -m prototypes.learned_evidence.prefill --field runs/sparsetrack/<movie>/cache \\
         --work runs/learned_evidence/<movie>
@@ -143,6 +144,7 @@ def main(argv=None):
     doc["prefill"] = info
     doc["updated"] = info["created"]
     out.write_text(json.dumps(doc, indent=1))
+    out.with_suffix(".model.json").write_text(json.dumps(doc, indent=1))  # the proposals as made, for export_review
     out.with_suffix(".journal.jsonl").write_text(json.dumps({"t": info["created"], "event": "prefill",
                                                              "payload": info}) + "\n")
     for f in (building, building.with_suffix(".journal.jsonl")):

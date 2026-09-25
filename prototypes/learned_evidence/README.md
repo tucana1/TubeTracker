@@ -27,6 +27,12 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
    - `per_grain.csv`: per grain and per analysis, the status, onset interval and final length;
    - `perbin/population.png`: the germination curve with T50;
    - `perbin/growth_curves.png`.
+4. To check and correct them, double-click `Review_Movie_Learned.command` and choose the same movie.
+   - Your labelling tool opens with the model's answers already filled in: an onset bracket and traced tubes for
+     every grain. Confirm or fix each grain as you would label it.
+   - Press Ctrl-C in the window when you stop. `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`
+     are then written next to the results, saying which answers you checked and which you changed.
+   - Run it again to carry on; answers not yet checked stay the model's.
 
 For physical units, run the pipeline command below with `--um-per-px` and `--s-per-frame`.
 
@@ -50,6 +56,8 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins |
 | `review.py` | Review pictures for the per-bin decoder on the movie itself (six registered bins with the region read and its medial axis, then the length curve), in SparseTrack's own review gallery |
 | `adapt.py` | One command for the dev movie: the dev test, then `calibrate.py`, then `finetune.py`, each skipped once done; writes `SUMMARY.md` with the verdicts, what the launcher uses and the movie-2 command |
+| `prefill.py` | Writes the per-bin decoder's answers as a labels file for the labelling tool (onset brackets; traced tubes at the bins the tool asks for), through the tool's own API, marked as the model's, for review |
+| `export_review.py` | Results from reviewed labels: per-grain and per-trace CSVs (checked, changed from the model's) and the germination curve |
 | `calibrate.py` | Fits the per-bin decoder's end offset on a movie's human traces, with a check over folds of grains; writes `decoder.json` only if the gain is clear of noise |
 | `finetune.py` | Fine-tuning on a movie's human traces, with a check that holds out grains and traced frames; writes the tuned model only if it reads more right |
 | `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
@@ -250,4 +258,12 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
     fine-tuning's check decide on top.
   - Letting the traces pick the probability threshold as well made the full-truth scores worse (wide tubes: 191
     against 201 lengths and onsets in tolerance), so only the offset is fitted.
+- **Pre-filled review labels** (`prefill.py`; synthetic movies, per-bin decoder). The decoder's path starts where
+  the tube region crosses the grain's rim and follows its medial axis.
+  - Wide tubes: traces start 1.0 px from the true exit and follow the centreline within 0.48 px (90th percentile
+    1.38 px). 54 of 87 lengths are already within tolerance, so most grains need a confirmation, not a trace.
+  - Thick bright-cored tubes: starts are as good (1.0 px), but the path runs 3.3 px from the centreline. The
+    network marks one of the dark walls, and 22 of 73 lengths are within tolerance there.
+  - Your labelling tool opens the file unchanged, asks for a new trace where a corrected onset moves the plan, and
+    keeps the model's and your answers apart.
 

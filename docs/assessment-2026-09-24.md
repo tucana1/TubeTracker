@@ -69,9 +69,10 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
 3. Answer the five questions in section 6.
 4. Run the learned-evidence test on `ld`, then calibrate the decoder on the same traces (appendix B). One
    double-click does both, and fine-tuning after them: `Adapt_Learned_To_Dev_Movie.command`.
-5. Build prototype v1's review-and-correct loop in the labelling tool. `pipeline.py` already writes the rest for any
-   movie: a review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV, in µm and
-   minutes once question 1 is answered.
+5. Try prototype v1's loop on a movie: `Analyze_Movie_Learned.command`, then `Review_Movie_Learned.command`, which
+   opens your labelling tool pre-filled with the model's answers and exports the reviewed results. `pipeline.py`
+   also writes a review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV, in µm
+   and minutes once question 1 is answered.
 
 ---
 
@@ -341,9 +342,13 @@ registered bins ──► [1] learned evidence ──► [2] physics decoder   �
    - On synthetic movies the per-bin decoder did better with learned evidence: +56 lengths on twelve held-out movies,
      and far better when tubes burst (section 5).
    - `pipeline.py` scores both on `ld_v1`, so real footage decides between them.
-3. **Review and correct.** The labelling tool, opened in a "review" mode on the model's predictions. Grains are ordered
-   by flags and path coverage. Each is confirmed or fixed with the same onset-bracket and trace gestures, and every fix
-   is a new label.
+3. **Review and correct.** The labelling tool, opened on the model's predictions. Each grain is confirmed or fixed
+   with the same onset-bracket and trace gestures, and every fix is a new label.
+   - This works now without changing the tool. `prefill.py` writes the per-bin decoder's answers as a labels file,
+     through the tool's own API, marked as the model's. `Review_Movie_Learned.command` opens it, and
+     `export_review.py` writes the reviewed results: which answers were checked and changed, and the germination
+     curve.
+   - What the tool itself could add: ordering grains by flags, and a one-key "accept".
 
 **Why this, and why now:**
 - **It fixes the causes of past learned failures.** Those models had 5–135 labels and were asked to decide ownership
@@ -396,7 +401,7 @@ problem.
 | When | Deliverable | Gate |
 |---|---|---|
 | Now | Finish movie-2 labels; freeze 0.4.3 (long-tube fix); score 0.4.0 and 0.4.3 once each | First held-out numbers, with bootstrap intervals |
-| Week 1 | **Prototype v1:** SparseTrack 0.4 (or learned evidence with the per-bin decoder, if `ld_v1` confirms it) plus a review-and-correct mode in the labelling tool, physical units and one-click run/export (macOS and Windows). `pipeline.py` already writes the review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV in µm and minutes. Show the growth-arrest frame and burst candidates for review only: on synthetic movies an arrest read off the length curve lands within ±3 bins less than half the time | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
+| Week 1 | **Prototype v1:** SparseTrack 0.4 (or learned evidence with the per-bin decoder, if `ld_v1` confirms it) plus review-and-correct in the labelling tool (working now through pre-filled labels: `Review_Movie_Learned.command`), physical units and one-click run/export (macOS and Windows). `pipeline.py` already writes the review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV in µm and minutes. Show the growth-arrest frame and burst candidates for review only: on synthetic movies an arrest read off the length curve lands within ±3 bins less than half the time | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
 | Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then `calibrate.py` and `finetune.py` on the `ld` traces, each kept only if its check adopts it; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
 | Weeks 3–4 | **Decoder v2, the per-bin decoder (built, in `pipeline.py`).** It reads length where the tube *is* in each bin (`reach.py`: medial-axis length through P > 0.5, made monotone over bins) instead of rotating one end-state path. On twelve held-out synthetic movies it takes learned evidence from 71% to 73% of lengths in tolerance (61% for SparseTrack as it is). It removes the drifting-grain weakness and holds up when tubes burst (71% against 43–47%). A hybrid with SparseTrack's decoder did not help | Beats SparseTrack's decoder on `ld_v1`, then holds on movie 2 |
 | Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts. Movie 2's burst answers are the first real burst labels, bracketed by trace times. The per-bin decoder's burst safeguard protects lengths but cannot time bursts (5 of 28 within ±2 bins) | Burst frame within ±2 bins on held-out reviews |
