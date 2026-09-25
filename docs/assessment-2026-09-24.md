@@ -807,8 +807,14 @@ and the onset-length calibration cannot either, because the fit is zero before t
   onsets. That was the best of 18 settings on the same movies, and early misses rose from 5 to 12. So the onset
   rule stays as it is.
 - The synthetic movies bin time as `ld` does (176 bins of 25 keyframes, which is 300 frames), so the same
-  lateness may well show on your movies. The lever is evidence for very young tubes: fine-tuning on your onset
-  brackets, or young-tube emphasis in the synthetic training.
+  lateness may well show on your movies.
+- Teaching fine-tuning the young tube directly did not help. From each bin marked first visible, the first 3 px of
+  the path were labelled tube, where before onset the same place is background. On the faint-tube movie, whose
+  onsets are the latest (11 of 18 late for the starting model), it got 6 of 18 onsets, against 5 for plain
+  fine-tuning and 7 for the start. Not kept.
+- The synthetic "first visible" comes from the true geometry, so for faint tubes it falls before anything can be
+  seen. Real annotators mark a tube when they can see it, so lateness against your brackets may be smaller than
+  these figures suggest. `ld_v1` will tell.
 
 **What these results do and don't show.**
 - **Do:**

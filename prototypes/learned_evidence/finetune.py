@@ -184,25 +184,6 @@ def _cut(pts: np.ndarray, s0: float) -> np.ndarray | None:
     return np.vstack([pts[i - 1] + a * (pts[i] - pts[i - 1]), pts[i:]])
 
 
-def _head(pts: np.ndarray, s1: float) -> np.ndarray:
-    """The part of a polyline up to arclength ``s1`` (all of it if it is not that long)."""
-    s = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(pts, axis=0).T))])
-    if s1 >= s[-1]:
-        return pts
-    i = max(1, int(np.searchsorted(s, s1, side="right")))
-    a = (s1 - s[i - 1]) / max(s[i] - s[i - 1], 1e-9)
-    return np.vstack([pts[:i], pts[i - 1] + a * (pts[i] - pts[i - 1])])
-
-
-def first_visible_bin(labels: dict, gid: str, fpb: int) -> int | None:
-    on = labels["labels"].get(gid, {}).get("onset") or {}
-    if on.get("verdict") != "emerged_within":
-        return None
-    if on.get("first_visible_bin") is not None:
-        return int(on["first_visible_bin"])
-    return int(on["first_visible_frame"]) // fpb if on.get("first_visible_frame") is not None else None
-
-
 def last_absent_bin(labels: dict, gid: str, fpb: int) -> int | None:
     on = labels["labels"].get(gid, {}).get("onset") or {}
     if on.get("verdict") != "emerged_within":
@@ -214,7 +195,7 @@ def last_absent_bin(labels: dict, gid: str, fpb: int) -> int | None:
 
 def real_samples(field: str | Path, labels: dict, grains: set[str] | None = None, half: int = 48,
                  step: float = 24.0, jitter: float = 12.0, seed: int = 0, between: int = 8,
-                 exclude_bins=(), onset_px: float = 0.0) -> dict[str, np.ndarray]:
+                 exclude_bins=()) -> dict[str, np.ndarray]:
     """Training crops from the labels of ``grains`` (default: every labelled grain): input ``x``,
     targets ``body`` and ``tip``, and where each is supervised (``w``, ``wt``). Only these grains'
     traces are read, also for keeping background away from other traced tubes. No crop is taken in
@@ -229,11 +210,7 @@ def real_samples(field: str | Path, labels: dict, grains: set[str] | None = None
       along the whole path;
     - in every one of these bins, background in a ring just outside the grain, except near its own
       traces (a grain grows one tube): trained on faint tubes alone, the network starts calling faint
-      structures on grain rims tubes, and germinations come out at the start of the movie;
-    - with ``onset_px``, at the first bin marked visible and 2 and 4 bins on (before the first trace),
-      tube along the first ``onset_px`` of the path from the grain: before onset the same place is
-      background, so the network is shown a young tube appearing (it otherwise sees tubes only once
-      they are a few px long, and onsets come late).
+      structures on grain rims tubes, and germinations come out at the start of the movie.
     So supervision is spread over the movie, not only the traced bins: trained on those alone, the
     network learns them in particular and reads other bins worse."""
     view = CacheView(field)
@@ -310,23 +287,15 @@ def real_samples(field: str | Path, labels: dict, grains: set[str] | None = None
             top = min(absent, tubes[0][0] - 1)
             pre |= {top, (view.rs + 3 + top) // 2}
         plan += [(b, None, None) for b in sorted(pre)]
-        fv = first_visible_bin(labels, gid, view.fpb) if onset_px > 0 else None
-        if fv is not None:  # a young tube: its first onset_px along the path, bounded by the first trace
-            plan += [(b, "onset", 0) for b in sorted({fv, fv + 2, fv + 4}) if view.rs <= b < tubes[0][0]]
-        for b, lo, hi in sorted((p for p in plan if p[0] not in exclude and (burst is None or p[0] < burst)),
-                                key=lambda p: p[0]):
-            onset = lo == "onset"
-            here = not onset and lo is not None and lo == hi
-            p_lo = _head(path, onset_px) if onset else tubes[lo][2] if lo is not None else None
-            p_hi = tubes[hi][2] if hi is not None else None
-            n_lo = start[(gid, tubes[lo][0])] if lo is not None and not onset else 0.0
+        for b, lo, hi in sorted(p for p in plan if p[0] not in exclude and (burst is None or p[0] < burst)):
+            here = lo is not None and lo == hi
+            p_lo, p_hi = (tubes[lo][2] if lo is not None else None), (tubes[hi][2] if hi is not None else None)
+            n_lo = start[(gid, tubes[lo][0])] if lo is not None else 0.0
             n_hi = start[(gid, tubes[hi][0])] if hi is not None else 0.0
             partial = here and tubes[lo][1].get("state") == "partial"
-            # the known path past where the tube can have reached by now (none past a partial trace, and
-            # none for a young tube, whose length is not known)
-            future = None if partial or onset else _cut(path, _length(p_hi) + n_hi if p_hi is not None else 3.0)
-            centres = [path[0] + rng.uniform(-jitter, jitter, 2)] if onset else _centres(path, step, jitter, rng)
-            for centre in centres:
+            # the known path past where the tube can have reached by now (none past a partial trace)
+            future = None if partial else _cut(path, _length(p_hi) + n_hi if p_hi is not None else 3.0)
+            for centre in _centres(path, step, jitter, rng):
                 c = crop(gid, b, *centre, others)
                 if c is None:
                     continue
@@ -518,9 +487,6 @@ def main(argv=None):
     ap.add_argument("--batch", type=int, default=16, help="real crops per batch (as many synthetic ones again)")
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--distill", type=float, default=0.5, help="weight holding unsupervised pixels to the start")
-    ap.add_argument("--onset-px", type=float, default=0.0,
-                    help="supervise young tubes: the first this many px of the path from the grain are tube from "
-                         "the first bin marked visible (0: off)")
     ap.add_argument("--decoder", default=None,
                     help="per-bin decoder settings from calibrate.py for the check's readings (default: the adopted "
                          "runs/learned_evidence/ld_cal/decoder.json if it exists, as the launcher uses it; 'none' for "
@@ -559,8 +525,7 @@ def main(argv=None):
     kw = dict(syn=syn, steps=args.steps, batch=args.batch, lr=args.lr, distill=args.distill, device=args.device,
               seed=args.seed, log=log)
     info = dict(labels=str(labels_path), field=str(field), started_from=str(start),
-                **{k: getattr(args, k) for k in ("steps", "batch", "lr", "distill", "seed", "synthetic", "decoder",
-                                                 "onset_px")})
+                **{k: getattr(args, k) for k in ("steps", "batch", "lr", "distill", "seed", "synthetic", "decoder")})
     # what the check depends on: stopped while the final model was tuning, a run with the same settings,
     # traces and starting model takes the check's verdict from scores.json instead of redoing it
     settings = {**info, "folds": args.folds, "decoder_settings": dec, "labels_sha1": _sha1(labels_path),
@@ -584,8 +549,7 @@ def main(argv=None):
             held = {gid for gid, f in grain.items() if f == k}
             held_bins = {b for b, f in bins.items() if f == k}
             guard = {b + o for b in held_bins for o in range(-GUARD_BINS, GUARD_BINS + 1)}
-            train = real_samples(field, labels, set(grain) - held, seed=args.seed + k, exclude_bins=guard,
-                                 onset_px=args.onset_px)
+            train = real_samples(field, labels, set(grain) - held, seed=args.seed + k, exclude_bins=guard)
             val = real_samples(field, labels, held, jitter=0.0, seed=args.seed + k,
                                exclude_bins=all_bins - held_bins)
             log(f"fold {k + 1}/{args.folds}: {len(held)} grains held out, scored at bins "
@@ -622,7 +586,7 @@ def main(argv=None):
         adopt = True
         lines = [f"{labels_path.name}: no cross-validated check (--folds {args.folds}); the tuned model is kept"]
     if not args.no_final:
-        real = real_samples(field, labels, seed=args.seed, onset_px=args.onset_px)
+        real = real_samples(field, labels, seed=args.seed)
         log(f"final model: tuning on {len(real['x'])} crops from every labelled grain")
         # only an adopted model takes the name the launcher looks for
         out = save(tune(start, real, **kw), work / ("unet_ft.pt" if adopt else "unet_ft_not_adopted.pt"), **info)
