@@ -5,6 +5,8 @@
 2. ``calibrate.py``: fits the per-bin decoder's end offset on the same traces; kept only if its check adopts it.
 3. ``finetune.py``: tunes the network on the traces, judged with the decoder it will be used with; kept only
    if its check adopts it.
+4. ``trace_once.py``: with the model and decoder now in use, how well one traced tube per grain gives the rest of
+   your traces (the prefix decoder anchored on your latest trace), against the per-bin decoder.
 
 Each step is skipped when its report is already there, so the command can be stopped and started again;
 a step that ran on labels since changed is said so. ``--redo`` runs every step again on the current labels
@@ -26,7 +28,7 @@ import time
 from pathlib import Path
 
 ROOT = Path("runs/learned_evidence")
-DEV, CAL, FT = ROOT / "ld", ROOT / "ld_cal", ROOT / "ld_ft"
+DEV, CAL, FT, ONCE = ROOT / "ld", ROOT / "ld_cal", ROOT / "ld_ft", ROOT / "ld_once"
 
 
 def _here(path: Path) -> Path:
@@ -62,7 +64,7 @@ def summary(labels: Path, seconds: float, stale: tuple = ()) -> str:
     m2 = (f".venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \\\n"
           f"    --labels benchmark/labels/m2_v1.json --model {model} \\\n"
           + (f"    --decoder {decoder} \\\n" if decoder else "")
-          + "    --work runs/learned_evidence/m2 --heldout-once")
+          + "    --work runs/learned_evidence/m2 --prefix --heldout-once")
     cal = ("adopted: `" + str(CAL / "decoder.json") + "`" if (CAL / "decoder.json").exists()
            else "not adopted: the default end offset stays" if (CAL / "report.txt").exists() else "not run")
     ft = ("adopted: `" + str(FT / "unet_ft.pt") + "`" if (FT / "unet_ft.pt").exists()
@@ -89,6 +91,12 @@ Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
 {_report(FT / "report.txt")}
 ```
 
+## 4. Trace once: one traced tube per grain, the rest decoded
+
+```
+{_report(ONCE / "report.txt")}
+```
+
 ## What is used now
 
 - Model: `{model}`
@@ -99,7 +107,9 @@ Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
 ## Movie 2, once, when its labels are in
 
 This scores the model and decoder above on movie 2. Run it once. Changing either afterwards and scoring again
-would turn movie 2 into a development set.
+would turn movie 2 into a development set. The per-bin decoder is the one this summary recommends; the prefix
+decoder is scored alongside it in the same run, to tell whether its synthetic lead carries over to a real movie,
+not to pick between the two afterwards.
 
 ```bash
 {m2}
@@ -114,6 +124,7 @@ def main(argv=None, steps=None):
     ap.add_argument("--quick", action="store_true",
                     help="use the shipped model instead of training on your field (minutes, not 1.5 hours)")
     ap.add_argument("--skip-finetune", action="store_true")
+    ap.add_argument("--skip-trace-once", action="store_true", help="leave out step 4")
     ap.add_argument("--redo", action="store_true", help="run every step again on the current labels (calibration's "
                                                         "and fine-tuning's earlier outputs are moved aside to *_old); "
                                                         "the dev test keeps its trained model and is scored again")
@@ -127,12 +138,12 @@ def main(argv=None, steps=None):
     if not labels.exists():
         raise SystemExit(f"no labels at {labels}")
     if steps is None:
-        from . import calibrate, finetune, pipeline
-        steps = {"dev": pipeline.main, "calibrate": calibrate.main, "finetune": finetune.main}
+        from . import calibrate, finetune, pipeline, trace_once
+        steps = {"dev": pipeline.main, "calibrate": calibrate.main, "finetune": finetune.main, "once": trace_once.main}
     from .finetune import SHIPPED
     started = time.time()
     if args.redo:
-        for d in (CAL, FT):
+        for d in (CAL, FT, ONCE):
             if d.exists():
                 old = d.with_name(d.name + "_old")
                 shutil.rmtree(old, ignore_errors=True)
@@ -146,6 +157,8 @@ def main(argv=None, steps=None):
             ("calibrate", CAL, ["--field", str(field), "--labels", str(labels), "--work", str(CAL)])]
     if not args.skip_finetune:
         plan.append(("finetune", FT, ["--field", str(field), "--labels", str(labels), "--work", str(FT)]))
+    if not args.skip_trace_once:  # with the model and decoder the steps before leave in use
+        plan.append(("once", ONCE, ["--field", str(field), "--labels", str(labels), "--work", str(ONCE)]))
     for name, work, cmd in plan:
         if (work / "report.txt").exists():
             seen = work / "labels.sha1"

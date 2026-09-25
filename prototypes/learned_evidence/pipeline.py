@@ -10,7 +10,8 @@ are deleted once their training shard is written, unless ``--keep-caches``. Trai
 movie's field only: the held-out movie 2 must never supply training data, and its labels are
 scored once per frozen model (``--heldout-once``). Both SparseTrack runs read a grain again at
 +/-300 px when its path reaches the edge of the +/-150 px crop (``evaluate.adaptive_crop``;
-``--fixed-crop`` keeps SparseTrack as is).
+``--fixed-crop`` keeps SparseTrack as is). ``--prefix`` adds a run of the prefix decoder
+(``prefix.py``) on the same evidence, scored against the per-bin decoder.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from sparsetrack.cli import write_census
 from sparsetrack.evaluate import load, score
 from sparsetrack.synth import make_movie
 
-from . import calibrate, data, evaluate, reach, review, train
+from . import calibrate, data, evaluate, prefix, reach, review, train
 from .model import load as load_model
 
 # ten movies (model v2): on held-out synthetic seeds, +35 lengths in tolerance over five (95% CI +6 to +70)
@@ -142,6 +143,9 @@ def main(argv=None):
     ap.add_argument("--only-perbin", action="store_true",
                     help="run only the per-bin decoder on the learned evidence (about twice as fast), once the dev "
                          "test has shown it is the one to use; without the two comparison runs")
+    ap.add_argument("--prefix", action="store_true",
+                    help="also run the prefix decoder (prefix.py: the whole movie as prefixes of the tube's "
+                         "end state) and score it against the per-bin decoder; about 1 s per grain")
     ap.add_argument("--fixed-crop", action="store_true",
                     help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
                          "(by default such grains are read again at +/-300 px, in both runs)")
@@ -182,32 +186,47 @@ def main(argv=None):
     write_population(perbin, work / "perbin")
     write_growth_curves(perbin, work / "perbin", [g["id"] for g in perbin["grains"] if g.get("status") == "emerged_within"])
     runs = {"perbin": perbin} if args.only_perbin else {"sparsetrack": base, "learned": learned, "perbin": perbin}
+    if args.prefix:  # the same evidence, speed cap and annotator's onset threshold; not the default yet
+        pp = prefix.Params(vmax_px=vmax, big=prefix.Params.half if args.fixed_crop else 300,
+                           onset_px=kw.get("onset_px", prefix.Params.onset_px))
+        runs["prefix"] = prefix.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, params=pp)
+        (work / "prefix").mkdir(exist_ok=True)
+        (work / "prefix" / "predictions.json").write_text(json.dumps(runs["prefix"]))
     if labels_path is None:
         write_per_grain(work, runs, time.time() - started, um_per_px=args.um_per_px, s_per_frame=args.s_per_frame)
         return
     labels = load(labels_path)
-    if args.only_perbin:
-        lines = [f"{labels_path.name}: {time.time() - started:.0f} s", evaluate.e2e_summary("per-bin", score(labels, perbin))]
-        print("\n".join(lines))
-        (work / "report.txt").write_text("\n".join(lines) + "\n")
-        return
-    rb, rl, rp = score(labels, base), score(labels, learned), score(labels, perbin)
-    tol = rb["onset"]["tolerance_frames"]
-    pb = evaluate.paired_bootstrap(rl, rb, tol)
-    pp = evaluate.paired_bootstrap(rp, rl, tol)
+    rp = score(labels, perbin)
+    tol = rp["onset"]["tolerance_frames"]
 
     def diff(name, p):
         return (f"{name} over {p['grains']} grains: onset {p['onset_diff']:+.0f} "
                 f"[{p['onset_ci'][0]:+.0f}, {p['onset_ci'][1]:+.0f}], lengths {p['length_diff']:+.0f} "
                 f"[{p['length_ci'][0]:+.0f}, {p['length_ci'][1]:+.0f}] (95% paired bootstrap over grains)")
 
+    extra, scores = [], {"perbin": rp}
+    if "prefix" in runs:
+        rq = score(labels, runs["prefix"])
+        pq = evaluate.paired_bootstrap(rq, rp, tol)
+        extra = [evaluate.e2e_summary("prefix", rq), diff("prefix - per-bin", pq)]
+        scores.update(prefix=rq, paired_prefix_perbin=pq)
+    if args.only_perbin:
+        lines = [f"{labels_path.name}: {time.time() - started:.0f} s", evaluate.e2e_summary("per-bin", rp), *extra]
+        print("\n".join(lines))
+        (work / "report.txt").write_text("\n".join(lines) + "\n")
+        if extra:
+            (work / "scores.json").write_text(json.dumps(scores, default=str, indent=1))
+        return
+    rb, rl = score(labels, base), score(labels, learned)
+    pb = evaluate.paired_bootstrap(rl, rb, tol)
+    pp = evaluate.paired_bootstrap(rp, rl, tol)
     lines = [f"{labels_path.name}: {rb['grains_scored']} grains scored ({time.time() - started:.0f} s)",
              evaluate.e2e_summary("baseline", rb), evaluate.e2e_summary("learned", rl),
              evaluate.e2e_summary("per-bin", rp),
-             diff("learned - baseline", pb), diff("per-bin - learned", pp)]
+             diff("learned - baseline", pb), diff("per-bin - learned", pp), *extra]
     print("\n".join(lines))
     (work / "report.txt").write_text("\n".join(lines) + "\n")
-    (work / "scores.json").write_text(json.dumps({"baseline": rb, "learned": rl, "perbin": rp, "paired": pb,
+    (work / "scores.json").write_text(json.dumps({"baseline": rb, "learned": rl, **scores, "paired": pb,
                                                   "paired_perbin_learned": pp}, default=str, indent=1))
 
 

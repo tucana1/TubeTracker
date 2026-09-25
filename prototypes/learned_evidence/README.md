@@ -44,7 +44,8 @@ For physical units, run the pipeline command below with `--um-per-px` and `--s-p
 
 **Once, after the dev labels are done:** double-click `Adapt_Learned_To_Dev_Movie.command` (about 2.5 hours the first
 time; it can be stopped and started again). It runs the dev test on your labels, then calibrates the decoder and
-fine-tunes the network on your traces, keeping each only if its check says so. `runs/learned_evidence/SUMMARY.md` then
+fine-tunes the network on your traces, keeping each only if its check says so. Last, it checks how well one traced
+tube per grain gives the rest of your traces ("trace once", below). `runs/learned_evidence/SUMMARY.md` then
 says what each step found and what the launcher above uses from now on. If you change the labels later, double-click
 it again: it offers to run every step again on them (about an hour; the model trained on your field is kept).
 
@@ -61,8 +62,11 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `evaluate.py` | Probability caches; end-to-end SparseTrack runs (baseline, learned, and "perfect" = exact truth masks as evidence); the adaptive crop (below); oracle-path fronts; paired bootstrap over grains |
 | `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
 | `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins |
+| `prefix.py` | The prefix decoder: the whole movie as prefixes of the tube's end state (tip growth), with monotone growth and a smooth deformation found jointly by dynamic programming; optionally anchored on a trace (a human's, or a proposal accepted in review). `pipeline.py --prefix` runs it beside the per-bin decoder |
+| `track.py` | Grain tracking by the grain's own look (disc-and-rim template), for the prefix decoder |
+| `trace_once.py` | On a labelled movie: the prefix decoder anchored on each grain's latest trace, scored on the grain's earlier traces and onset against the per-bin decoder and the prefix decoder on its own (step 4 of `adapt.py`) |
 | `review.py` | Review pictures for the per-bin decoder on the movie itself (six registered bins with the region read and its medial axis, then the length curve), in SparseTrack's own review gallery |
-| `adapt.py` | One command for the dev movie: the dev test, then `calibrate.py`, then `finetune.py`, each skipped once done; writes `SUMMARY.md` with the verdicts, what the launcher uses and the movie-2 command |
+| `adapt.py` | One command for the dev movie: the dev test, then `calibrate.py`, then `finetune.py`, then `trace_once.py`, each skipped once done; writes `SUMMARY.md` with the verdicts, what the launcher uses and the movie-2 command |
 | `prefill.py` | Writes the per-bin decoder's answers as a labels file for the labelling tool (onset brackets; traced tubes at the bins the tool asks for), through the tool's own API, marked as the model's, for review |
 | `export_review.py` | Results from reviewed labels: per-grain and per-trace CSVs (checked, changed from the model's) and the germination curve |
 | `calibrate.py` | Fits the per-bin decoder's end offset on a movie's human traces, with a check over folds of grains; writes `decoder.json` only if the gain is clear of noise |
@@ -99,6 +103,14 @@ example, add `--field runs/sparsetrack/<movie> --model runs/learned_evidence/ld/
   - `index.html`, a review gallery of every grain drawn on the movie;
   - `population.png` and `population.csv`, the germination curve (Turnbull, with T50);
   - `growth_curves.png`.
+
+**The prefix decoder and "trace once".** `--prefix` adds a fourth run on the same evidence: the prefix decoder
+(`prefix.py`), which explains a grain's whole movie as prefixes of its tube at the end state. A pollen tube grows at
+its tip, so every earlier tube is the later one, shorter. It is scored against the per-bin decoder (`prefix/` holds
+its predictions). `trace_once.py`, step 4 of `adapt.py`, anchors it on each grain's latest traced tube in your labels
+and scores it on your earlier traces and onsets. If one trace per grain gives the rest within tolerance, labelling a
+movie comes down to one trace per grain. On synthetic movies (assessment, section 7) the anchored decoder put 88% of
+held-out lengths within tolerance, against 71% for the per-bin decoder; the real test is your labels.
 
 **Quick first look (about 10 minutes).** Add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
 to skip the synthetic movies and training. That model (2 MB) is v2 below: trained on ten synthetic movies built on
