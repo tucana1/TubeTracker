@@ -96,7 +96,7 @@ evidence looks at tube ends. `calibrate.py` fits that one number on the `ld` tra
 - The check reads each third of the grains with the offset the other two thirds picked.
 - It writes `decoder.json` only if the 95% interval for the gain in lengths lies above zero and onsets are no worse.
   Picking the best of ten on the same traces flatters small gains, hence the stricter rule.
-- `pipeline.py --decoder`, `finetune.py --decoder` and `Analyze_Movie_Learned.command` use it.
+- `pipeline.py --decoder` uses it, and `finetune.py` and `Analyze_Movie_Learned.command` pick it up by themselves.
 - Fit it on a model that was not tuned on the same traces. It refuses a model fine-tuned on them.
 
 **Fine-tune on your traces (after the dev test, about 45 minutes).** `finetune.py` tunes the network on the `ld`
@@ -104,10 +104,11 @@ traces and checks whether that helps before anything uses the result:
 
 ```bash
 .venv/bin/python -m prototypes.learned_evidence.finetune --field runs/sparsetrack/ld \
-    --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft \
-    --decoder runs/learned_evidence/ld_cal/decoder.json      # only if calibration was adopted
+    --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft
 ```
 
+- Run it after calibrating. It reads an adopted `decoder.json` as the launcher does, so the check judges the model
+  with the decoder it will be used with.
 - **What it learns from.** Tube along each traced line, and background in a band beside it that starts past the
   tube's walls, measured on the image, since real tubes are wider than synthetic ones. Since tubes only grow, it also
   labels bins that were not traced:
@@ -235,6 +236,9 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
     lengths in tolerance. That is far more than fine-tuning gave on the same thick tubes, whose bias it barely
     moved (+5.6 to +5.0 px).
   - Faint tubes read short in proportion to their length, which no single offset fixes.
+  - After calibration, fine-tuning added nothing on thick tubes (fresh movie 90 → 84 lengths, 95% CI −18 to +7).
+    Its check, reading with the calibrated offset, did not adopt it (−1, −4 to +2). So calibrate first, and let
+    fine-tuning's check decide on top.
   - Letting the traces pick the probability threshold as well made the full-truth scores worse (wide tubes: 191
     against 201 lengths and onsets in tolerance), so only the offset is fitted.
 

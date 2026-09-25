@@ -10,8 +10,8 @@ tolerance. The check splits the labelled grains into folds: each fold is read wi
 other folds picked, against the default. Picking the best of ten on the same traces flatters small
 gains, so the calibration is adopted only if the paired 95% interval for lengths lies above zero and
 onsets are no worse. Then ``decoder.json`` holds the offset picked on every grain, for the model it
-was fitted on; ``pipeline.py --decoder``, ``finetune.py --decoder`` and ``Analyze_Movie_Learned.command``
-read it. Not adopted, it is written as ``decoder_not_adopted.json``.
+was fitted on; ``pipeline.py --decoder`` reads it, and ``finetune.py`` and ``Analyze_Movie_Learned.command``
+pick it up from ``ADOPTED``. Not adopted, it is written as ``decoder_not_adopted.json``.
 
 Fit it on a model that was not tuned on the same traces (its readings of them are in-sample).
 
@@ -31,6 +31,7 @@ import numpy as np
 
 ENDS = tuple(float(e) for e in range(-6, 4))
 DEFAULT_END = 1.0  # reach_grain's
+ADOPTED = Path("runs/learned_evidence/ld_cal/decoder.json")  # where the launcher and finetune.py look
 
 
 def model_default() -> Path:

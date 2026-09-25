@@ -724,6 +724,9 @@ and then applied to a fresh one:
 - Where tubes read long or short by about the same amount, one number more than doubles the lengths in tolerance.
   Fine-tuning barely moved the same bias (+5.6 to +5.0 px).
 - Where the error grows with length, as with faint tubes, no single offset fixes it.
+- After calibration, fine-tuning added nothing on thick tubes: 90 → 84 lengths on the fresh movie (95% CI −18 to +7).
+  Fine-tuning's check, reading with the calibrated offset as it does by default, did not adopt it (−1, −4 to +2).
+  Calibrate first, then let fine-tuning's check decide.
 - Picking the best of ten offsets on the same traces flatters small gains. On faint and wide tubes the point estimate
   was positive and the truth negative. So calibration is adopted only when the interval lies above zero. Fine-tuning,
   which picks nothing, keeps the plain rule, and that rule was right for it.
@@ -829,11 +832,10 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
 
   ```bash
   ../TubeTracker/.venv/bin/python -m prototypes.learned_evidence.finetune --field runs/sparsetrack/ld \
-      --labels ../TubeTracker/benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft \
-      --decoder runs/learned_evidence/ld_cal/decoder.json    # only if calibration was adopted
+      --labels ../TubeTracker/benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft
   ```
 
-  - It starts from the model trained above.
+  - It starts from the model trained above, and reads an adopted calibration as the launcher does.
   - It tunes one model per fold of grains and traced frames, and scores each fold's grains at that fold's frames.
     No model has seen those grains, nor any label within 3 bins of those frames.
   - `report.txt` gives the paired difference against the starting model.

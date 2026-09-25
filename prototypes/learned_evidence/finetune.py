@@ -480,7 +480,9 @@ def main(argv=None):
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--distill", type=float, default=0.5, help="weight holding unsupervised pixels to the start")
     ap.add_argument("--decoder", default=None,
-                    help="per-bin decoder settings from calibrate.py (decoder.json), used by the check's readings")
+                    help="per-bin decoder settings from calibrate.py for the check's readings (default: the adopted "
+                         "runs/learned_evidence/ld_cal/decoder.json if it exists, as the launcher uses it; 'none' for "
+                         "the default offset)")
     ap.add_argument("--no-final", action="store_true", help="only the cross-validated score")
     ap.add_argument("--keep-caches", action="store_true")
     ap.add_argument("--device", default=None)
@@ -499,8 +501,13 @@ def main(argv=None):
         print(*a, flush=True)
         print(*a, file=log_file, flush=True)
 
-    from .calibrate import decoder_settings
-    dec = decoder_settings(args.decoder, start, log=print)
+    from .calibrate import ADOPTED, decoder_settings
+    if args.decoder is None and ADOPTED.exists():  # check the model with the decoder it will be used with
+        args.decoder = str(ADOPTED)
+    args.decoder = None if args.decoder == "none" else args.decoder
+    dec = decoder_settings(args.decoder, start, log=log)
+    if dec:
+        log(f"per-bin decoder settings from {args.decoder}: {dec}")
     syn = load_shards(args.synthetic) if args.synthetic else None
     log(f"{labels_path.name}: starting from {start}; synthetic samples {len(syn['x']) if syn else 0}")
     kw = dict(syn=syn, steps=args.steps, batch=args.batch, lr=args.lr, distill=args.distill, device=args.device,
