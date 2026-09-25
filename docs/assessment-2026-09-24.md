@@ -784,6 +784,13 @@ Two fixes were tried on development movies (the long one and nine ordinary ones)
 - Measuring from every piece of the region fixed the speck case: +11 lengths on the long movie. On the ordinary
   movies it lost 5, because a longer foreign piece sometimes won instead.
 - Holding the longest reading while its path is still shown lost 125 lengths: it held over-reads too.
+- Starting each reading at the tube's own exit, remembered from its first short readings, fixed some curls, for
+  example one grain from 6 to 9 lengths with its late errors dropping from +34 px to +1 px. In others it locked
+  onto the wrong structure (8 lengths to 1, twice), and overall it lost 20. It also missed the long movie's curl,
+  whose two contacts with the rim lie within 6 px of each other.
+- With the smooth length measure above, that is four changes aimed at failures seen directly, and none held up on
+  development movies. The frozen decoder sits at a robust point for this evidence. What remains needs better
+  evidence (fine-tuning on your traces) or the review.
 
 The review flags two of the four grains for unsteady readings; curls are not flagged. For movie 2 these are known
 limits, and the review is where they get caught.

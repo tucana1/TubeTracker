@@ -118,37 +118,3 @@ def test_smooth_length_reads_a_pixel_staircase_as_the_line_it_steps_along():
     bend = np.array([[0.0, 0.0], [10.0, 0.0], [10.0, 10.0]])
     assert smooth_length(bend) == pytest.approx(20.0)  # a real bend is kept
     assert smooth_length(bend[:1]) == 0.0
-
-
-def test_anchor_reads_a_curl_lying_back_on_its_grain_from_its_own_exit(tmp_path):
-    """A tube leaves its grain (r 9) straight down, then turns and comes back up to touch the grain's rim
-    at the same distance as its base: measured from both contacts, the reading ends half-way along."""
-    import json
-
-    from sparsetrack import stack
-
-    from prototypes.learned_evidence import reach
-
-    n, size = 10, 200
-    img = np.full((n, size, size), 180.0)
-    yy, xx = np.mgrid[0:size, 0:size]
-    img[:, np.hypot(xx - 100.0, yy - 50.0) < 9] = 120.0
-    prob = np.zeros((n, size, size))
-    prob[2:4, 61:70, 99:102] = 16.0  # a young tube, straight down from the rim
-    for b in range(4, n):
-        prob[b, 61:86, 99:102] = 16.0  # down
-        prob[b, 83:86, 91:102] = 16.0  # left
-        prob[b, 58:86, 91:94] = 16.0  # and back up to the rim, as far from the grain's centre as its base
-    for name, bins in (("cache", img), ("prob", prob)):
-        d = tmp_path / name
-        d.mkdir()
-        np.save(d / "bins.npy", bins.astype(np.float16))
-        (d / "meta.json").write_text(json.dumps({
-            "schema": stack.SCHEMA, "frames_per_bin": 300, "n_bins": n, "shifts": [[0.0, 0.0]] * n,
-            "movie": {"name": "t.mp4", "size_bytes": 1, "n_frames": 300 * n, "width": size, "height": size}}))
-        (d / "grains.json").write_text(json.dumps({"grains": [{"id": "g1", "x": 100.5, "y": 50.5, "r": 9.0}]}))
-    kw = dict(log=lambda *a: None, half=80)
-    both = reach.analyze(tmp_path / "prob", tmp_path / "cache", **kw)["grains"][0]["raw_reach_px"]
-    own = reach.analyze(tmp_path / "prob", tmp_path / "cache", anchor=True, **kw)["grains"][0]["raw_reach_px"]
-    assert both[-1] < 40 and own[-1] > 55  # about 60 px along the tube: down 24, across 8, up 27
-    assert own[3] == pytest.approx(both[3])  # the young tube: the same reading either way

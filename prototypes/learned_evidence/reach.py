@@ -116,7 +116,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
                 tip: str = "const", big: int | None = None, burst: bool = False, keep: tuple = (),
-                paths: tuple = (), length: str = "path", anchor: bool = False) -> dict:
+                paths: tuple = (), length: str = "path") -> dict:
     """Length per bin, then a monotone fit. ``seed`` chooses how the bin's length is read:
     ``"skeleton"`` (the default, frozen on the development seed): geodesic length along the region's
     medial axis from its pixels nearest the grain centre, plus their distance from the rim, so a
@@ -140,10 +140,6 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     (1364 against 1368 of 1792; 67 against 80 of the 100 longest tubes): the staircase's excess
     brings some of the under-reads (a region stopping short of the tip) inside tolerance. So the
     default stays "path".
-    ``anchor`` (off; under evaluation) starts each reading at the tube's own exit from the grain, set by
-    a young tube's reading and following the base as the grain turns, instead of at every medial-axis
-    pixel nearest the grain: a curl lying back against its grain, or a speck on the rim, touches it
-    elsewhere too, and a reading from both contacts ends half-way along the tube.
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
@@ -177,7 +173,6 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     width = np.full(nb - rs, np.nan)  # region area per px of length: the tube's full width
     edge = False  # the tube reaches the crop's edge: read the grain again with a bigger crop
     views, routes = {}, {}
-    exit_pt = None  # where the tube leaves the grain (crop x, y), from a young tube's reading; later readings start there
     for i, b in enumerate(range(rs, nb)):
         p = RP.crop(b, gx, gy, half) / scale
         dx, dy = ls[i]
@@ -208,11 +203,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         offset = 0.0
         if not seeds.any():  # nearest pixels (or a faint base that starts beyond the rim)
             near = comp & own_ring if (comp & own_ring).any() else comp
-            if anchor and exit_pt is not None:  # at the tube's own exit: a curl lying back on the grain, or a
-                close = near & (np.hypot(xx - exit_pt[0], yy - exit_pt[1]) <= 6.0)  # speck, touches it elsewhere
-                near = close if close.any() else near
             rmin = float(rg[near].min())
-            seeds = (near if anchor else comp) & (rg <= rmin + (1.0 if seed == "rim" else 0.5))
+            seeds = comp & (rg <= rmin + (1.0 if seed == "rim" else 0.5))
             offset = max(0.0, rmin - gr)
         if not seeds.any():
             continue
@@ -236,15 +228,11 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
             end += float(cv2.distanceTransform(region.astype(np.uint8), cv2.DIST_L2, 3)[far])
         along = smooth_length(route) if length == "smooth" else float(cum[far])
         raw[i] = max(0.0, along + offset + end)  # a negative end_px must not make lengths negative
-        if anchor and seed != "rim" and (exit_pt is not None or 2.0 <= raw[i] <= 20.0):
-            sy, sx = np.nonzero(seeds)  # set by a young tube, then following the base as the grain turns
-            if exit_pt is None or np.hypot(sx.mean() - exit_pt[0], sy.mean() - exit_pt[1]) <= 6.0:
-                exit_pt = (float(sx.mean()), float(sy.mean()))
         width[i] = float(region.sum()) / max(float(cum[far]) + 1.0, 1.0)
     if edge and big and half < big:
         res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,
                           onset_px=onset_px, min_tube_px=min_tube_px, rim_band=rim_band, seed=seed, end_px=end_px,
-                          tip=tip, big=big, burst=burst, keep=keep, paths=paths, length=length, anchor=anchor)
+                          tip=tip, big=big, burst=burst, keep=keep, paths=paths, length=length)
         res["flags"].append(f"crop_grown:{big}")
         return res
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
