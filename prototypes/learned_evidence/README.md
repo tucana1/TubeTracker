@@ -30,6 +30,11 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 
 For physical units, run the pipeline command below with `--um-per-px` and `--s-per-frame`.
 
+**Once, after the dev labels are done:** double-click `Adapt_Learned_To_Dev_Movie.command` (about 2.5 hours the first
+time; it can be stopped and started again). It runs the dev test on your labels, then calibrates the decoder and
+fine-tunes the network on your traces, keeping each only if its check says so. `runs/learned_evidence/SUMMARY.md` then
+says what each step found and what the launcher above uses from now on.
+
 **This is a prototype.** Its accuracy has been measured only on synthetic movies. Your dev benchmark (`ld_v1`,
 appendix B of the assessment) is the real test. Until it is done, trust the numbers only for grains whose card looks
 right. Burst frames and growth-arrest frames are hints for review, not measurements.
@@ -44,6 +49,7 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
 | `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins |
 | `review.py` | Review pictures for the per-bin decoder on the movie itself (six registered bins with the region read and its medial axis, then the length curve), in SparseTrack's own review gallery |
+| `adapt.py` | One command for the dev movie: the dev test, then `calibrate.py`, then `finetune.py`, each skipped once done; writes `SUMMARY.md` with the verdicts, what the launcher uses and the movie-2 command |
 | `calibrate.py` | Fits the per-bin decoder's end offset on a movie's human traces, with a check over folds of grains; writes `decoder.json` only if the gain is clear of noise |
 | `finetune.py` | Fine-tuning on a movie's human traces, with a check that holds out grains and traced frames; writes the tuned model only if it reads more right |
 | `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
@@ -60,6 +66,9 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 About 1.5 hours on a laptop. That is ten synthetic movies at about 5 min each, training (about 30 min on 4 CPU
 cores, less on an Apple GPU) and a probability cache for the real movie. It prints both SparseTrack runs
 scored on `ld_v1` and a paired bootstrap of the difference.
+
+`python -m prototypes.learned_evidence.adapt` runs this, then the calibration and fine-tuning below, in that order
+(each skipped once its report exists), and writes `runs/learned_evidence/SUMMARY.md`.
 
 **Any movie, no labels.** Leave out `--labels` to run all three on a new movie. The pipeline then writes each run's
 `predictions.json` and a `per_grain.csv` (status, onset interval and final length per run) instead of scores. For

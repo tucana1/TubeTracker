@@ -67,7 +67,8 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
 1. Finish the movie-2 labels (about an hour, section 3.5).
 2. Freeze 0.4.3 with the long-tube fix (section 3.3), then score 0.4.0 and 0.4.3 on movie 2, once each.
 3. Answer the five questions in section 6.
-4. Run the learned-evidence test on `ld` (appendix B), then calibrate the decoder on the same traces (10 minutes).
+4. Run the learned-evidence test on `ld`, then calibrate the decoder on the same traces (appendix B). One
+   double-click does both, and fine-tuning after them: `Adapt_Learned_To_Dev_Movie.command`.
 5. Build prototype v1's review-and-correct loop in the labelling tool. `pipeline.py` already writes the rest for any
    movie: a review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV, in µm and
    minutes once question 1 is answered.
@@ -791,6 +792,7 @@ git fetch origin
 git worktree add ../TubeTracker-learned origin/claude/magical-maxwell-i5tpeh
 cd ../TubeTracker-learned
 ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (runs/sparsetrack/ld)
+ln -s ../TubeTracker/.venv .venv               # and your environment, for the double-click launchers
 ../TubeTracker/.venv/bin/pip install torch==2.13.0   # the project's `cnn` extra, if not installed
 ../TubeTracker/.venv/bin/python -m prototypes.learned_evidence.pipeline \
     --field runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld
@@ -798,6 +800,11 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
 
 - **Time:** about 1.5 hours. That is ten synthetic movies on the `ld` field (~5 min each), training (~30 min on
   CPU, faster on an Apple GPU, which is picked automatically) and a probability cache for the real movie.
+- **Or all of this appendix in one go:** double-click `Adapt_Learned_To_Dev_Movie.command` in the worktree (or run
+  `python -m prototypes.learned_evidence.adapt`). It runs this test, then the calibration and fine-tuning below, in
+  that order. It reads your current labels from the checkout that holds `runs/`, and skips steps already done. It
+  ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and the movie-2
+  command.
 - **Output:** three runs, each scored on `ld_v1`, with paired bootstraps of the differences:
   - SparseTrack 0.4.2 as it is;
   - learned evidence through SparseTrack's decoder;
