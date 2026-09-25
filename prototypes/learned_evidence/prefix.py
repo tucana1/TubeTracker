@@ -17,16 +17,19 @@ compared by their whole-movie score; a candidate that leaves the rim tangentiall
 its base, is another grain's tube.
 
 Anchored mode (``anchors``): the end state is given as a trace in the labelling tool's form, a polyline in
-reference coordinates at a bin (a human's trace, or a machine proposal a human accepted).  Path search and the
-ownership tests are skipped, since the trace says which tube is the grain's.  The path is the trace snapped to the
-evidence within ``anchor_snap_px``, and the length at the trace's bin is pinned to the trace's end.
+reference coordinates at a bin, clicked from the tube's exit to its apex (a human's trace, or a machine proposal a
+human accepted).  Path search and the ownership tests are skipped, since the trace says which tube is the grain's.
+The path is the trace itself, each point moved sideways onto the evidence within ``anchor_snap_px``.  Lengths are
+reported in the trace's own terms: the part clicked inside the rim is added and the trace's bin reads the traced
+length; germination is called on the decoder's own scale, where the onset calibration applies.
 
 Output is in SparseTrack's prediction schema (as ``reach.analyze``), so ``sparsetrack.evaluate.score`` applies.
 
 On five held-out synthetic movies (186 grains; each version frozen before its one look) it put 84.6% of lengths
 within tolerance, against the per-bin decoder's 71.0%. Scored as the labelling tool records brackets and traces, it
-put 85% and 84% within tolerance, against 71% and 70% (annotators at 2 and 4 px). Anchored on simulated human traces
-it reached 86.7% on the traces before the anchor. Onsets are called early against one-bin human brackets, like the
+put 85% and 84% within tolerance, against 71% and 70% (annotators at 2 and 4 px). Anchored on one simulated human
+trace per grain it put 89.3% of the lengths before the anchor within tolerance; anchored on the per-bin decoder's own
+trace, fewer than the per-bin decoder alone. Onsets are called early against one-bin human brackets, like the
 per-bin decoder's; the onset calibration (``calibrate.py``) addresses that.
 
 Designed on synthetic movies of thin tubes. On the sample movie, which is real but has thick double-walled tubes and
@@ -98,6 +101,7 @@ class Params:
     # anchored mode
     anchor_snap_px: float = 3.0  # the trace is snapped to the evidence within this distance (0: used as drawn)
     anchor_pin: bool = True      # the length at the trace's bin is the trace's
+    max_half: int = 450          # a trace reaching farther than big is read with a crop this big at most
     # outputs
     onset_px: float = 2.0
     min_tube_px: float = 6.0
@@ -276,6 +280,8 @@ class GrainStack:
             # the end state is earlier than the last bin (the tube bursts, fades or leaves, or the anchor's trace
             # is there): later bins are not decoded, their lengths are held
             self.P, self.img, self.ls, self.T = self.P[:te], self.img[:te], self.ls[:te], te
+        # the bin whose geometry the path describes: an anchor's own bin, else a bin inside the end-state mean
+        self.iref = self.T - 1 if anchor_bin is not None else self.T - 2
 
     def last_good_bin(self, p: Params) -> int | None:
         """Number of bins up to the grain's last well-visible state: the last bin whose evidence region attached
@@ -387,53 +393,59 @@ def finish_path(route: np.ndarray, G: GrainStack, p: Params, extend_px: float | 
 # ----------------------------------------------------------------------------- anchored mode
 def trace_in_grain_frame(G: GrainStack, xy_ref, b_idx: int) -> np.ndarray:
     """A trace (reference coordinates at bin index ``b_idx``, the grain's drift included, as the labelling tool's
-    ``path_xy_ref``) in grain-frame crop coordinates, ordered from the end nearer the grain."""
-    xy = np.asarray(xy_ref, np.float64) - [G.gx, G.gy] + G.centre - np.asarray(G.ls[b_idx])
-    c = np.array([G.centre, G.centre])
-    if np.hypot(*(xy[-1] - c)) < np.hypot(*(xy[0] - c)):
-        xy = xy[::-1]
-    return xy
+    ``path_xy_ref``) in grain-frame crop coordinates, in the order it was clicked: the tool asks for the exit from the
+    grain first, then the centreline to the apex (a tube that curls back can end nearer its grain than it left it)."""
+    return np.asarray(xy_ref, np.float64) - [G.gx, G.gy] + G.centre - np.asarray(G.ls[b_idx])
 
 
-def snap_trace(G: GrainStack, xy: np.ndarray, p: Params) -> np.ndarray:
-    """Route (crop x, y) from the trace's first point to its last along the evidence of the end-state bins, within
-    ``anchor_snap_px`` of the trace (a drawn polyline cuts the corners of a curved tube)."""
-    dense, _ = resample(xy, 0.5)
-    if p.anchor_snap_px <= 0 or len(dense) < 3:
-        return dense
+def anchored_path(G: GrainStack, xy: np.ndarray, p: Params) -> tuple[np.ndarray, np.ndarray, float, float]:
+    """The decoding path along a trace (grain-frame crop coordinates, exit first): (points every p.step from where
+    the trace leaves the grain's disc, their arclength, the traced length before that point (a first click inside the
+    rim), the traced length after it). Each point moves sideways onto the end-state evidence, within
+    ``anchor_snap_px`` and smoothly along the trace, so the path keeps the trace's order and shape; where the moved
+    path's length strays from the trace's by more than 20%, the trace is used as drawn."""
+    dense, s = resample(xy, p.step)
+    r = np.hypot(dense[:, 0] - G.centre, dense[:, 1] - G.centre)
+    out = np.nonzero(r >= G.gr - 1.0)[0]
+    i0 = int(out[0]) if len(out) else 0
+    pts, inside, after = dense[i0:], float(s[i0]), float(s[-1] - s[i0])
+    if len(pts) < 2:
+        return pts, np.zeros(len(pts)), inside, after
+    drawn = resample(pts, p.step)
+    if p.anchor_snap_px <= 0 or len(pts) < 5:
+        return drawn[0], drawn[1], inside, after
     Pa = G.P[max(0, G.T - p.end_bins):G.T].mean(axis=0)
-    line = np.zeros(Pa.shape, np.uint8)
-    cv2.polylines(line, [np.round(xy).astype(np.int32).reshape(-1, 1, 2)], False, 1, 1)
-    corridor = (cv2.distanceTransform(1 - line, cv2.DIST_L2, 3) <= p.anchor_snap_px) & (G.rg >= G.gr - 1.0)
-    corridor &= ~G.other_discs
-    if not corridor.any():
-        return dense
-    ys, xs = np.nonzero(corridor)
-
-    def nearest(pt):
-        i = int(np.argmin((xs - pt[0]) ** 2 + (ys - pt[1]) ** 2))
-        return int(ys[i]), int(xs[i])
-
-    start, end = nearest(xy[0]), nearest(xy[-1])
-    mcp = MCP_Geometric(np.where(corridor, 1.0 / (Pa + 0.05), np.inf))
-    cum, _ = mcp.find_costs([start])
-    if not np.isfinite(cum[end]):
-        return dense
-    return np.asarray(mcp.traceback(end), float)[:, ::-1]
+    nrm = normals(pts)
+    offs = np.arange(-p.anchor_snap_px, p.anchor_snap_px + 1e-9, 0.5)
+    vals = sample(Pa, pts[:, 0, None] + offs[None] * nrm[:, 0, None], pts[:, 1, None] + offs[None] * nrm[:, 1, None])
+    shift = np.where(vals.max(axis=1) > p.thr, offs[np.argmax(vals, axis=1)], 0.0)
+    k = max(1, int(round(2.0 / p.step)))  # a median over ~4 px, then a moving average: sideways moves are smooth
+    shift = np.array([np.median(shift[max(0, i - k):i + k + 1]) for i in range(len(shift))])
+    shift = np.convolve(np.pad(shift, k, mode="edge"), np.ones(2 * k + 1) / (2 * k + 1), "valid")
+    moved = resample(pts + shift[:, None] * nrm, p.step)
+    if after > 0 and abs(moved[1][-1] / after - 1.0) > 0.2:
+        return drawn[0], drawn[1], inside, after
+    return moved[0], moved[1], inside, after
 
 
 def anchors_from_labels(labels: dict, drop: set | None = None) -> dict[str, dict]:
-    """Per grain, its latest FULL trace with a drawn path in a labelling-tool document: {grain id: {"bin",
-    "path_xy_ref", "length_px"}}."""
-    out = {}
+    """Per grain the labelling tool still asks traces of (a tube seen, not excluded), its latest FULL trace with a
+    drawn path among the bins the tool asks for now (``export_review.asked_bins``): {grain id: {"bin",
+    "path_xy_ref", "length_px"}}. Traces the tool no longer asks for (the onset moved, the grain was called
+    tubeless or excluded later) are not anchors."""
+    from .export_review import asked_bins
+
+    nb, out = int(labels["n_bins"]), {}
     for gid, lab in labels.get("labels", {}).items():
-        if drop and gid in drop:
+        if (drop and gid in drop) or (labels.get("grains") or {}).get(gid, {}).get("excluded"):
             continue
-        full = [(int(k), t) for k, t in (lab.get("traces") or {}).items()
-                if t.get("state") == "full" and len(t.get("path_xy_ref") or []) >= 2]
+        saved = lab.get("traces") or {}
+        full = [b for b in asked_bins(lab.get("onset") or {}, saved, nb)
+                if (saved.get(str(b)) or {}).get("state") == "full"
+                and len((saved.get(str(b)) or {}).get("path_xy_ref") or []) >= 2]
         if full:
-            b, t = max(full, key=lambda kv: kv[0])
-            out[gid] = {"bin": b, "path_xy_ref": t["path_xy_ref"], "length_px": float(t["length_px"])}
+            t = saved[str(full[-1])]
+            out[gid] = {"bin": full[-1], "path_xy_ref": t["path_xy_ref"], "length_px": float(t["length_px"])}
     return out
 
 
@@ -483,7 +495,7 @@ def model_geometry(model: str, pts: np.ndarray, ss: np.ndarray, G: GrainStack, p
         return X, Y, NX, NY, int(np.argmin(np.abs(a))), p.sway_dmax, p.sway_pen
     if model == "anchor":
         w = np.clip(1.0 - ss / p.bend_px, 0, 1)
-        dxy = G.ls[-2][None] - G.ls  # (T, 2): substrate displacement in the grain frame relative to the end
+        dxy = G.ls[G.iref][None] - G.ls  # (T, 2): substrate displacement in the grain frame relative to the end
         X = pts[None, :, 0] + (1 - w)[None] * dxy[:, 0:1]
         Y = pts[None, :, 1] + (1 - w)[None] * dxy[:, 1:2]
         X, Y = X[:, None], Y[:, None]
@@ -528,7 +540,7 @@ def decode_path(G: GrainStack, pts: np.ndarray, ss: np.ndarray, p: Params, model
                 pin_level: int | None = None) -> dict | None:
     best = None
     vmax = max(1, int(round(p.vmax_px / p.step)))
-    moved = float(np.hypot(*(G.ls - G.ls[-2]).T).max())
+    moved = float(np.hypot(*(G.ls - G.ls[G.iref]).T).max())
     for model in models:
         if model == "anchor" and moved < p.move_min_px:
             continue
@@ -694,30 +706,44 @@ def finalise(front: np.ndarray, half_w: float | None, p: Params) -> np.ndarray:
 def decode_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: list[dict], p: Params,
                  half: int | None = None, anchor: dict | None = None) -> dict:
     half = half or p.half
-    if anchor is not None and half < p.big:  # a trace that reaches past the crop is read with the big one
-        far = float(np.abs(np.asarray(anchor["path_xy_ref"], float) - [grain["x"], grain["y"]]).max())
-        if far > half - 25:
-            half = p.big
+    base = {"id": grain["id"], "x": float(grain["x"]), "y": float(grain["y"]), "r": float(grain["r"]), "flags": []}
+    if anchor is not None and int(anchor["bin"]) - int(meta.get("ref_start", 0)) < 1:
+        base["flags"].append(f"anchor_ignored:bin {anchor['bin']} is before the first analysed bin")
+        anchor = None
+    cut = False
+    if anchor is not None:  # a trace reaching past the crop is read with a bigger one, up to max_half
+        far = float(np.abs(np.asarray(anchor["path_xy_ref"], float) - [grain["x"], grain["y"]]).max()) + 25
+        if far > half:
+            half = int(min(max(p.big, np.ceil(far)), max(p.max_half, p.big)))
+            cut = far > half
     G = GrainStack(RP, R_img, meta, grain, others, p, half,
                    anchor_bin=None if anchor is None else int(anchor["bin"]))
     fpb, rs, nb = G.fpb, G.rs, G.nb
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
-    base = {"id": grain["id"], "x": float(grain["x"]), "y": float(grain["y"]), "r": float(grain["r"]), "flags": []}
     best, pin_level, routes, rejected = None, None, [], []
     k = 3 + int(np.ceil(np.abs(G.ls).max()))
     n_ext = int(round(p.extend_px / p.step))  # path points added past the tip
+    inside, scale = 0.0, 1.0  # anchored: the traced length before the path starts, and trace px per path px
     if anchor is not None:
         # the trace is the end state: no path search, no ownership tests
         xy = trace_in_grain_frame(G, anchor["path_xy_ref"], G.T - 1)
-        route = snap_trace(G, xy, p)
-        pts, ss = finish_path(route, G, p, extend_px=0.0 if p.anchor_pin else None)
-        n_ext = 0 if p.anchor_pin else n_ext
-        routes = [route]
+        pts, ss, inside, after = anchored_path(G, xy, p)
+        n_ext = 0
+        routes = [pts]
+        pin = p.anchor_pin and not cut
         if len(pts) >= 4:
-            pin_level = len(pts) if p.anchor_pin else None
+            pin_level = len(pts) if pin else None
             best = decode_path(G, pts, ss, p, p.models, pin_level=pin_level)
+            traced = float(anchor.get("length_px") or (inside + after))
+            if pin and ss[-1] > 0:  # lengths in the trace's own terms: its bin reads the traced length
+                scale = max(traced - inside, 0.0) / float(ss[-1])
+            else:
+                inside = 0.0
+        if cut:
+            base["flags"].append(f"trace_beyond_crop:{half}")
         base["anchor"] = {"bin": int(anchor["bin"]), "length_px": anchor.get("length_px"),
-                          "path_px": round(float(ss[-1]), 2) if len(pts) else None}
+                          "path_px": round(float(ss[-1]), 2) if len(pts) else None,
+                          "inside_rim_px": round(inside, 2), "scale": round(scale, 3)}
         Pend = None
     else:
         routes, Pend, comp = end_state_paths(G, p)
@@ -736,7 +762,7 @@ def decode_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others:
         base["flags"] += [f"rejected:{w}" for w in rejected]
     if best is not None and p.image_term:
         best = refine_with_image(G, best, p, pin_level=pin_level)
-    if best is not None and half < p.big:
+    if best is not None and half < p.big and anchor is None:
         tipxy = best["pts"][max(len(best["pts"]) - n_ext, 1) - 1]
         if min(tipxy[0], tipxy[1], 2 * half - 1 - tipxy[0], 2 * half - 1 - tipxy[1]) <= k:
             res = decode_grain(RP, R_img, meta, grain, others, p, half=p.big, anchor=anchor)
@@ -761,7 +787,9 @@ def decode_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others:
         base["flags"].append(f"held_after:{frames[G.T - 1]}")
         L = np.concatenate([L, np.full(G.T_all - G.T, L[-1])])
         front = np.concatenate([front, np.full(G.T_all - G.T, front[-1])])
-    on = np.nonzero(L >= p.onset_px)[0]
+    on = np.nonzero(L >= p.onset_px)[0]  # germination on the decoder's own scale, as calibrated
+    if anchor is not None:  # reported in the trace's terms: the part clicked inside the rim, and its px
+        L = np.where(L > 0, L * scale + inside, 0.0)
     if (L[-1] < p.min_tube_px and anchor is None) or not len(on):
         status, onset, interval, L = "no_emergence_by_end", None, None, np.zeros_like(L)
     elif on[0] == 0:
@@ -776,8 +804,12 @@ def decode_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others:
             "front_px": [round(float(v), 2) for v in front], "half_width_px": None if half_w is None else round(half_w, 2),
             **{k: best[k] for k in ("img_amp", "img_sigma", "img_ref", "img", "img_templates", "img_controls") if k in best},
             "n_candidates": len(routes), "state_track": [int(v) for v in th],
-            "path_xy_ref": [[round(float(x - G.centre + G.gx), 2), round(float(y - G.centre + G.gy), 2)]
-                            for x, y in best["pts"][::4]]}
+            # the decoded tube at the bin its path describes, as the labelling tool's path_xy_ref: reference
+            # coordinates with the grain's drift, from the exit to the decoded apex
+            "path_bin": rs + G.iref,
+            "path_xy_ref": [[round(float(x - G.centre + G.gx + G.ls[G.iref][0]), 2),
+                             round(float(y - G.centre + G.gy + G.ls[G.iref][1]), 2)]
+                            for x, y in best["pts"][:max(int(best["lev"][-1]), 2)][::2]]}
 
 
 def analyze(pcache: str | Path, image_cache: str | Path, grains_path: str | Path | None = None, log=print,

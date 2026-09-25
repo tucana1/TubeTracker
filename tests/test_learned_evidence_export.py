@@ -125,3 +125,13 @@ def test_trace_once_anchors_are_the_checked_latest_traces(tmp_path):
     path = _write(tmp_path, doc, doc)
     with pytest.raises(SystemExit, match="probability cache"):  # decoding needs the movie's probability cache
         E.main(["--labels", str(path), "--anchored", "--field", str(tmp_path / "cache")])
+
+
+def test_an_earlier_trace_once_is_set_aside_when_nothing_is_checked(tmp_path):
+    doc = {"frames_per_bin": 300, "n_bins": 100, "grains": {"g1": {}},
+           "labels": {"g1": {"onset": _onset(30, "model"), "traces": {"98": _trace(98, 30.0, "model")}}}}
+    path = _write(tmp_path, doc, doc)
+    (tmp_path / "trace_once").mkdir()
+    (tmp_path / "trace_once" / "growth.csv").write_text("old")
+    E.main(["--labels", str(path), "--anchored", "--field", str(tmp_path / "cache")])
+    assert not (tmp_path / "trace_once").exists() and (tmp_path / "trace_once_old" / "growth.csv").exists()

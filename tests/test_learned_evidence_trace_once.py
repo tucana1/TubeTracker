@@ -14,13 +14,15 @@ def _full(b, L):
     return {"bin": b, "state": "full", "length_px": L, "path_xy_ref": [[0.0, 0.0], [L, 0.0]]}
 
 
-LABELS = {"grains": {"g1": {"x": 1}, "g2": {"x": 2}, "g3": {"x": 3}},
-          "labels": {"g1": {"onset": {"verdict": "emerged_within"},
+SEEN = {"verdict": "emerged_within", "first_visible_bin": 30, "last_absent_bin": 29}  # traces at 36, 70, 122, 174
+LABELS = {"n_bins": 176, "grains": {"g1": {"x": 1}, "g2": {"x": 2}, "g3": {"x": 3}},
+          "labels": {"g1": {"onset": SEEN,
                             "traces": {"36": _full(36, 7.0), "70": _full(70, 16.0), "122": _full(122, 30.0),
                                        "174": {"bin": 174, "state": "burst"}}},
                      "g2": {"onset": {"verdict": "no_emergence_by_end"},
                             "traces": {"50": {"bin": 50, "state": "no_tube", "length_px": 0.0}}},
-                     "g3": {"onset": {"verdict": "emerged_within"}, "traces": {"40": _full(40, 9.0)}}}}
+                     "g3": {"onset": {**SEEN, "first_visible_bin": 34, "last_absent_bin": 33},
+                            "traces": {"40": _full(40, 9.0)}}}}
 
 
 def test_the_test_is_the_traces_before_each_anchor():

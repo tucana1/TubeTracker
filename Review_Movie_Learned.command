@@ -16,7 +16,8 @@ if [ -f "$WORK/review_labels.json" ] && [ "$WORK/perbin/predictions.json" -nt "$
   read "ans?Start a new review of the new analysis? Your earlier review is kept, whole, in a folder beside it. [y/N] "
   if [[ "$ans" == [yY]* ]]; then
     KEEP="$WORK/review_$(date +%Y%m%d-%H%M%S)"
-    mkdir -p "$KEEP" && mv "$WORK"/review_labels.*(N) "$WORK"/reviewed_*(N) "$WORK"/population.*(N) "$KEEP"/ \
+    mkdir -p "$KEEP" && mv "$WORK"/review_labels.*(N) "$WORK"/reviewed_*(N) "$WORK"/population.*(N) \
+        "$WORK"/checked_only(N) "$WORK"/trace_once(N) "$KEEP"/ \
         || { echo "Could not move the earlier review aside."; read; exit 1; }
     echo "Earlier review kept in $KEEP"
   else

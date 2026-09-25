@@ -38,14 +38,34 @@ def leave_anchor_out(labels: dict, anchors: dict) -> dict:
     return doc
 
 
-def find_cache(net, candidates) -> Path | None:
-    """A probability cache this network built already (the dev test's, calibration's or fine-tuning's)."""
+def find_cache(net, candidates, field: Path | None = None) -> Path | None:
+    """A probability cache this network built already for this movie (the dev test's, calibration's or
+    fine-tuning's): the same model, and the same prepared movie as far as the field's own metadata tells."""
     fp = evaluate.fingerprint(net)
+    want = json.loads((field / "meta.json").read_text()) if field is not None and (field / "meta.json").exists() else {}
     for c in candidates:
         meta = Path(c) / "meta.json"
-        if meta.exists() and json.loads(meta.read_text()).get("model_sha1") == fp:
+        if not meta.exists():
+            continue
+        m = json.loads(meta.read_text())
+        if m.get("model_sha1") == fp and all(m.get(k) == want[k] for k in ("n_bins", "frames_per_bin", "created", "movie")
+                                             if k in want):
             return Path(c)
     return None
+
+
+def out_of_sample(model: Path, labels_path: Path) -> tuple[Path, str | None]:
+    """A model fine-tuned on these very labels reads their traces in-sample: the model it started from instead."""
+    try:
+        import torch
+        info = torch.load(str(model), map_location="cpu", weights_only=False).get("args") or {}
+    except Exception:
+        return model, None
+    lab, start = info.get("labels"), info.get("started_from")
+    if lab and start and Path(lab).resolve() == labels_path.resolve():
+        return Path(start), (f"{model} was fine-tuned on these labels, so their traces are read with the model it "
+                             f"started from, {start}")
+    return model, None
 
 
 def main(argv=None):
@@ -63,17 +83,21 @@ def main(argv=None):
     from .finetune import speed_cap
     from .model import load as load_model
 
-    model, decoder = in_use()
-    model = Path(args.model) if args.model else model
-    decoder = Path(args.decoder) if args.decoder else decoder
+    use_model, use_decoder = in_use()
+    model = Path(args.model) if args.model else use_model
+    decoder = Path(args.decoder) if args.decoder else use_decoder
+    model, note = out_of_sample(model, labels_path)
     labels = load(labels_path)
     anchors = prefix.anchors_from_labels(labels)
     if not anchors:
         raise SystemExit(f"{labels_path} has no FULL trace with a drawn path to anchor on")
     work.mkdir(parents=True, exist_ok=True)
+    # what this check was asked about, so adapt.py runs it again when the model or decoder in use changes
+    (work / "used.json").write_text(json.dumps({"in_use_model": str(use_model), "in_use_decoder": str(use_decoder),
+                                                "model": str(model), "decoder": str(decoder)}))
     started = time.time()
     net = load_model(str(model))
-    pcache = (find_cache(net, [DEV / f"prob_{field.name}", CAL / "prob", *sorted(FT.glob("prob_*"))])
+    pcache = (find_cache(net, [DEV / f"prob_{field.name}", CAL / "prob", *sorted(FT.glob("prob_*"))], field)
               or evaluate.prob_cache(field, net, work / f"prob_{field.name}"))
     vmax = speed_cap(pcache, field, labels_path)
     kw = dict(big=300, burst=True, vmax=vmax) | calibrate.decoder_settings(decoder, model)
@@ -87,6 +111,13 @@ def main(argv=None):
     test = leave_anchor_out(labels, anchors)
     reps = {name: score(test, pred) for name, pred in runs.items()}
     tol = reps["per-bin"]["onset"]["tolerance_frames"]
+    n_scored = reps["per-bin"]["grains_scored"]
+    if n_scored == 0:
+        lines = [f"{labels_path.name}: {len(anchors)} grains have a traced tube, but none is among the scored grains "
+                 "(isolated, not excluded): nothing to score"] + ([note] if note else [])
+        print("\n".join(lines))
+        (work / "report.txt").write_text("\n".join(lines) + "\n")
+        return work
 
     def diff(a, b):
         p = evaluate.paired_bootstrap(reps[a], reps[b], tol)
@@ -97,14 +128,15 @@ def main(argv=None):
     bins = [a["bin"] for a in anchors.values()]
     n_test = reps["per-bin"]["length_full"]["n"]
     pairs = {k: diff(*k) for k in (("anchored", "per-bin"), ("anchored", "prefix"), ("prefix", "per-bin"))}
-    lines = [f"{labels_path.name}: {len(anchors)} grains with a traced tube; anchored on each grain's latest FULL "
+    lines = [f"{labels_path.name}: {n_scored} scored grains with a traced tube; anchored on each grain's latest FULL "
              f"trace (bins {min(bins)}-{max(bins)}, median {int(np.median(bins))}), scored on the {n_test} FULL traces "
              f"before it and the onset brackets ({time.time() - started:.0f} s; model {model}"
              + (f", decoder {decoder}" if decoder else "") + ")",
+             *([note] if note else []),
              *[evaluate.e2e_summary(name, rep) for name, rep in reps.items()],
              *[text for text, _ in pairs.values()],
-             "The anchored run was given one trace per grain and decoded the rest; on synthetic development movies "
-             "it put 81% of the lengths before its anchor within tolerance, against 72% for the per-bin decoder."]
+             "The anchored run was given one trace per grain and decoded the rest. The per-bin decoder's settings "
+             "were fitted on these same traces, so the comparison leans its way."]
     print("\n".join(lines))
     (work / "report.txt").write_text("\n".join(lines) + "\n")
     (work / "scores.json").write_text(json.dumps({**reps, **{f"{a}_vs_{b}": p for (a, b), (_, p) in pairs.items()},

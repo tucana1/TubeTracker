@@ -74,17 +74,24 @@ def test_finalise_young_correction_and_stopped_cap():
     assert capped[-1] == pytest.approx(18.0) and capped[3] == 10.0
 
 
-def test_anchors_from_labels_takes_the_latest_full_trace_with_a_path():
-    labels = {"labels": {
-        "g001": {"traces": {"40": {"state": "full", "length_px": 12.0, "path_xy_ref": [[0, 0], [12, 0]]},
-                            "90": {"state": "full", "length_px": 30.0, "path_xy_ref": [[0, 0], [30, 0]]},
-                            "120": {"state": "partial", "length_px": 35.0, "path_xy_ref": [[0, 0], [35, 0]]},
-                            "150": {"state": "full", "length_px": 40.0}}},
-        "g002": {"traces": {"50": {"state": "no_tube", "length_px": 0.0}}},
-        "g003": {"traces": {"60": {"state": "full", "length_px": 9.0, "path_xy_ref": [[1, 1], [10, 1]]}}}}}
-    anchors = PF.anchors_from_labels(labels, drop={"g003"})
+def test_anchors_from_labels_takes_the_latest_full_trace_the_tool_still_asks_for():
+    seen = {"verdict": "emerged_within", "first_visible_bin": 30, "last_absent_bin": 29}  # traces at 36, 70, 122, 174
+
+    def full(L, path=True):
+        return {"state": "full", "length_px": L, **({"path_xy_ref": [[0, 0], [L, 0]]} if path else {})}
+
+    labels = {"n_bins": 176, "grains": {"g001": {}, "g002": {}, "g003": {}, "g004": {}, "g005": {"excluded": True}},
+              "labels": {
+                  "g001": {"onset": seen, "traces": {"36": full(12.0), "70": full(30.0),
+                                                     "122": {**full(35.0), "state": "partial"},
+                                                     "174": full(40.0, path=False)}},
+                  "g002": {"onset": seen, "traces": {"50": full(20.0)}},  # not a bin the tool asks for
+                  "g003": {"onset": {"verdict": "no_emergence_by_end"}, "traces": {"70": full(9.0)}},  # stale
+                  "g004": {"onset": seen, "traces": {"70": full(9.0)}},
+                  "g005": {"onset": seen, "traces": {"70": full(9.0)}}}}
+    anchors = PF.anchors_from_labels(labels, drop={"g004"})
     assert set(anchors) == {"g001"}
-    assert anchors["g001"]["bin"] == 90 and anchors["g001"]["length_px"] == 30.0
+    assert anchors["g001"]["bin"] == 70 and anchors["g001"]["length_px"] == 30.0
 
 
 def test_free_decoding_follows_the_growth_curve(renderers):
@@ -99,24 +106,30 @@ def test_free_decoding_follows_the_growth_curve(renderers):
 
 def test_anchored_decoding_pins_the_trace_and_holds_after_it(renderers):
     RP, R_img, meta = renderers
-    trace = [[EXIT_X + 30.0, GY + 0.4], [EXIT_X + 12.0, GY - 0.3], [EXIT_X, GY]]  # drawn apex first, a little off
-    res = PF.decode_grain(RP, R_img, meta, GRAIN, [], PARAMS, anchor={"bin": 30, "path_xy_ref": trace})
+    # clicked exit first, 2 px inside the rim, then along the tube a little off its centreline
+    trace = [[EXIT_X - 2.0, GY], [EXIT_X + 12.0, GY - 0.6], [EXIT_X + 30.0, GY + 0.5]]
+    traced = float(np.hypot(*np.diff(np.array(trace), axis=0).T).sum())
+    res = PF.decode_grain(RP, R_img, meta, GRAIN, [], PARAMS,
+                          anchor={"bin": 30, "path_xy_ref": trace, "length_px": traced})
     L = res["length"]["px"]
-    assert res["anchor"]["bin"] == 30 and abs(res["anchor"]["path_px"] - 30.0) <= 1.5
-    assert abs(L[30] - 30.0) <= 1.5
-    for t in (15, 20, 25):
-        assert abs(L[t] - true_length(t)) <= 2.0, (t, L[t])
+    assert res["anchor"]["bin"] == 30 and abs(res["anchor"]["inside_rim_px"] - 1.0) <= 0.6
+    assert abs(L[30] - traced) <= 0.05  # the trace's bin reads the traced length
+    for t in (15, 20, 25):  # the trace's convention (from its first click) at the other bins
+        assert abs(L[t] - (true_length(t) + 2.0)) <= 2.0, (t, L[t])
     assert L[31:] == [L[30]] * (T - 31)  # not decoded past the trace's bin
     assert any(f.startswith("held_after:") for f in res["flags"])
     assert abs(res["onset_frame"] - 12) <= 2
 
 
-def test_trace_in_grain_frame_orders_from_the_grain(renderers):
+def test_a_trace_keeps_the_order_it_was_clicked_in(renderers):
     RP, R_img, meta = renderers
     G = PF.GrainStack(RP, R_img, meta, GRAIN, [], PARAMS, PARAMS.half, anchor_bin=30)
-    xy = PF.trace_in_grain_frame(G, [[EXIT_X + 30.0, GY], [EXIT_X, GY]], G.T - 1)
-    assert np.hypot(*(xy[0] - G.centre)) < np.hypot(*(xy[-1] - G.centre))
-    assert xy[0] == pytest.approx([G.centre + GR - G.ls[-1][0], G.centre - G.ls[-1][1]])
+    # a tube that leaves the rim and curls back: its apex ends nearer the grain than its exit
+    curl = [[EXIT_X + 3.0, GY], [EXIT_X + 20.0, GY + 10.0], [EXIT_X + 5.0, GY + 14.0], [GX + 2.0, GY + GR + 1.0]]
+    xy = PF.trace_in_grain_frame(G, curl, G.T - 1)
+    assert xy[0] == pytest.approx([G.centre + GR + 3.0 - G.ls[-1][0], G.centre - G.ls[-1][1]])
+    pts, ss, inside, after = PF.anchored_path(G, xy, PARAMS)
+    assert inside == 0.0 and np.hypot(*(pts[0] - xy[0])) < 1.5  # starts at the exit, not at the apex
 
 
 def test_support_fusion_lets_the_image_add_evidence_but_not_veto(renderers, monkeypatch):
@@ -131,3 +144,12 @@ def test_support_fusion_lets_the_image_add_evidence_but_not_veto(renderers, monk
     vetoed = PF.decode_grain(RP, R_img, meta, GRAIN, [], PF.Params(half=60, big=60, img_fuse="sum"))
     assert support["length"]["px"] == off["length"]["px"]
     assert vetoed["onset_frame"] is None or vetoed["onset_frame"] > off["onset_frame"]
+
+
+def test_the_decoded_path_is_reported_as_the_labelling_tool_records_a_trace(renderers):
+    RP, R_img, meta = renderers
+    res = PF.decode_grain(RP, R_img, meta, GRAIN, [], PARAMS)
+    xy = np.array(res["path_xy_ref"])
+    assert res["path_bin"] == T - 2
+    assert abs(np.hypot(*(xy[0] - [GX, GY])) - GR) <= 1.5  # starts at the exit
+    assert abs(float(np.hypot(*np.diff(xy, axis=0).T).sum()) - res["front_px"][T - 2]) <= 1.5  # ends at the apex

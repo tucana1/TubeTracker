@@ -109,8 +109,9 @@ example, add `--field runs/sparsetrack/<movie> --model runs/learned_evidence/ld/
 its tip, so every earlier tube is the later one, shorter. It is scored against the per-bin decoder (`prefix/` holds
 its predictions). `trace_once.py`, step 4 of `adapt.py`, anchors it on each grain's latest traced tube in your labels
 and scores it on your earlier traces and onsets. If one trace per grain gives the rest within tolerance, labelling a
-movie comes down to one trace per grain. On synthetic movies (assessment, section 7) the anchored decoder put 87% of
-held-out lengths within tolerance, against 71% for the per-bin decoder; the real test is your labels. After a review,
+movie comes down to one trace per grain. On synthetic movies (assessment, section 7) the anchored decoder put 89% of
+held-out lengths within tolerance, against 71% for the per-bin decoder, but only with a trace a person checked: anchored
+on the per-bin decoder's own trace it did worse than that decoder alone. The real test is your labels. After a review,
 `export_review.py --anchored` decodes each grain whose latest traced tube you checked along that trace, into
 `trace_once/` (every bin's length, growth curves). It is off by default until `ld_v1` has shown the anchored decoder
 does better. On the real sample movie, whose thick tubes and moving grains are unlike yours, the prefix decoder is

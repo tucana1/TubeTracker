@@ -92,3 +92,35 @@ def test_paths_in_the_summary_stay_inside_the_repository_through_links(repo, tmp
     assert adapt._here(repo / "runs/learned_evidence/ld/unet.pt") == adapt.Path("runs/learned_evidence/ld/unet.pt")
     assert adapt._here(adapt.Path("runs/learned_evidence/ld/unet.pt")) == adapt.Path("runs/learned_evidence/ld/unet.pt")
     assert adapt._here(elsewhere / "x.pt") == elsewhere / "x.pt"  # outside the repository: left as it is
+
+
+def test_a_failing_trace_once_step_does_not_keep_the_summary_from_being_written(repo):
+    calls = []
+    steps = _steps(calls)
+
+    def broken(argv):
+        calls.append(("once", argv))
+        raise SystemExit("no FULL trace with a drawn path to anchor on")
+
+    steps["once"] = broken
+    out = adapt.main([], steps=steps)
+    assert [c[0] for c in calls] == ["dev", "calibrate", "finetune", "once"]
+    text = out.read_text()
+    assert "step 4 failed" in text and "no FULL trace" in text
+    assert not (repo / "runs/learned_evidence/ld_once/labels.sha1").exists()
+    calls.clear()
+    adapt.main([], steps=_steps(calls))  # tried again next time, and the others are not
+    assert [c[0] for c in calls] == ["once"]
+
+
+def test_trace_once_runs_again_when_the_model_in_use_changes(repo):
+    import json
+    calls = []
+    adapt.main(["--skip-finetune"], steps=_steps(calls))
+    model, decoder = adapt.in_use()
+    (repo / "runs/learned_evidence/ld_once/used.json").write_text(
+        json.dumps({"in_use_model": str(model), "in_use_decoder": str(decoder)}))
+    calls.clear()
+    adapt.main([], steps=_steps(calls, adopt_model=True))  # fine-tuning now runs and is adopted
+    assert [c[0] for c in calls] == ["finetune", "once"]
+    assert (repo / "runs/learned_evidence/ld_once/report_old.txt").exists()

@@ -105,8 +105,14 @@ def write_anchored(path: Path, doc: dict, field: Path, um: float | None, log=pri
 
     anchors = checked_anchors(doc)
     pcache = path.parent / f"prob_{field.name}"
+    out = path.parent / "trace_once"
     if not anchors:
-        log("--anchored: no grain has its latest traced tube checked yet")
+        if out.exists():  # results of an earlier review must not pass for this one's
+            import shutil
+            shutil.rmtree(out.with_name("trace_once_old"), ignore_errors=True)
+            out.rename(out.with_name("trace_once_old"))
+        log("--anchored: no grain has its latest traced tube checked yet" + (" (an earlier trace_once/ is now "
+            "trace_once_old/)" if out.with_name("trace_once_old").exists() else ""))
         return None
     if not (pcache / "meta.json").exists():
         raise SystemExit(f"--anchored needs the probability cache {pcache}: analyse the movie again to rebuild it")
@@ -115,7 +121,6 @@ def write_anchored(path: Path, doc: dict, field: Path, um: float | None, log=pri
                        onset_px=float(dec.get("onset_px", prefix.Params.onset_px)))
     pred = prefix.analyze(pcache, field, grains_path=path, log=lambda *a: None, params=pp, anchors=anchors,
                           only=sorted(anchors))
-    out = path.parent / "trace_once"
     out.mkdir(exist_ok=True)
     (out / "predictions.json").write_text(json.dumps(pred))
     with open(out / "growth.csv", "w", newline="") as fh:

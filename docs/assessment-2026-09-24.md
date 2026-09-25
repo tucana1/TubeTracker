@@ -69,10 +69,10 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
    later one.
    - A decoder built on that (`prefix.py`) put 84.6% of held-out synthetic lengths within tolerance, against 71.0%
      for the per-bin decoder.
-   - Anchored on one simulated human trace per grain, it put 87% of that grain's other lengths within tolerance.
+   - Anchored on one simulated human trace per grain, it put 89% of that grain's other lengths within tolerance.
    - On real footage unlike yours (thick tubes, grains moving tens of px) it is behind the per-bin decoder: judged
-     by eye, 4 grains where only it is right against 8 the other way. A machine-made anchor gains nothing: the value
-     is in a human's end-state trace.
+     by eye, 4 grains where only it is right against 8 the other way. A machine-made anchor does harm: the value is
+     in a human's end-state trace.
    - `Adapt_Learned_To_Dev_Movie.command` now tests exactly this on `ld_v1`. If it holds, labelling a movie comes
      down to one trace per grain.
 
@@ -984,30 +984,43 @@ neither lengths nor onsets were shown worse.
 
 The prefix decoder's weak step on real footage is finding the grain's own tube at the end state, and that is what a
 human does best. Given one trace per grain, it skips that step and decodes everything else. The trace is the
-labelling tool's polyline at one bin; the trace's end fixes the length at that bin.
+labelling tool's polyline at one bin, clicked from the exit to the apex.
+- The path is the trace itself, each point moved sideways onto the evidence.
+- Lengths are reported in the trace's own terms: the part clicked inside the rim is added, and the trace's bin reads
+  the traced length.
 
 **Synthetic test.** Human traces were simulated from the true tube at the tool's last trace bin, clicked as a
 polyline with 0.5 px of hand jitter. Scoring used only the traces before the anchor.
 
 | Scored on traces before the anchor | Per-bin | Prefix on its own | Prefix anchored on one trace |
 |---|---|---|---|
-| Development movies, truth files | 72.5% | 77.6% | 81.3% |
-| **Held-out movies, truth files (one look)** | 71.0% | 84.3% | **87.8%** |
-| Held-out movies, human-style at 2 px | 71.4% | 82.3% | 85.9% |
+| Development movies, truth files | 72.5% | 77.6% | 85.8% |
+| **Held-out movies, truth files (one look)** | 71.0% | 84.6% | **89.3%** |
+| Held-out movies, human-style at 2 px | 71.4% | 85.1% | 91.1% |
+| Held-out movies, human-style at 4 px | 69.6% | 82.7% | 88.6% |
 
-- Held-out, anchored against per-bin: lengths +170 (95% CI +96 to +250). Against the prefix decoder on its own:
-  +35 (+0 to +74), and onsets +12 (+5 to +20).
-- With image evidence that only supports (the default since), the anchored run put 86.7% within tolerance on truth
-  files (−11 against the table, 95% CI −22 to +0, right at the rule's edge) and 87.5% human-style.
-- **Tracing quality** (development movies):
-  - a careful tracer reached 79.7%, a sloppy one (coarser clicks, apex up to 2 px short) 78.4%;
-  - fixing the length at the trace's end is what matters: without it, 74.7%.
-- **The per-bin decoder's own trace as the anchor** (no human; what the review pre-fills today): no gain.
-  - On development movies it put 72.4% of lengths within tolerance, against 72.5% for the per-bin decoder alone.
-  - It was 41 lengths behind the prefix decoder on its own (95% CI −70 to −16).
-  - A machine trace carries the machine's end-state errors, and fixing the length at its end keeps them.
-  - The gain comes from the trace being right: your check of the end-state trace is what it adds. The review should
-    therefore propose the prefix decoder's end-state trace where it finds one, not the per-bin decoder's.
+- Held-out, anchored against per-bin: lengths +186 (95% CI +118 to +257); human-style +49 and +45.
+- **Tracing quality** (development movies): a careful tracer reached 87.0%, a typical one 85.8%, and a sloppy one
+  (coarser clicks, apex up to 2 px short) 78.7%. Without fixing the length at the trace's end: 86.5%.
+- **The per-bin decoder's own trace as the anchor** (no human; what the review pre-fills today) does harm.
+  - On development movies it put 64.2% of lengths within tolerance, against 72.5% for the per-bin decoder alone
+    (−66, 95% CI −115 to −21).
+  - A machine trace carries the machine's end-state errors, and the anchored decoder follows it faithfully.
+  - All the gain comes from the trace being right. In a review, accepting a proposed trace without a real look is
+    worse than no anchor. The review should propose the prefix decoder's end-state trace where it finds one.
+- **Found by an independent code review, fixed, then scored once more** (the numbers above are the fixed version's):
+  - Exit-first traces of tubes curling back towards their grain had been reversed. That was 4 of your 120 full
+    traces, g031's anchor among them.
+  - The length at the trace's bin had not been the traced length. Clicks inside the rim (median 1 px, up to 12 px
+    in `ld_v1`) were dropped, and curls were cut short.
+  - Before the fixes the anchored run scored 81.5% on development movies and 86.7% held-out.
+  - Also fixed:
+    - traces the tool no longer asks for (a grain later called tubeless) are not anchors;
+    - the held-by-substrate model's reference bin;
+    - long traces get a bigger crop;
+    - step 4 reads a model fine-tuned on these labels with the model it started from;
+    - a step-4 failure is reported in `SUMMARY.md` instead of blocking it;
+    - step 4 runs again when the model in use changes.
 - **The real test is your labels.** `trace_once.py`, step 4 of `Adapt_Learned_To_Dev_Movie.command`, anchors on your
   latest full trace of each grain. It then scores your earlier traces and onset brackets against the per-bin
   decoder and the prefix decoder on its own. It runs by itself the next time you double-click Adapt.
@@ -1026,8 +1039,8 @@ polyline with 0.5 px of hand jitter. Scoring used only the traces before the anc
 - **It also shows what one end-state trace cannot fix:** tubes that turn past 45°, grains that jump or drift. The
   labelling tool already asks for three or four traces per grain, and anchoring each stretch of the movie on its
   next trace would cover those.
-  - Tried on synthetic development movies, with simulated traces at every bin the tool asks for: 80.6% of lengths
-    within tolerance, against 80.5% for the latest trace alone (+1, 95% CI −24 to +23).
+  - Tried on synthetic development movies, with simulated traces at every bin the tool asks for: 86.6% of lengths
+    within tolerance, against 86.1% for the latest trace alone (+4, 95% CI −12 to +20).
   - So there is no gain where deformations stay within the decoder's models. Whether it helps where they do not,
     as with the sample movie's turns and jumps, needs labels on such footage. It is not in the repository.
 - **The label-free shared fixes come first:** evidence for thick and dark tubes, a per-bin frame-edge mask, trackers

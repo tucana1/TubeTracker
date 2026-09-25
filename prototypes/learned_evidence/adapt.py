@@ -59,7 +59,18 @@ def _report(path: Path) -> str:
     return path.read_text().strip() if path.exists() else "(not run)"
 
 
-def summary(labels: Path, seconds: float, stale: tuple = ()) -> str:
+def _checked_other(work: Path) -> bool:
+    """Whether step 4 ran for another model or decoder than the ones in use now (``trace_once.py`` records them)."""
+    used = work / "used.json"
+    if not used.exists():
+        return False
+    import json
+    rec = json.loads(used.read_text())
+    model, decoder = in_use()
+    return (rec.get("in_use_model"), rec.get("in_use_decoder")) != (str(model), str(decoder))
+
+
+def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None = None) -> str:
     model, decoder = in_use()
     m2 = (f".venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \\\n"
           f"    --labels benchmark/labels/m2_v1.json --model {model} \\\n"
@@ -94,7 +105,7 @@ Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
 ## 4. Trace once: one traced tube per grain, the rest decoded
 
 ```
-{_report(ONCE / "report.txt")}
+{(failed or {}).get("once") or _report(ONCE / "report.txt")}
 ```
 
 ## What is used now
@@ -159,7 +170,11 @@ def main(argv=None, steps=None):
         plan.append(("finetune", FT, ["--field", str(field), "--labels", str(labels), "--work", str(FT)]))
     if not args.skip_trace_once:  # with the model and decoder the steps before leave in use
         plan.append(("once", ONCE, ["--field", str(field), "--labels", str(labels), "--work", str(ONCE)]))
+    failed = {}
     for name, work, cmd in plan:
+        if name == "once" and (work / "report.txt").exists() and _checked_other(work):
+            os.replace(work / "report.txt", work / "report_old.txt")
+            print("== once: the model or decoder in use has changed since it ran: running it again", flush=True)
         if (work / "report.txt").exists():
             seen = work / "labels.sha1"
             changed = seen.exists() and seen.read_text().strip() != stamp
@@ -168,12 +183,19 @@ def main(argv=None, steps=None):
                   + ("; the labels have changed since" if changed else ""), flush=True)
             continue
         print(f"== {name}: {' '.join(cmd)}", flush=True)
-        steps[name](cmd)
+        try:
+            steps[name](cmd)
+        except (Exception, SystemExit) as e:  # a check that fails must not keep the summary from being written
+            if name != "once":
+                raise
+            failed[name] = f"step 4 failed, and runs again next time: {type(e).__name__}: {e}"
+            print(f"== {name}: {failed[name]}", flush=True)
+            continue
         work.mkdir(parents=True, exist_ok=True)
         (work / "labels.sha1").write_text(stamp + "\n")  # the labels this step's results are on
     ROOT.mkdir(parents=True, exist_ok=True)
     out = ROOT / "SUMMARY.md"
-    out.write_text(summary(labels, time.time() - started, tuple(stale)))
+    out.write_text(summary(labels, time.time() - started, tuple(stale), failed))
     if stale:
         print(f"== the labels have changed since {' and '.join(stale)} ran: run again with --redo", flush=True)
     print(f"== summary: {out}")
