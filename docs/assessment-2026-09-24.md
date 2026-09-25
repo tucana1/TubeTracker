@@ -971,9 +971,11 @@ neither lengths nor onsets were shown worse.
     2. Grains that move tens of px (up to about 50 here) with unreliable tracking: the end-state path falls off the
        early tube.
     3. Wrong machine anchors: g006's end-state trace follows a neighbour's tube that passes it late.
-  - The synthetic thick-tube movie used to test the Adapt journey tells the same story, scored on the 51 human-style
-    traces before the anchor. The per-bin decoder with its calibrated end offset put 22 within tolerance, the prefix
-    decoder 17 and the anchored one 19. Thick tubes read long, and only the per-bin decoder has a calibrated correction.
+  - On the synthetic thick-tube movie used to test the Adapt journey (51 human-style traces before the anchor), the
+    per-bin decoder, with an end offset calibrated on these same traces, put 22 within tolerance. The prefix decoder
+    put 23 and the anchored one 26, a tie within noise (anchored against per-bin +4, 95% CI −5 to +12).
+    - Before the image and anchoring fixes, the prefix decoder had put 17 and the anchored one 19.
+    - Thick tubes read about 2 px long in both prefix runs, and only the per-bin decoder has a calibrated correction.
   - So the synthetic lead does not carry over to this movie. The per-bin decoder degrades more gracefully and stays
     the default. Whether the lead holds for thin tubes like `ld`'s, your labels will show.
 - **In the repository:** `pipeline.py --prefix` runs it beside the per-bin decoder in the dev test. The movie-2
