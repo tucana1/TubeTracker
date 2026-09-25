@@ -2,8 +2,9 @@
 # Prototype: analyse a movie with learned evidence. Pick the movie, wait, and the review gallery opens.
 # The movie's cache is SparseTrack's (runs/sparsetrack/<movie name>/cache, built the first time only);
 # results go to runs/learned_evidence/<movie name>/: per_grain.csv, and in perbin/ the review gallery,
-# the population curve and growth curves. Uses the model trained on your dev movie when it exists
-# (runs/learned_evidence/ld/unet.pt), else the model shipped in prototypes/learned_evidence/models/.
+# the population curve and growth curves. The model: fine-tuned on your dev movie's traces when the
+# cross-validated check adopted it (runs/learned_evidence/ld_ft/unet_ft.pt), else trained on your dev
+# movie's field (runs/learned_evidence/ld/unet.pt), else the one shipped in prototypes/learned_evidence/models/.
 cd "$(dirname "$0")" || exit 1
 MOVIE=$(osascript -e 'POSIX path of (choose file with prompt "Choose a pollen movie to analyse")' 2>/dev/null)
 [ -z "$MOVIE" ] && { echo "No movie chosen."; exit 0; }
@@ -19,7 +20,8 @@ movie, cache = Path(sys.argv[1]), Path(sys.argv[2])
 stack.prepare(movie, cache, frames_per_bin=auto_frames_per_bin(movie), ref_bins=3, ref_start="auto")
 write_census(cache, 3, False)' "$MOVIE" "$CACHE" || { echo "Preparation failed."; read; exit 1; }
 fi
-MODEL="runs/learned_evidence/ld/unet.pt"
+MODEL="runs/learned_evidence/ld_ft/unet_ft.pt"
+[ -f "$MODEL" ] || MODEL="runs/learned_evidence/ld/unet.pt"
 [ -f "$MODEL" ] || MODEL="prototypes/learned_evidence/models/unet_v2_sample_field.pt"
 echo "Analysing with $MODEL (about 10-20 minutes on a laptop)..."
 .venv/bin/python -m prototypes.learned_evidence.pipeline --field "$CACHE" --work "runs/learned_evidence/$NAME" \

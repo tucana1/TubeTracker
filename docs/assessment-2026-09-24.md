@@ -52,6 +52,9 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
      decoder, against 43–47% through SparseTrack's decoder.
    - On real footage it has never seen, it is tube-specific: near zero on grain bodies.
    - Whether it transfers to your movies takes one command on your Mac (appendix B), scored on `ld_v1`.
+   - Fine-tuning it on about 90 sparse traces like yours (`finetune.py`) added up to 3.5 points on fresh synthetic
+     movies whose tubes look different from its training. It cost accuracy on movies unlike the one it was tuned on.
+     Its built-in check, which holds out grains and traced frames, gave the right verdict in all three tests.
 6. **The biggest single lever may be the microscope, not the code.** The movies are ~14 fps x264 at a QP-30 quality
    floor with a keyframe every 12 frames: about 0.9 KB per frame for faint 2–5 px tubes. For new experiments, record
    lossless time-lapse (one 16-bit frame every 10–20 s, about 1 GB/h) with hardware autofocus. Every method gets
@@ -321,7 +324,10 @@ registered bins ──► [1] learned evidence ──► [2] physics decoder   �
    - It is trained on codec-exact synthetic movies from `sparsetrack synth`: real fields and grains, real measured
      tube cross-sections, contrast maturation, sway, drift, docking particles and the real x264 settings. This gives
      unlimited training data with exact labels.
-   - After that it is fine-tuned on the 127 real `ld` traces, and later on review corrections.
+   - Then it can be fine-tuned on the real `ld` traces (`finetune.py`), and later on review corrections. The tuned
+     model is kept only if a check that holds out grains and traced frames says it reads more right. On synthetic
+     tests the gains were small (up to 3.5 points), and a tuned model belongs to the imaging conditions it was tuned
+     on (section 5).
 2. **A physics decoder.** Either of two decoders, both with growth only, onset and contact censoring. These carry
    the biology.
    - SparseTrack's decoder traces candidate paths on the end state, rotates and swings them, and runs the monotone DP
@@ -386,7 +392,7 @@ problem.
 |---|---|---|
 | Now | Finish movie-2 labels; freeze 0.4.3 (long-tube fix); score 0.4.0 and 0.4.3 once each | First held-out numbers, with bootstrap intervals |
 | Week 1 | **Prototype v1:** SparseTrack 0.4 (or learned evidence with the per-bin decoder, if `ld_v1` confirms it) plus a review-and-correct mode in the labelling tool, physical units and one-click run/export (macOS and Windows). `pipeline.py` already writes the review gallery on the movie, the population curve (T50), growth curves and a per-grain CSV in µm and minutes. Show the growth-arrest frame and burst candidates for review only: on synthetic movies an arrest read off the length curve lands within ±3 bins less than half the time | Lab runs it on a real experiment; corrected results reproduce your manual measurements within retest agreement |
-| Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then fine-tune on the `ld` traces; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
+| Weeks 2–3 | **Learned evidence on real data:** appendix B on `ld`; then `finetune.py` on the `ld` traces, kept only if its check adopts it; freeze; score once on movie 2 | Beats 0.4.x on `ld_v1` beyond noise (paired bootstrap), then holds on movie 2 |
 | Weeks 3–4 | **Decoder v2, the per-bin decoder (built, in `pipeline.py`).** It reads length where the tube *is* in each bin (`reach.py`: medial-axis length through P > 0.5, made monotone over bins) instead of rotating one end-state path. On twelve held-out synthetic movies it takes learned evidence from 71% to 73% of lengths in tolerance (61% for SparseTrack as it is). It removes the drifting-grain weakness and holds up when tubes burst (71% against 43–47%). A hybrid with SparseTrack's decoder did not help | Beats SparseTrack's decoder on `ld_v1`, then holds on movie 2 |
 | Weeks 3–4 | Burst head, trained on synthetic bursts (add to `synth`) plus reviewed bursts. Movie 2's burst answers are the first real burst labels, bracketed by trace times. The per-bin decoder's burst safeguard protects lengths but cannot time bursts (5 of 28 within ±2 bins) | Burst frame within ±2 bins on held-out reviews |
 | Weeks 4–8 | Dense fields: instance-aware evidence (which grain owns each tube pixel), learned with synthetic foreign tubes and crossings (v2+ presets); ownership decided by birth time and geodesic reach | Contact-censored fraction halves without losing isolated-grain accuracy |
@@ -664,6 +670,41 @@ bright-cored tubes; the network has never seen its tubes.
     reference sits, make the plateau ambiguous. Prototype v1 should show an arrest frame for review, not report it
     as a measurement. A dependable one needs its own evidence, such as the network's tip output standing still.
 
+**Fine-tuning on sparse human traces (synthetic test).** `finetune.py` tunes the network on one movie's traces. Here
+the traces were made from synthetic truth to look like yours: the same bins as `ld` (70, 122 and 174, plus one near
+onset) and the same number of clicks for a tube's length (2 below 15 px, 5 for 40–80 px). About 90 traces from 27
+grains per movie. The movies have tubes the shipped model was not trained on: faint (0.35–0.7× contrast), thick
+bright-cored (2–3× wider) and wide (`v5w`). Each was scored at every bin against the full truth.
+- **Four faults in the first version, each found and fixed on the development movies:**
+  - Tube labelled in the round cap past the traced apex made every tube read ~1.5 px long: −38 lengths.
+  - With traces from three frames only, the network learned those frames. Other grains read better in them (+13
+    points) and worse elsewhere (−4.5 points beyond 12 bins).
+    - A check that splits grains alone, and scores at the traced frames, showed +10 lengths where the truth was −9.
+      On `ld` too, the late traces all sit on bins 70, 122 and 174.
+    - So the check now folds frames as well as grains, with no label within 3 bins of a scored frame. And the labels
+      are spread over time, using growth only: before onset the future path is background; between two traces the
+      tube reaches at least the earlier one and at most the later one.
+  - A fixed background band fell inside thick tubes' walls, where the start model was right to see tube (it agreed
+    with only 69% of that "background"). Background now starts past the tube's width measured on the image.
+  - Tuned on faint tubes, the network began to see tubes on grain rims: 3 of 27 grains emerged in the first bin, and
+    16 bins before onset were read as tube. A ring round each grain is now background away from its own trace, and
+    that fell to 2 bins.
+- **Final version:**
+
+  | Tuned on | Same movie, cross-validated | Check's verdict | Fresh movie of the same kind | Thin-tube movie (v5 seed 5) |
+  |---|---|---|---|---|
+  | Faint tubes | 49.7% → 48.7% | not adopted | 61.1% → 60.7% | −29 lengths (95% CI −47 to −12) |
+  | Thick tubes | 28.1% → 33.5% | adopted | 21.3% → 22.2% | −3 (−13 to +7) |
+  | Wide tubes | 71.2% → 74.5% | adopted | 75.5% → 79.0% | −10 (−22 to +1) |
+
+  - Percentages are lengths in tolerance over all bins, per-bin decoder. The fresh movies were scored once, after
+    the method was frozen.
+  - The check's verdict was right all three times. Where it said no, the tuned model helped nothing on a fresh movie
+    and did clear harm on thin tubes.
+  - Gains are small. They come where tube appearance differs from the synthetic training, and they do not travel:
+    a tuned model belongs to the imaging conditions it was tuned on.
+  - Onsets did not move beyond noise on any movie.
+
 **What these results do and don't show.**
 - **Do:**
   - With geometry held fixed, learned evidence from synthetic data alone is decisively better than SparseTrack's
@@ -673,6 +714,7 @@ bright-cored tubes; the network has never seen its tubes.
     traces, 95% CI +6 to +70).
   - It looks tube-specific on real footage it has never seen.
   - Both halves of the recommended architecture matter: better evidence and then a better decoder.
+  - Fine-tuning on about 90 traces helps a little where tubes look different, and its check tells when it does.
 - **Don't:**
   - These are synthetic held-out numbers on the sample movie's field, from 30-minute CPU training runs.
   - Onsets improve only within noise.
@@ -748,7 +790,22 @@ ln -s ../TubeTracker/runs runs                 # reuse your prepared caches (run
   `sample_movie.avi`'s field. The full run above, on your own field, is still the proper test.
 - **Long tubes:** every run reads a grain again at ±300 px when its tube reaches the ±150 px crop edge (section 3.3;
   `--fixed-crop` turns this off). On `ld` no path gets there, so nothing changes.
-- **Movie 2:** only after freezing a model, and only once:
+- **Then, fine-tuning on your traces (about 45 minutes):**
+
+  ```bash
+  ../TubeTracker/.venv/bin/python -m prototypes.learned_evidence.finetune --field runs/sparsetrack/ld \
+      --labels ../TubeTracker/benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft
+  ```
+
+  - It starts from the model trained above.
+  - It tunes one model per fold of grains and traced frames, and scores each fold's grains at that fold's frames.
+    No model has seen those grains, nor any label within 3 bins of those frames.
+  - `report.txt` gives the paired difference against the starting model.
+  - The final model is written as `unet_ft.pt` only if the tuned models read more lengths or onsets right, and
+    neither fewer. The launcher then uses it.
+  - Use it only for movies taken under the same conditions as `ld` (section 5).
+- **Movie 2:** only after freezing a model, and only once. That is `runs/learned_evidence/ld_ft/unet_ft.pt` if
+  fine-tuning was adopted, otherwise the model below:
 
   ```bash
   ../TubeTracker/.venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \
@@ -782,4 +839,5 @@ cd ../TubeTracker
 
 - Both versions read the same cache, and the cache format is unchanged since 0.4.0 (`sparsetrack.cache.v1`).
 - Commit the report as generated. Then neither version is scored on movie 2 again.
-- The learned-evidence run on movie 2 comes later, once a model trained on the dev field is frozen (appendix B).
+- The learned-evidence run on movie 2 comes later, once a model trained on the dev field is frozen (appendix B). If
+  fine-tuning is adopted, the tuned model is the frozen one. Score one learned model on movie 2, once.

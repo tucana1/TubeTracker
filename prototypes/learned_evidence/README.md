@@ -44,6 +44,7 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
 | `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins |
 | `review.py` | Review pictures for the per-bin decoder on the movie itself (six registered bins with the region read and its medial axis, then the length curve), in SparseTrack's own review gallery |
+| `finetune.py` | Fine-tuning on a movie's human traces, with a check that holds out grains and traced frames; writes the tuned model only if it reads more right |
 | `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
 | `models/unet_v2_sample_field.pt` | The trained v2 model (ten synthetic movies on the sample movie's field), for a quick first look |
 
@@ -80,6 +81,30 @@ flag. Movie 2's longest tubes pass ±128 px, so both runs use `evaluate.adaptive
 - On `ld` no path reaches the edge, so nothing changes. `--fixed-crop` turns it off.
 - On a synthetic movie of movie 2's length it takes the traces that leave the crop from 9/20 to 20/20 in tolerance.
   The other 33 grains are bit-identical.
+
+**Fine-tune on your traces (after the dev test, about 45 minutes).** `finetune.py` tunes the network on the `ld`
+traces and checks whether that helps before anything uses the result:
+
+```bash
+.venv/bin/python -m prototypes.learned_evidence.finetune --field runs/sparsetrack/ld \
+    --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft
+```
+
+- **What it learns from.** Tube along each traced line, and background in a band beside it that starts past the
+  tube's walls, measured on the image, since real tubes are wider than synthetic ones. Since tubes only grow, it also
+  labels bins that were not traced:
+  - before a grain's onset, its whole future path is background;
+  - between two traces, the part both agree on is tube, and the path past the later trace is background.
+- Everything else is held to what the network predicted before, so untraced tubes are not taught as background.
+- **How it is checked.** The grains are split into three folds, and so are the traced bins. Each fold's grains are
+  read at that fold's bins by a model tuned without those grains and without any label within 3 bins of those bins.
+  - The frames matter as much as the grains. Tuned on traces from a few frames, a network reads other grains better
+    in exactly those frames, and worse elsewhere. A split by grain alone would reward that.
+- **What you get.** `report.txt` gives both models' scores and the paired difference.
+  - The final model (every trace) is written as `unet_ft.pt` only if the check says it reads more right than the
+    starting model. Otherwise it is written as `unet_ft_not_adopted.pt`.
+  - `Analyze_Movie_Learned.command` uses `unet_ft.pt` when it exists.
+- It refuses any labels file with `m2` in its name.
 
 **Movie 2 stays held out.**
 - Never pass its cache as `--field` or `--train-field` for training.
@@ -151,3 +176,27 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
   tubes whose profile is outside the synthetic range.
   - Training with four extra movies of 1.3–2.5× wider tubes (`v5w`) did not fix it (model v3, not adopted).
   - Thin-tube lengths were unchanged, and onsets improved +7 with the per-bin decoder.
+- **Fine-tuning on sparse human traces** (`finetune.py`; synthetic test). Traces were made from the synthetic truth to
+  look like yours: the same bins as `ld` (70, 122 and 174, plus one near onset) and the same number of clicks for a
+  tube's length. They were made on movies whose tubes the shipped model was not trained on: faint (0.35–0.7× contrast),
+  thick bright-cored (2–3× wider) and wide (`v5w`). About 90 traces per movie, 27 grains.
+  - The first version was worse, and each fault was fixed on the development movies:
+    - Tube labelled past the traced apex made every tube read ~1.5 px long.
+    - Traces from only three frames taught the network those frames: other grains read better in them (+13 points)
+      and worse elsewhere (−4.5 points beyond 12 bins). A check split by grain alone showed +10 lengths against a
+      true −9. Hence the folds over frames, and labels spread over time.
+    - A fixed background band fell inside thick tubes' walls. Background now starts past the width measured on the
+      image.
+    - Tuned on faint tubes, the network saw tubes on grain rims from the first bin (3 of 27 grains). Hence the ring
+      labels.
+  - Final version, all bins scored against the full truth (per-bin decoder):
+
+    | Tuned on | Same movie (cross-validated) | Verdict of the check | Fresh movie of the same kind | Thin-tube movie (v5 seed 5) |
+    |---|---|---|---|---|
+    | Faint tubes | 49.7% → 48.7% | not adopted | 61.1% → 60.7% | −29 lengths (95% CI −47 to −12) |
+    | Thick tubes | 28.1% → 33.5% | adopted | 21.3% → 22.2% | −3 (−13 to +7) |
+    | Wide tubes | 71.2% → 74.5% | adopted | 75.5% → 79.0% | −10 (−22 to +1) |
+
+  - The check's verdict matched the truth on all three.
+  - The gains are real but small, and a tuned model is worse on movies unlike the one it was tuned on. Use it only
+    for movies taken under the same conditions as `ld`.
