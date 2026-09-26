@@ -75,6 +75,16 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
      in a human's end-state trace.
    - `Adapt_Learned_To_Dev_Movie.command` now tests exactly this on `ld_v1`. If it holds, labelling a movie comes
      down to one trace per grain.
+8. **Round 2 attacked the gap between synthetic and real footage from five sides (section 7.6). One change is kept.**
+   - **Kept:** front-end fixes in the per-bin decoder, now its defaults: a frame-edge mask per bin, readings held while
+     a grain has left, ghost discs left out, and a fit that cannot fall below lengths a tube was grown to.
+     - Real movie: onsets 26 → 29, mid-movie lengths 11 → 17, end lengths 12 → 16 of about 35.
+     - Synthetic movies: a tie.
+   - **Not adopted:** evidence retrained to look real, a birth-time network over the whole movie, and fitting a tube
+     model to each grain. Each saw more of the real movie's thick tubes but lost elsewhere, or lost outright.
+   - **Kept as an opt-in:** label-free self-training on each movie (`selftrain.py --labels`), because your dev movie
+     tests it cleanly.
+   - **The label-free options are close to used up.** The next gain needs your labels.
 
 **This week:**
 1. Finish the movie-2 labels (about an hour, section 3.5).
@@ -1132,22 +1142,53 @@ dynamic programme on that evidence.
 - **Not integrated.** What it shows is that the thick, double-walled tubes can be recovered from the frames. That
   information is better spent training the network on such tubes.
 
-**Evidence trained to look like real footage: not adopted.** The network was retrained with augmentations measured
-or motivated on the real movie: defocus, misregistration, compression, flicker, uneven light and scale. It had 10
-default and 6 randomised synthetic movies. Against the shipped model, under the same decoder:
-- **Thin tubes, development movies:** −30 lengths (95% CI −61 to −1) of 793; onsets +4 (−4 to +12).
-- **Faint tubes:** onsets −7 (−13 to −2).
-- **Thick tubes:** +9 lengths (−7 to +27).
-- **Wide tubes:** +1.
-- **The same data without the augmentation:** roughly neutral everywhere.
-- **Real movie, against the audit's estimates:**
-  - onsets within 6 bins: 27 → 21 of 35;
-  - mid-movie lengths: 17 → 19;
-  - end lengths: 16 → 15.
-  - It reads the thick tubes the shipped network misses (g005, g019, g023, g036, g037). But it calls onsets early
-    (g007, g010, g014, g020, g033) and runs ends onto foreign tubes (g014, g021, g032).
-- **Verdict:** the rule fixed beforehand was more gross fixes than gross breaks on the real movie, and no real loss on
-  thin tubes. The network fails it, so it was not adopted and no held-out look was spent.
+**Evidence trained to look like real footage: not adopted.** The real movie's tubes were measured first, as
+cross-sections of the change from the "before" reference (441 tube pieces), against the synthetic movies' tubes:
+
+| | Median depth (grey levels) | Median width | Share 7 px wide or more |
+|---|---|---|---|
+| Real sample movie | −46 | 5 px (p90 11 px) | 38% |
+| Synthetic (v5) | −23 | 4.5 px | 3% |
+
+The wide real tubes are flat-bottomed bands 7–14 px across, with walls a little darker than the core: hollow tubes.
+The synthetic generator only makes Gaussian dark lines or bright-cored tubes, and widening those (the earlier wide
+and thick presets) never gives this shape.
+
+The agent generated six domain-randomised movies with such tubes: box or hollow profiles, darker thin tubes,
+grains that change contrast after germinating, and more motion and coiling. It trained two models on them plus the
+10 default movies:
+- **A:** with real-footage augmentation (defocus, misregistration, compression, flicker, uneven light, scale);
+- **B:** without it.
+
+Against the shipped model, under the same decoder:
+
+| Movies | A − shipped | B − shipped |
+|---|---|---|
+| Thin tubes, development, lengths (of 793) | −30 (95% CI −61 to −1) | −11 (−41 to +18) |
+| Faint tubes, lengths / onsets | +4 / −7 (−13 to −2) | +14 / +3 |
+| Thick tubes, lengths | +9 (−7 to +27) | −4 |
+| Wide tubes, lengths | +1 | +3 |
+
+On the real movie, against the audit's estimates (onsets within 6 bins; lengths within ±25% at mid-movie and end):
+- **Shipped:** 29, 17, 15 of 35, 35, 34.
+- **A:** 23, 22, 16. **B:** 26, 19, 17.
+- **The errors change direction.** The shipped model under-reads (18 mid-movie readings short, none long). A
+  over-reads (8 long), and 11 of its onsets are more than 6 bins early, against 3.
+- **A now reads the missed tubes right:** g005, g019, g023, g035 and g036.
+- **But new failures appear:**
+  - foreign tubes join the grain's region: g001, g007, g015, g021, g029, g032;
+  - dark non-tube structures at rims start onsets early. Examples are a static smear present from the first bins,
+    and dark crescents inside a rim before germination.
+
+**Verdict:** neither model is adopted. A loses thin-tube lengths and faint onsets beyond noise; B is safe but nets
+about zero on the real movie. The rule fixed beforehand (more gross fixes than breaks on the real movie, no real loss
+on thin tubes) fails, so no held-out look was spent. Your movies' thin, faint tubes look like the synthetic ones,
+where the shipped model is best or tied.
+
+**A next attempt would need three things together:**
+- synthetic negatives: dark crescents at and inside rims before germination, and static smears present from the start;
+- none of the augmentation that cost the faint onsets;
+- ownership in the decoder that keeps a thick foreign tube out of a grain's region.
 
 **Label-free self-training on each movie: an experiment, off by default** (`selftrain.py`). The network is tuned on
 the movie's own frames. Its pseudo-labels are the decoder's readings that agree with its own growth curve, plus
