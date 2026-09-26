@@ -71,6 +71,7 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `export_review.py` | Results from reviewed labels: per-grain and per-trace CSVs (checked, changed from the model's) and the germination curve |
 | `calibrate.py` | Fits the per-bin decoder's end offset on a movie's human traces, with a check over folds of grains; writes `decoder.json` only if the gain is clear of noise |
 | `finetune.py` | Fine-tuning on a movie's human traces, with a check that holds out grains and traced frames; writes the tuned model only if it reads more right |
+| `selftrain.py` | Experiment, off by default: label-free self-training on one movie. The per-bin decoder's readings that agree with its growth curve become pseudo-traces, and the network is tuned on them. Not a default step (26 Sep, development numbers): the synthetic movies' onsets gain but lengths do not, faint tubes do not gain, and on the real sample movie it learns the thick-tube look but moves some onsets early. `--labels` scores it once on a labelled movie such as your dev movie, which is clean because it uses no labels |
 | `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
 | `models/unet_v2_sample_field.pt` | The trained v2 model (ten synthetic movies on the sample movie's field), for a quick first look |
 

@@ -1057,9 +1057,9 @@ polyline with 0.5 px of hand jitter. Scoring used only the traces before the anc
 - **The label-free shared fixes come first:** evidence for thick and dark tubes, a per-bin frame-edge mask, trackers
   that survive jumps, and no ghost grains.
 
-### 7.6 Round 2 (25 Sep, in progress): the gap between synthetic and real footage
+### 7.6 Round 2 (25–26 Sep): the gap between synthetic and real footage
 
-The real-footage audit found that both decoders mostly fail for reasons they share. Five agents work on that gap in
+The real-footage audit found that both decoders mostly fail for reasons they share. Five agents worked on that gap in
 parallel:
 - evidence trained on synthetic movies made to look like real tubes;
 - label-free adaptation of the network to each movie, with tip growth as the supervisor;
@@ -1067,7 +1067,8 @@ parallel:
 - a network that predicts when the tube reached each pixel from the whole movie;
 - fitting a tube model to each grain's frames.
 
-Each result is checked and scored once on held-out movies before it is kept. First in:
+Each result was checked against rules fixed before looking, and scored once on held-out movies before it could be
+kept. Only the front-end fixes were kept as defaults; the other four are below.
 
 **Front-end fixes in the per-bin decoder, now its defaults.** Label-free, one flag each:
 - a frame-edge mask per bin, so a grain drifting to an edge keeps its tube where it is visible;
@@ -1130,6 +1131,54 @@ dynamic programme on that evidence.
   hurt, and the development movies lost 8 lengths (−24 to 0).
 - **Not integrated.** What it shows is that the thick, double-walled tubes can be recovered from the frames. That
   information is better spent training the network on such tubes.
+
+**Evidence trained to look like real footage: not adopted.** The network was retrained with augmentations measured
+or motivated on the real movie: defocus, misregistration, compression, flicker, uneven light and scale. It had 10
+default and 6 randomised synthetic movies. Against the shipped model, under the same decoder:
+- **Thin tubes, development movies:** −30 lengths (95% CI −61 to −1) of 793; onsets +4 (−4 to +12).
+- **Faint tubes:** onsets −7 (−13 to −2).
+- **Thick tubes:** +9 lengths (−7 to +27).
+- **Wide tubes:** +1.
+- **The same data without the augmentation:** roughly neutral everywhere.
+- **Real movie, against the audit's estimates:**
+  - onsets within 6 bins: 27 → 21 of 35;
+  - mid-movie lengths: 17 → 19;
+  - end lengths: 16 → 15.
+  - It reads the thick tubes the shipped network misses (g005, g019, g023, g036, g037). But it calls onsets early
+    (g007, g010, g014, g020, g033) and runs ends onto foreign tubes (g014, g021, g032).
+- **Verdict:** the rule fixed beforehand was more gross fixes than gross breaks on the real movie, and no real loss on
+  thin tubes. The network fails it, so it was not adopted and no held-out look was spent.
+
+**Label-free self-training on each movie: an experiment, off by default** (`selftrain.py`). The network is tuned on
+the movie's own frames. Its pseudo-labels are the decoder's readings that agree with its own growth curve, plus
+traces from the images' end state. Synthetic training crops are replayed alongside.
+- **Development movies, lengths:** −7 (−24 to +9) of 793 on the dense truth, and +9 (0 to +19) of 282 on
+  human-style traces.
+- **Development movies, onsets:** +6 (+2 to +11) and +7 (+2 to +13) of 89.
+- **Variant movies:** faint tubes −5 (−12 to +1), thick +11 (−5 to +28), wide −2.
+- **Real movie:**
+  - end lengths 14 → 18 of 32, mid-movie 15 → 17 of 33, onsets 27 → 25 of 33;
+  - it learns this movie's thick-tube look (g014, g019 and g036 fixed), but moves some onsets early.
+- **Kept as an opt-in, with a check on labels** (`--labels`). It uses no labels, so your dev movie tests it cleanly.
+  It is not in the launchers.
+
+**Birth-time maps from the whole movie: a negative result.** A network reads 44 time blocks of a grain-stabilised
+crop. For each pixel it predicts when a tube first covered it, so growth is monotone by construction.
+- **Development movies:** lengths −3 (−54 to +49), onsets −6 (−18 to +6).
+  - With exact birth maps, the same decoding would gain 31 lengths and 17 onsets. The network's timing error is what
+    costs.
+- **Variant movies:** −59 lengths (−118 to −3), −17 onsets.
+- **Real movie:** far worse; 8 of 35 onsets within 6 bins.
+- **An idea to keep for when annotations arrive:** sparse human traces give interval-censored birth labels for free.
+  A pixel on a trace at one bin but not on the previous trace was born between the two.
+
+**What round 2 leaves:**
+- **Nothing that helps the network see the real movie's thick, dark tubes transferred cleanly.** Augmentation,
+  self-training and inverse rendering each bought some of those tubes at a cost elsewhere: thin-tube lengths, early
+  onsets or foreign tubes.
+- **None of the four helped faint thin tubes**, the regime closest to your movies.
+- **The label-free options are used up.** The next gain needs your labels: fine-tuning on your traces
+  (`finetune.py`, already in the adapt step), and then one clean score on movie 2.
 
 **Human repeatability sets the onset ceiling.** In your blind retest (section 1), 4 of 7 onsets fell within ±2 bins
 of the first pass; the other three moved by 5, 8 and 19 bins.
