@@ -43,7 +43,8 @@ def _curve(res: dict, width: int, height: int, fpb: int) -> np.ndarray:
     import matplotlib.pyplot as plt
     frames = np.asarray(res["length"]["frames"], float)
     fig, ax = plt.subplots(figsize=(width / 100, height / 100), dpi=100)
-    ax.plot(frames, res["raw_reach_px"], ".", ms=2, color="#9a9890", label="per bin")
+    raw = np.asarray([np.nan if v is None else v for v in res["raw_reach_px"]], float)  # null: a bin not read
+    ax.plot(frames, raw, ".", ms=2, color="#9a9890", label="per bin")
     ax.plot(frames, res["length"]["px"], "-", lw=1.5, color="#2a78d6", label="monotone fit")
     if res.get("onset_frame") is not None:
         ax.axvline(res["onset_frame"], color="#1baf7a", lw=1, label="onset")
@@ -95,7 +96,8 @@ def write_review(pcache: str | Path, image_cache: str | Path, pred: dict, out_di
         curve = _curve(res, row.shape[1], 170, fpb)
         curve = cv2.resize(curve, (row.shape[1], curve.shape[0]))
         cv2.imwrite(str(out_dir / "diagnostics" / f"{res['id']}.png"), np.vstack([row, curve]))
-    shown = [{**r, "path_length_px": max(r.get("raw_reach_px") or [0.0])} for r in pred["grains"]]
+    shown = [{**r, "path_length_px": max([v for v in r.get("raw_reach_px") or [] if v is not None] or [0.0])}
+             for r in pred["grains"]]
     page = write_gallery({**pred, "grains": shown, "frames_per_bin": fpb,
                           "method": pred.get("method", "per-bin decoder"), "movie": meta.get("movie", {})}, out_dir)
     text = page.read_text()  # SparseTrack's gallery describes its own panels: describe these instead

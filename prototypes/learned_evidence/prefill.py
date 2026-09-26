@@ -133,7 +133,7 @@ def main(argv=None):
         raise SystemExit(f"run pipeline.py on {field} with --work {work} first (needs {pred_path} and {pcache})")
     pred = json.loads(pred_path.read_text())
     dec = {k: v for k, v in (pred.get("decoder") or {}).items()
-           if k in ("big", "burst", "vmax", "end_px", "onset_px")}
+           if k in ("big", "burst", "vmax", "end_px", "onset_px", "continuity", "cont_kw")}
     if not dec:  # predictions from before the pipeline recorded its settings: its defaults then
         learned = work / "learned" / "predictions.json"
         vmax = json.loads(learned.read_text()).get("params", {}).get("vmax_px", 4.0) if learned.exists() else 4.0

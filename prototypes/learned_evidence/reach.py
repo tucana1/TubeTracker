@@ -19,7 +19,8 @@ Options for real footage. The first three, and ``analyze(ghosts=True)``, are the
 five held-out synthetic movies they changed lengths within tolerance by +12 (95% CI -12 to +39) and onsets by 0, and
 on the real sample movie they fixed what an audit by eye found (edge grains, grains that left, ghost discs, a fit
 dragged down by failed readings). ``edge_mask="movie", gone="flag", fit="l1"`` with ``ghosts=False`` reproduce the
-earlier frozen decoder. The others were tried and are off (``track``, ``burst_run``, ``abrupt``, ``owner``):
+earlier frozen decoder. The others were tried and are off (``track``, ``burst_run``, ``abrupt``, ``owner``,
+``continuity``):
 
 * ``edge_mask="bin"``: a pixel whose source lies outside the movie frame is blocked in that bin only
   (``frame_outside``), not in every bin as soon as it leaves the frame in any bin: a grain drifting
@@ -40,6 +41,10 @@ earlier frozen decoder. The others were tried and are off (``track``, ``burst_ru
   (``abrupt_bins`` finds them).
 * ``owner="passby"``: another grain's ring that the region only passes tangentially does not split the
   region (``passby``): a tube growing past a neighbour is not cut at the neighbour's ring.
+* ``continuity="path"``: tip growth (``TipContinuity``): a reading longer than the tube's accepted path stands only
+  if it continues that path at the tip; a tube crossing or touching it, one lying across the tip's way before the tip
+  got there, a neighbour's tube at the rim make the farthest point jump off the grain's own tube, and such a bin is
+  read along the path instead (or held).
 * ``analyze(..., ghosts=True)``: census discs that are soft and faint in every early window (out-of-focus
   ghosts, smears of grains still landing) are not analysed and not treated as grains (``census_ghosts``); the
   review pre-fill excludes them as "not_a_grain", so a person can re-include one.
@@ -52,6 +57,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+from scipy.spatial import cKDTree
 from skimage.graph import MCP_Geometric
 from skimage.morphology import skeletonize
 
@@ -532,13 +538,431 @@ def grain_gone(img: np.ndarray, ls: np.ndarray, centre: float, gr: float, rg: np
     return None
 
 
+# ----------------------------------------------------------------------------- tip-growth continuity (change 7)
+_NEVER = np.float32(1e9)  # a pixel never persistently above the threshold
+
+
+def _arclen(pts: np.ndarray) -> np.ndarray:
+    """Cumulative length along an (n, 2) point chain."""
+    return np.r_[0.0, np.cumsum(np.hypot(*np.diff(pts, axis=0).T))] if len(pts) > 1 else np.zeros(len(pts))
+
+
+def _rotate_about(pts: np.ndarray, pivot: np.ndarray, deg: float) -> np.ndarray:
+    a = np.radians(deg)
+    c, s = np.cos(a), np.sin(a)
+    d = pts - pivot
+    return pivot + np.c_[c * d[:, 0] - s * d[:, 1], s * d[:, 0] + c * d[:, 1]]
+
+
+def _chord(P: np.ndarray, arc: np.ndarray, s0: float, s1: float) -> np.ndarray | None:
+    """Unit chord of chain ``P`` from arclength ``s0`` to ``s1`` (None where that is not on the chain)."""
+    if s0 < 0 or s1 > arc[-1] or s1 - s0 < 3.0:
+        return None
+    v = P[int(np.searchsorted(arc, s1))] - P[int(np.searchsorted(arc, s0))]
+    n = float(np.hypot(*v))
+    return v / n if n > 1e-6 else None
+
+
+def _angle(a: np.ndarray, b: np.ndarray) -> float:
+    """Degrees between unit vectors."""
+    return float(np.degrees(np.arccos(np.clip(a @ b, -1.0, 1.0))))
+
+
+def _turned(u: np.ndarray, earlier: np.ndarray | None) -> np.ndarray:
+    """``u`` turned on by the angle from ``earlier`` to ``u`` (a chain turning steadily keeps turning)."""
+    if earlier is None:
+        return u
+    return _rotate_about(u[None, :], np.zeros(2), float(np.degrees(np.arctan2(
+        earlier[0] * u[1] - earlier[1] * u[0], earlier @ u))))[0]
+
+
+def fill_small_holes(region: np.ndarray, max_r: float = 4.0) -> np.ndarray:
+    """``region`` with its enclosed holes filled where they are thin (inscribed radius <= ``max_r`` px): the hollow
+    middle of a wide, double-walled tube, not the eye of a coil."""
+    from scipy import ndimage
+    inv = (~region).astype(np.uint8)
+    n, lab = cv2.connectedComponents(inv, connectivity=4)
+    if n <= 2:
+        return region
+    border = np.unique(np.r_[lab[0], lab[-1], lab[:, 0], lab[:, -1]])
+    ids = np.arange(1, n)
+    rmax = np.asarray(ndimage.maximum(cv2.distanceTransform(inv, cv2.DIST_L2, 3), lab, ids))
+    fill = ids[(rmax <= max_r) & ~np.isin(ids, border)]
+    return region | np.isin(lab, fill) if len(fill) else region
+
+
+class TipContinuity:
+    """Tip growth for one grain's per-bin readings (``reach_grain(continuity="path")``): a reading longer than the
+    tube's accepted path stands only if it continues that path at the tip; otherwise the bin is read along the path.
+
+    A tube grows only at its tip, so in the grain's registered frame its medial axis at bin t is the axis of an earlier
+    bin, swayed or turned a little, extended at the apex. ``A`` is the accepted path (rim exit -> apex); it is first
+    taken from a farthest-point path that grew steadily from a short one (``start_px``..``init_max``, the same exit
+    each bin, by ``init_grow`` px to ``min_len`` px, followed ``k_init`` bins), so a tube first read long is never
+    locked on. Until then, and whenever a bin's default (farthest-point) reading is at most ``adv_px`` px (or 5%)
+    longer than ``A``'s, the default reading stands. A longer one stands only if its path continues ``A``
+    (``_continues``): from ``A``'s exit, within ``lat`` px of ``A`` (plus ``lat_s`` px per px along it: sway; at
+    least the tube's half-width) for all but ``off_frac`` of ``A``'s length, then on beyond ``A``'s apex by at most
+    ``vmax`` px per bin since the apex last advanced plus ``tol_ext``, without turning off by more than ``max_turn``
+    degrees beyond what its own turning predicts (a tube it meets branches off at once; a coil turns steadily), and
+    through pixels that were not tube before ``A``'s newest part was (first above the threshold for ``birth_k`` bins
+    at most ``slack`` bins before the latest first-bin of ``A``'s last ``back_px``): a tube lying there before this
+    tube's tip got there is not this tube. Its path then becomes ``A``.
+
+    Otherwise the bin is read in two stages on the medial axis, thin holes filled first (``fill_small_holes``), with
+    ``A`` swung about its exit (up to ``swing_deg`` per bin) or turned about the grain centre (``align_deg``) as best
+    lays it on the region (``_along``): (1) from the skeleton pixels at ``A``'s start, along its corridor: a branch
+    leaving ``A`` mid-way (a tube crossing or touching it, a neighbour's tube at the rim) is not read; (2) if the region
+    covers ``A`` to within ``cov_tol`` px of its apex, on beyond the apex through the same tests, ending on a new pixel
+    (older ones near the apex may be crossed: a tube it grows over); the apex advances with it. A bin whose region does
+    not cover ``A`` is not a reading (NaN, held like a gone bin).
+
+    An early error is not kept for good: after ``k_switch`` rejected bins whose paths are steady (the same exit, each
+    within tip growth of the last; bins whose default reading stands may come between them, as when fragmentary
+    evidence reads the tube short in some bins), such a path replaces ``A`` when ``A`` was not covered all along (a
+    tube turned beyond the alignment) or when the path grew by ``init_grow`` px or more from a short one along another
+    way (``A`` was a stub at the rim while the tube grew elsewhere); a steady path that does not grow (a tube crossing
+    this one) never does."""
+
+    def __init__(self, shape: tuple, centre: float, gr: float, rg: np.ndarray, own_ring: np.ndarray, vmax: float,
+                 lat: float = 4.0, lat_s: float = 0.08, lat_bin: float = 0.5, hw_k: float = 1.0, off_frac: float = 0.25,
+                 exit_tol: float = 8.0, start_px: float = 3.0, init_max: float | None = None, min_len: float = 6.0,
+                 init_grow: float = 4.0, k_init: int = 2, adv_px: float = 6.0, tol_ext: float = 4.0,
+                 cov_tol: float = 8.0, max_turn: float = 70.0, birth: bool = True, birth_k: int = 2, slack: int = 3,
+                 back_px: float = 8.0, k_switch: int = 4, align_deg: float = 3.0, align_cap: float = 30.0,
+                 swing_deg: float = 12.0, swing_cap: float = 90.0, fill_r: float = 4.0):
+        self.shape, self.centre, self.gr, self.rg, self.own_ring, self.vmax = shape, centre, gr, rg, own_ring, vmax
+        self.lat0, self.lat_s, self.lat_bin, self.hw_k, self.off_frac = lat, lat_s, lat_bin, hw_k, off_frac
+        self.exit_tol, self.start_px, self.min_len = exit_tol, start_px, min_len
+        self.init_grow, self.k_init = init_grow, k_init
+        self.init_max = max(12.0, 2.5 * vmax) if init_max is None else init_max
+        self.adv_px, self.tol_ext, self.cov_tol, self.max_turn = adv_px, tol_ext, cov_tol, max_turn
+        self.use_birth, self.birth_k, self.slack, self.back_px = birth, birth_k, slack, back_px
+        self.k_switch, self.align_deg, self.align_cap = k_switch, align_deg, align_cap
+        self.swing_deg, self.swing_cap, self.fill_r = swing_deg, swing_cap, fill_r
+        self.birth = np.full(shape, _NEVER, np.float32)  # per pixel: the first bin of its first persistent run
+        self.run = np.zeros(shape, np.int16)
+        self.A: np.ndarray | None = None  # the accepted path, (x, y) crop pixels from the exit to the apex
+        self.L_A = 0.0  # the reading it was accepted with
+        self.t_apex = self.t_geom = 0  # bins its apex last advanced, its geometry was last laid on a region
+        self.C: np.ndarray | None = None  # before A: the farthest-point path while it grows steadily
+        self.C_t, self.C_run, self.C_L0 = 0, 0, 0.0
+        self.J: np.ndarray | None = None  # rejected paths while steady: a candidate to replace A
+        self.J_t, self.J_run, self.J_L0, self.J_lost = 0, 0, 0.0, 0
+        self.reread: list[int] = []
+        self.held: list[int] = []
+        self.switched: list[int] = []
+
+    def observe(self, i: int, above: np.ndarray) -> None:
+        """Bin ``i``'s thresholded evidence (registered on the grain): first bins of persistent tube per pixel."""
+        self.run = np.where(above, self.run + 1, 0).astype(np.int16)
+        new = (self.run == self.birth_k) & (self.birth == _NEVER)
+        self.birth[new] = i - self.birth_k + 1
+
+    def read(self, i: int, sk: np.ndarray, region: np.ndarray, end: float, raw: float,
+             route: np.ndarray | None) -> tuple[float, np.ndarray | None]:
+        """Bin ``i``'s reading and path, given its region, medial axis and default reading ``raw`` along ``route``
+        ((x, y) crop pixels, rim to the farthest point)."""
+        if self.A is None:
+            self._grow(i, raw, route)
+            if self.C is not None and self.C_run >= self.k_init:
+                L = float(_arclen(self.C)[-1])
+                if L >= self.min_len and L >= self.C_L0 + self.init_grow:
+                    self.A, self.L_A, self.t_apex, self.t_geom = self._trim(self.C), raw, i, i
+            return raw, route
+        if raw <= self.L_A + max(self.adv_px, 0.05 * self.L_A):
+            self._refresh(i, route)  # (rejected paths stay followed: a flickering region reads short in between)
+            return raw, route
+        if self.fill_r > 0:
+            filled = fill_small_holes(region, self.fill_r)
+            if filled.sum() > region.sum():
+                region = filled
+                sk = skeletonize(region)
+                sk = sk if sk.sum() >= 2 else region
+        A = self._align(self.A, region, i)
+        arcA = _arclen(A)
+        lat = self._lat(i, A, region)
+        if self._continues(i, route, A, arcA, lat):  # it grew on at the tip (or caught up): its path is A
+            self.A, self.L_A, self.t_apex, self.t_geom = self._trim(route), raw, i, i
+            self.J, self.J_run = None, 0
+            return raw, route
+        self._track(i, route)
+        reading, path, covered = self._along(i, sk, A, arcA, lat, end)
+        if self._switch(i, raw, route, covered):
+            self.switched.append(i)
+            return raw, route
+        if covered:
+            self.reread.append(i)
+            return reading, path
+        self.held.append(i)
+        return np.nan, None
+
+    # -- helpers
+    def _refresh(self, i: int, route: np.ndarray | None) -> None:
+        """A standing reading whose path lies along ``A`` lays ``A`` on the region (the alignment's search span counts
+        from there); ``A`` takes on its geometry when about as long (sway), never a longer one: ``A`` grows only by
+        passing ``_continues`` or stage 2."""
+        if route is None or len(route) < 2 or not self._lies_along(route, self.A):
+            return
+        LA, L = float(_arclen(self.A)[-1]), float(_arclen(route)[-1])
+        if LA - 1.0 <= L <= LA + 1.0:
+            self.A = self._trim(route)
+        self.t_geom = i
+
+    def _lies_along(self, route: np.ndarray, A: np.ndarray, lat: float | None = None, upto: int | None = None) -> bool:
+        """Does ``route`` (its first ``upto`` points) lie within the corridor of ``A`` for all but ``off_frac`` of
+        ``A``'s length (the base, where the axis meets the rim, is free)?"""
+        arcA = _arclen(A)
+        k = len(route) if upto is None else upto
+        d, idx = cKDTree(A).query(route[:k])
+        rim = np.hypot(*(route[:k] - self.centre).T) <= self.gr + 6.0
+        seg = np.r_[0.0, np.hypot(*np.diff(route[:k], axis=0).T)]
+        off = (d > (self.lat0 if lat is None else lat) + self.lat_s * arcA[idx]) & ~rim
+        return float(np.sum(seg[off])) <= self.off_frac * max(float(arcA[-1]), 1.0)
+
+    def _lat(self, i: int, A: np.ndarray, region: np.ndarray) -> float:
+        lat = self.lat0 + min(self.lat_bin * max(i - self.t_geom, 0), 12.0)
+        if self.hw_k > 0:  # a wide tube's medial axis wanders across its width
+            q = np.round(A).astype(int)
+            q[:, 0] = np.clip(q[:, 0], 0, self.shape[1] - 1)
+            q[:, 1] = np.clip(q[:, 1], 0, self.shape[0] - 1)
+            hw = cv2.distanceTransform(region.astype(np.uint8), cv2.DIST_L2, 3)[q[:, 1], q[:, 0]]
+            hw = hw[hw > 0]
+            if len(hw):
+                lat = max(lat, min(self.hw_k * float(np.median(hw)), 16.0))
+        return lat
+
+    def _align(self, A: np.ndarray, region: np.ndarray, i: int) -> np.ndarray:
+        """``A`` swung about its exit (a tube swaying on its base) or turned about the grain centre (the grain
+        turning), whichever lays it best on the region, within ``swing_deg`` / ``align_deg`` per bin since ``A`` was
+        last laid on a region."""
+        if len(A) < 3 or (self.align_deg <= 0 and self.swing_deg <= 0):
+            return A
+        dt = max(i - self.t_geom, 1)
+        d = cv2.distanceTransform((~region).astype(np.uint8), cv2.DIST_L2, 3)
+        best, best_s = A, None
+        for pivot, per, cap in ((A[0], self.swing_deg, self.swing_cap),
+                                (np.array([self.centre, self.centre]), self.align_deg, self.align_cap)):
+            span = np.floor(min(per * dt, cap))
+            w = np.hypot(*(A - pivot).T)
+            for deg in np.r_[0.0, np.arange(-span, span + 1e-9, 1.0)]:
+                P = _rotate_about(A, pivot, deg) if deg else A
+                q = np.round(P).astype(int)
+                inb = (q[:, 0] >= 0) & (q[:, 0] < self.shape[1]) & (q[:, 1] >= 0) & (q[:, 1] < self.shape[0])
+                v = np.full(len(q), 8.0)
+                v[inb] = np.minimum(d[q[inb, 1], q[inb, 0]], 8.0)
+                sc = float(np.sum(w * v) / max(float(w.sum()), 1e-9)) + 0.02 * abs(deg)
+                if best_s is None or sc < best_s - 1e-9:
+                    best, best_s = P, sc
+        return best
+
+    @staticmethod
+    def _trim(A: np.ndarray) -> np.ndarray:
+        """``A`` without a hook at its end (the medial axis of a blunt tip forks): cut where its last 15 px are
+        farthest from the point 15 px back."""
+        arc = _arclen(A)
+        if len(A) < 3 or arc[-1] < 10.0:
+            return A
+        j0 = int(np.searchsorted(arc, arc[-1] - 15.0))
+        k = j0 + int(np.argmax(np.hypot(*(A[j0:] - A[j0]).T)))
+        return A[:k + 1] if k >= 1 else A
+
+    def _b_ref(self, A: np.ndarray, arcA: np.ndarray) -> float:
+        """The first bin of this tube's newest part: the latest first-bin among ``A``'s last ``back_px``."""
+        q = np.round(A[arcA >= arcA[-1] - self.back_px]).astype(int)
+        q[:, 0] = np.clip(q[:, 0], 0, self.shape[1] - 1)
+        q[:, 1] = np.clip(q[:, 1], 0, self.shape[0] - 1)
+        b = cv2.erode(self.birth, np.ones((3, 3), np.uint8))[q[:, 1], q[:, 0]]
+        b = b[b < _NEVER]
+        return float(b.max()) if len(b) else float(self.t_apex)
+
+    def _old(self, A: np.ndarray, arcA: np.ndarray, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+        """Pixels that were tube before this tube's newest part was (first-bins, min over 3 x 3)."""
+        if not self.use_birth:
+            return np.zeros(len(xs), bool)
+        return cv2.erode(self.birth, np.ones((3, 3), np.uint8))[ys, xs] < self._b_ref(A, arcA) - self.slack
+
+    def _forward(self, route: np.ndarray, k_apex: int) -> bool:
+        """Does the path go on past ``A``'s apex (its point ``k_apex``) as it came: its direction after (chord 3..17 px)
+        within ``max_turn`` of its direction before (20..3 px), or of that direction turned on as it was turning (a
+        coil turns steadily; a meandering tube turns back)?"""
+        arc = _arclen(route)
+        sa = float(arc[k_apex])
+        after = _chord(route, arc, sa + 3.0, min(sa + 17.0, float(arc[-1])))
+        before = _chord(route, arc, sa - 20.0, sa - 3.0)
+        if after is None or before is None or float(arc[-1]) - sa < 6.0:
+            return True
+        pred = _turned(before, _chord(route, arc, sa - 40.0, sa - 23.0))
+        return min(_angle(after, before), _angle(after, pred)) <= self.max_turn
+
+    def _continues(self, i: int, route: np.ndarray | None, A: np.ndarray, arcA: np.ndarray, lat: float) -> bool:
+        """Does the default path continue ``A`` (see the class docstring)?"""
+        if route is None or len(route) < 2 or float(np.hypot(*(route[0] - A[0]))) > 2.0 * self.exit_tol:
+            return False
+        LA = float(arcA[-1])
+        d, idx = cKDTree(A).query(route)
+        at = np.flatnonzero(arcA[idx] >= LA - self.cov_tol)
+        k = int(at[0]) if len(at) else len(route)  # where it comes near A's apex
+        if not self._lies_along(route, A, lat, k):
+            return False  # it leaves A before A's apex: a branch
+        if k >= len(route):
+            return False  # longer than A, yet never near A's apex: it branched off
+        arc = _arclen(route)
+        ext = float(arc[-1] - arc[k]) - (LA - float(arcA[idx[k]]))
+        if ext <= self.adv_px:
+            return True
+        if ext > self.vmax * max(i - self.t_apex, 1) + self.tol_ext:
+            return False  # a sudden extension far beyond the apex
+        k_apex = k + int(np.argmin(np.hypot(*(route[k:] - A[-1]).T)))
+        if self.max_turn < 180 and not self._forward(route, k_apex):
+            return False  # it turns off at the apex: a tube it met, not its own tip
+        q = np.round(route[k:]).astype(int)
+        out = (d[k:] > lat) & (np.hypot(*(route[k:] - A[-1]).T) > max(self.cov_tol, 2.0 * lat + 2.0))
+        return int(np.sum(self._old(A, arcA, q[out, 0], q[out, 1]))) <= 2
+
+    def _seeds(self, mask: np.ndarray) -> tuple[np.ndarray, float]:
+        """Seed pixels of ``mask`` nearest the grain (as the default reading) and their offset from the rim."""
+        if not mask.any():
+            return mask, 0.0
+        near = mask & self.own_ring if (mask & self.own_ring).any() else mask
+        rmin = float(self.rg[near].min())
+        return mask & (self.rg <= rmin + 0.5), max(0.0, rmin - self.gr)
+
+    def _along(self, i: int, sk: np.ndarray, A: np.ndarray, arcA: np.ndarray, lat: float,
+               end: float) -> tuple[float | None, np.ndarray | None, bool]:
+        """Stages 1 and 2 on (aligned) ``A``: the reading along ``A`` and on beyond its apex, and whether the region
+        covers ``A``; ``A`` follows (its apex advances with the extension)."""
+        LA = float(arcA[-1])
+        tree = cKDTree(A)
+        ys, xs = np.nonzero(sk)
+        if not len(ys):
+            return None, None, False
+        d, idx = tree.query(np.c_[xs, ys])
+        inc = d <= lat + self.lat_s * arcA[idx]
+        s1 = np.zeros_like(sk)
+        s1[ys[inc], xs[inc]] = True
+        first = inc & (arcA[idx] <= min(self.exit_tol, 0.5 * LA)) & (
+            np.hypot(xs - A[0][0], ys - A[0][1]) <= 2.0 * self.exit_tol)
+        start = np.zeros_like(sk)
+        start[ys[first], xs[first]] = True
+        seeds, offset = self._seeds(start)
+        if not seeds.any():
+            return None, None, False
+        mcp = MCP_Geometric(np.where(s1, 1.0, np.inf))
+        cum, _ = mcp.find_costs(list(zip(*np.nonzero(seeds))))
+        ys, xs = np.nonzero(s1 & np.isfinite(cum))
+        _, idx = tree.query(np.c_[xs, ys])
+        sA = arcA[idx]
+        top = sA >= sA.max() - 0.5
+        j = np.flatnonzero(top)[int(np.argmin(cum[ys[top], xs[top]]))]
+        q = (int(ys[j]), int(xs[j]))  # the reachable corridor pixel farthest along A
+        covered = bool(sA.max() >= LA - self.cov_tol) and float(cum[q]) >= 0.5 * (float(sA.max()) - self.exit_tol)
+        path = np.asarray(mcp.traceback(q), float)[:, ::-1]
+        ext, tail = self._extend(i, sk, A, arcA, lat, q) if covered else (0.0, None)
+        if tail is not None:
+            path = np.vstack([path, tail[1:]])
+        if covered:
+            if tail is not None and _arclen(path)[-1] > LA + self.adv_px:
+                self.A, self.L_A, self.t_apex = self._trim(path), max(0.0, float(cum[q]) + ext + offset + end), i
+            else:
+                self.A = A
+            self.t_geom = i
+        return max(0.0, float(cum[q]) + ext + offset + end), path, covered
+
+    def _extend(self, i: int, sk: np.ndarray, A: np.ndarray, arcA: np.ndarray, lat: float,
+                q: tuple) -> tuple[float, np.ndarray | None]:
+        """Stage 2: from ``q`` on beyond ``A``'s apex (never back alongside ``A``, leaving forwards), ending on a new
+        pixel; older ones near the apex may be crossed."""
+        LA = float(arcA[-1])
+        ys, xs = np.nonzero(sk)
+        d, idx = cKDTree(A).query(np.c_[xs, ys])
+        geo = (d > 2.0 * lat + 2.0) | (arcA[idx] >= LA - 2.0)  # beyond the apex, or well away from A
+        u0 = _chord(A, arcA, LA - 20.0, LA - 3.0)
+        if self.max_turn < 180 and u0 is not None:  # leave within max_turn of A's direction, or of it turned on
+            u1 = _turned(u0, _chord(A, arcA, LA - 40.0, LA - 23.0))
+            v = np.c_[xs, ys] - np.array([q[1], q[0]], float)
+            r = np.hypot(*v.T)
+            c = np.cos(np.radians(self.max_turn)) * r
+            geo &= (r < 3.0) | (r > 17.0) | ((v @ u0) >= c) | ((v @ u1) >= c)
+        new = ~self._old(A, arcA, xs, ys)
+        r0 = max(self.cov_tol, 2.0 * lat + 2.0)
+        near = (np.hypot(xs - A[-1][0], ys - A[-1][1]) <= r0) | (np.hypot(xs - q[1], ys - q[0]) <= r0)
+        dom = np.zeros_like(sk)
+        dom[ys[geo & (new | near)], xs[geo & (new | near)]] = True
+        dom[q] = True
+        end_ok = np.zeros_like(sk)
+        end_ok[ys[geo & new], xs[geo & new]] = True
+        mcp = MCP_Geometric(np.where(dom, 1.0, np.inf))
+        cum, _ = mcp.find_costs([q])
+        ok = end_ok & np.isfinite(cum) & (cum <= self.vmax * max(i - self.t_apex, 1) + self.tol_ext)
+        if not ok.any():
+            return 0.0, None
+        far = np.unravel_index(int(np.argmax(np.where(ok, cum, -1.0))), cum.shape)
+        if cum[far] <= 0:
+            return 0.0, None
+        tail = np.asarray(mcp.traceback(far), float)[:, ::-1]
+        # a loop at the tip: the farthest pixel along it can lie on the way back; end the tail where it is farthest
+        # from the apex, so A never hooks back on itself
+        tail = tail[:int(np.argmax(np.hypot(*(tail - A[-1]).T))) + 1]
+        return (float(_arclen(tail)[-1]), tail) if len(tail) >= 2 else (0.0, None)
+
+    def _grow(self, i: int, raw: float, route: np.ndarray | None) -> None:
+        """Before ``A``: follow the farthest-point path while it grows steadily from a short one (the same exit, each
+        no longer than tip growth allows from the last); a long path appearing at once cannot start it."""
+        if route is None or raw < self.start_px:
+            return  # a miss neither ends nor extends it
+        L = float(_arclen(route)[-1])
+        if self.C is not None:
+            LC = float(_arclen(self.C)[-1])
+            if (float(np.hypot(*(route[0] - self.C[0]))) <= 1.5 * self.exit_tol
+                    and L <= LC + self.vmax * (i - self.C_t) + self.tol_ext):
+                if L >= LC - self.adv_px:
+                    self.C, self.C_t = route, i
+                self.C_run += 1
+                return
+            self.C = None
+        if L <= self.init_max:
+            self.C, self.C_t, self.C_run, self.C_L0 = route, i, 1, L
+
+    def _track(self, i: int, route: np.ndarray | None) -> None:
+        """Follow the rejected paths while they are steady: the same exit, each within tip growth of the last."""
+        if route is None:
+            return
+        L = float(_arclen(route)[-1])
+        if self.J is not None:
+            LJ = float(_arclen(self.J)[-1])
+            if (float(np.hypot(*(route[0] - self.J[0]))) <= 1.5 * self.exit_tol
+                    and 0.85 * LJ - self.adv_px <= L <= LJ + self.vmax * (i - self.J_t) + self.tol_ext):
+                self.J, self.J_t, self.J_run = route, i, self.J_run + 1
+                return
+        self.J, self.J_t, self.J_run, self.J_L0 = route, i, 1, L
+
+    def _switch(self, i: int, raw: float, route: np.ndarray | None, covered: bool) -> bool:
+        """After ``k_switch`` steady rejected paths, one replaces ``A`` if ``A`` was not covered all along, or if it grew
+        from a short one along another way than ``A``."""
+        if route is None or self.J is None:
+            return False
+        self.J_lost = self.J_lost + 1 if not covered and self.J_run > 1 else (0 if covered else 1)
+        if self.J_run < self.k_switch:
+            return False
+        LA, LJ = float(_arclen(self.A)[-1]), float(_arclen(self.J)[-1])
+        grew = (self.J_L0 <= max(self.init_max, LA + 2.0 * self.adv_px) and LJ >= self.J_L0 + self.init_grow
+                and not self._lies_along(self.J, self.A))
+        if self.J_lost >= self.k_switch or grew:
+            self.A, self.L_A, self.t_apex, self.t_geom = self._trim(route), raw, i, i
+            self.J, self.J_run, self.J_lost = None, 0, 0
+            return True
+        return False
+
+
 def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: list[dict], thr: float = 0.5,
                 scale: float = 16.0, half: int = 150, vmax: float = 4.0, onset_px: float = 2.0,
                 min_tube_px: float = 8.0, rim_band: float = 5.0, seed: str = "skeleton", end_px: float = 1.0,
                 tip: str = "const", big: int | None = None, burst: bool = False, keep: tuple = (),
                 paths: tuple = (), length: str = "path", edge_mask: str = "bin", edge_margin: float = 1.0,
                 gone: str = "hold", track: str = "local", fit: str = "grown", fit_kw: dict | None = None,
-                burst_run: int = 1, abrupt: tuple = (), owner: str = "geodesic", _ls=None) -> dict:
+                burst_run: int = 1, abrupt: tuple = (), owner: str = "geodesic", continuity: str = "off",
+                cont_kw: dict | None = None, _ls=None) -> dict:
     """Length per bin, then a monotone fit. ``seed`` chooses how the bin's length is read:
     ``"skeleton"`` (the default, frozen on the development seed): geodesic length along the region's
     medial axis from its pixels nearest the grain centre, plus their distance from the rim, so a
@@ -567,8 +991,10 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     earlier frozen decoder): ``edge_mask``
     ("movie" | "bin") and ``edge_margin`` (px); ``gone`` ("flag" | "hold"); ``track`` ("local" | "reacquire");
     ``fit`` ("l1" | "grown", ``fit_kw`` for ``grown_floor``); ``burst_run``; ``abrupt`` (analysed-bin indices just
-    after an abrupt change); ``owner`` ("geodesic" | "passby"). With ``gone="hold"`` (or ``track="reacquire"``)
-    the bins where the grain is gone are returned under ``gone_bins``.
+    after an abrupt change); ``owner`` ("geodesic" | "passby"); ``continuity`` ("off" | "path", ``cont_kw`` for
+    ``TipContinuity``; it reads along the medial axis, so it needs the default ``seed``, ``tip`` and ``length``: the
+    bins it re-read along the tube's path and those it held are returned under ``continuity``). With ``gone="hold"``
+    (or ``track="reacquire"``) the bins where the grain is gone are returned under ``gone_bins``.
 
     With learned evidence it is ahead of SparseTrack's decoder on synthetic movies: +84 lengths in
     tolerance on seven development movies, +12 on eight held-out and +44 on four untouched test
@@ -614,6 +1040,13 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
     own_ring = (rg >= gr - 1.0) & (rg <= gr + rim_band)
     rim = (rg >= gr - 1.0) & (rg <= gr + 1.5)
     raw = np.zeros(nb - rs)
+    cont = None
+    if continuity == "path":
+        if seed != "skeleton" or tip != "const" or length != "path":
+            raise ValueError("continuity='path' reads along the medial axis: seed='skeleton', tip='const', length='path'")
+        cont = TipContinuity((2 * half, 2 * half), centre, gr, rg, own_ring, vmax, **(cont_kw or {}))
+    elif continuity != "off":
+        raise ValueError(f"unknown continuity {continuity!r}")
     width = np.full(nb - rs, np.nan)  # region area per px of length: the tube's full width
     edge = False  # the tube reaches the crop's edge: read the grain again with a bigger crop
     views, routes = {}, {}
@@ -630,6 +1063,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if edge_mask == "bin":
             blk = blocked | frame_outside(R_img.width, R_img.height, gx, gy, half, shifts[i], edge_margin)
         m = (p > thr) & ~blk
+        if cont is not None:
+            cont.observe(i, m)
         if not (m & own_ring).any():
             continue
         _, lab = cv2.connectedComponents(m.astype(np.uint8), connectivity=8)
@@ -663,7 +1098,7 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if not ok.any():
             continue
         far = np.unravel_index(int(np.argmax(np.where(ok, cum, -1.0))), cum.shape)
-        if i in paths or length == "smooth":
+        if i in paths or length == "smooth" or cont is not None:
             route = np.asarray(mcp.traceback(far), float)[:, ::-1]  # crop cols, rows
         if i in paths:  # the exit on the rim, then the medial axis to the far end (-> reference x, y)
             ey, ex = np.nonzero(region & own_ring)
@@ -677,12 +1112,20 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         along = smooth_length(route) if length == "smooth" else float(cum[far])
         raw[i] = max(0.0, along + offset + end)  # a negative end_px must not make lengths negative
         width[i] = float(region.sum()) / max(float(cum[far]) + 1.0, 1.0)
+        if cont is not None and not absent[i]:  # tip growth: a reading that jumps off the tube's path is re-read
+            raw[i], cpath = cont.read(i, comp, region, end, raw[i], route)
+            if i in routes and cpath is None:  # held: the farthest point's path is not the grain's
+                del routes[i]
+            elif i in routes and cpath is not route:  # its exit: where the path itself leaves the rim
+                v = cpath[0] - centre
+                rim_pt = centre + v * gr / max(float(np.hypot(*v)), 1e-9)
+                routes[i] = np.vstack([rim_pt, cpath]) + [gx - half + dx + 0.5, gy - half + dy + 0.5]
     if edge and big and half < big:
         res = reach_grain(RP, R_img, meta, grain, others, thr=thr, scale=scale, half=big, vmax=vmax,
                           onset_px=onset_px, min_tube_px=min_tube_px, rim_band=rim_band, seed=seed, end_px=end_px,
                           tip=tip, big=big, burst=burst, keep=keep, paths=paths, length=length, edge_mask=edge_mask,
                           edge_margin=edge_margin, gone=gone, track=track, fit=fit, fit_kw=fit_kw,
-                          burst_run=burst_run, abrupt=abrupt, owner=owner)
+                          burst_run=burst_run, abrupt=abrupt, owner=owner, continuity=continuity, cont_kw=cont_kw)
         res["flags"].append(f"crop_grown:{big}")
         return res
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
@@ -712,14 +1155,15 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         if g_ is not None:
             flags.append(f"no_grain_after:{frames[g_]}")
     if status != "no_emergence_by_end":
-        live = (fit_ >= min_tube_px / 2) & (np.arange(raw.size) < (cut if cut is not None else raw.size))
+        live = ((fit_ >= min_tube_px / 2) & (np.arange(raw.size) < (cut if cut is not None else raw.size))
+                & np.isfinite(raw))
         off = live & (np.abs(raw - fit_) > np.maximum(10.0, 0.3 * fit_))
         if live.sum() >= 5 and off.sum() >= 0.3 * live.sum():
             flags.append(f"unsteady:{int(off.sum())}/{int(live.sum())}")
     return {"id": grain["id"], "x": gx, "y": gy, "r": gr, "status": status, "onset_frame": onset,
             "onset_interval": interval, "final_length_px": round(float(fit_[-1]), 2),
             "length": {"frames": frames, "px": [round(float(v), 2) for v in fit_]},
-            "raw_reach_px": [round(float(v), 2) for v in raw], "flags": flags,
+            "raw_reach_px": [round(float(v), 2) if np.isfinite(v) else None for v in raw], "flags": flags,
             "burst_frame": frames[cut] if cut is not None and status != "no_emergence_by_end" else None,
             "width_px": (round(float(np.nanmedian(width[raw >= min_tube_px])), 2)
                          if np.any((raw >= min_tube_px) & np.isfinite(width)) else None),
@@ -727,7 +1171,9 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
                if absent.any() and (gone == "hold" or track == "reacquire") else {}),
             **({"_track": ls.round(2).tolist()} if track == "reacquire" else {}),
             **({"_views": views, "_centre": centre} if keep else {}),
-            **({"_paths": {i: routes[i].round(2).tolist() for i in routes}} if paths else {})}
+            **({"_paths": {i: routes[i].round(2).tolist() for i in routes}} if paths else {}),
+            **({"continuity": {"reread_bins": cont.reread, "held_bins": cont.held, "switched_at": cont.switched}}
+               if cont is not None else {})}
 
 
 def analyze(pcache: str | Path, image_cache: str | Path, grains_path: str | Path | None = None, log=print,
