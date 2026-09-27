@@ -44,6 +44,7 @@ from .render import Renderer
 class Params:
     half: int = 150              # crop half-size around each grain (px)
     reg_pad: float = 12.0        # local registration window = grain radius + pad
+    drift_check: bool = True     # an implausible grain track (plausible_drift) falls back to the field registration
     ref_bins: int = 3            # leading bins averaged as the "before" image
     late_bins: int = 3           # trailing full bins averaged as the "after" image
     map_sigma: float = 1.0
@@ -155,6 +156,15 @@ def local_shifts(crops: np.ndarray, centre: float, radius: float, pad: float, re
     med = np.array([np.median(raw[max(0, b - window):b + window + 1], axis=0) for b in range(len(raw))])
     bad = np.hypot(*(raw - med).T) > max_dev
     return np.where(bad[:, None], med, raw)
+
+
+def plausible_drift(ls: np.ndarray, max_step: float = 10.0) -> bool:
+    """Is a grain's tracked drift physical? A real drift (even a sudden push) moves a few px per
+    bin and mostly one way; locking onto a neighbour, a clump or the grain's own growing tube
+    jumps far in one bin or wanders back and forth."""
+    steps = np.hypot(*np.diff(ls, axis=0).T) if len(ls) > 1 else np.zeros(1)
+    reach = float(np.hypot(*ls.T).max())
+    return not (steps.max() > max_step or (steps > 2).sum() > 10 or steps.sum() > 4 * reach + 30)
 
 
 def _geodesic_far(mask: np.ndarray, seeds: np.ndarray) -> tuple[tuple[int, int], np.ndarray]:
@@ -345,9 +355,11 @@ def matched_kymograph(signed: np.ndarray, template: np.ndarray, pts: np.ndarray,
     cos, sin = np.cos(rad)[:, None, None], np.sin(rad)[:, None, None]
     cx, cy = (float(centre[0]), float(centre[1])) if np.ndim(centre) else (centre, centre)  # rotation pivot
     q = ((pts - [cx, cy])[None, :, None, :] + (across[None, None, :, None] + lateral_offset) * normal[None, :, None, :])
-    x = (cx + cos * q[..., 0] - sin * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
-    y = (cy + sin * q[..., 0] + cos * q[..., 1]).reshape(-1, len(across)).astype(np.float32)
     n_ang, n_pts = len(angles_deg), len(pts)
+    # one map row per angle: OpenCV's remap takes fewer than 32767 rows and columns, and one row
+    # per (angle, point) passed that on paths longer than ~270 px
+    x = (cx + cos * q[..., 0] - sin * q[..., 1]).reshape(n_ang, -1).astype(np.float32)
+    y = (cy + sin * q[..., 0] + cos * q[..., 1]).reshape(n_ang, -1).astype(np.float32)
     out = np.empty((len(signed), n_ang, n_pts), np.float32)
     for t, d in enumerate(signed):
         smp = cv2.remap(d, x, y, cv2.INTER_LINEAR, borderValue=0).reshape(n_ang, n_pts, len(across))
@@ -749,6 +761,9 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
             res["flags"].append(f"settled_from_bin:{b0}")
             return _pad_front(res, frames, b0)
     ls = local_shifts(crops, centre, gr, p.reg_pad, p.ref_bins)
+    drift_rejected = p.drift_check and not plausible_drift(ls)
+    if drift_rejected:  # the track locked onto a neighbour or the grain's own tube, not the grain
+        ls = np.zeros_like(ls)
     reg = np.stack([cv2.warpAffine(c, np.float32([[1, 0, -dx], [0, 1, -dy]]), (2 * half, 2 * half),
                                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
                     for c, (dx, dy) in zip(crops, ls)])
@@ -777,8 +792,8 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     ring = (rg >= gr - 1.0) & (rg <= gr + 4.0)
     attached = [(stats[l, cv2.CC_STAT_AREA], l) for l in range(1, n_lab)
                 if stats[l, cv2.CC_STAT_AREA] >= p.min_component_px and np.any(ring & (lab == l))]
-    result = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": [], "map_threshold": round(thr, 2),
-              "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
+    result = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": ["drift_rejected"] if drift_rejected else [],
+              "map_threshold": round(thr, 2), "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
     if not attached:
         result.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,

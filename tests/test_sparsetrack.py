@@ -467,3 +467,24 @@ def test_turned_path_uses_the_models_own_pivot():
     assert np.allclose(turned_path(g, 0, {"params": {"rot_pivot": "exit"}}), [[10, 0], [10, 10]])
     # older predictions turned the path with the grain about its centre
     assert np.allclose(turned_path(g, 0, {"params": {}}), [[0, 10], [0, 20]])
+
+
+def test_plausible_drift_accepts_a_push_but_not_a_lock_on():
+    from sparsetrack.analyze import plausible_drift
+    t = np.arange(120)[:, None]
+    assert plausible_drift(np.hstack([0.1 * t, 0.05 * t]))                 # slow one-way drift
+    jump = np.zeros((120, 2)); jump[60:] = [14.0, 0.0]
+    assert not plausible_drift(jump)                                        # 14 px in one bin: locked onto a neighbour
+    wander = np.zeros((120, 2)); wander[::2] = [3.0, 0.0]
+    assert not plausible_drift(wander)                                      # back and forth every bin
+
+
+def test_matched_kymograph_reads_paths_longer_than_opencvs_map_limit():
+    from sparsetrack.analyze import matched_kymograph
+    n = 600  # 300 px at 0.5 px steps: 61 angles x 600 points passed OpenCV's 32767-row limit before
+    pts = np.stack([np.linspace(20, 320, n), np.full(n, 200.0)], 1)
+    normal = np.tile([0.0, 1.0], (n, 1))
+    across = np.arange(-3.5, 3.51, 0.5)
+    out = matched_kymograph(np.zeros((2, 400, 400), np.float32), np.zeros((n, len(across))), pts, normal, 20.0,
+                            across, np.arange(-45, 45.1, 1.5))
+    assert out.shape == (2, 61, n)

@@ -30,8 +30,12 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 .venv/bin/python -m sparsetrack prepare runs/sparsetrack/synth/synthv2_s0.mp4 --out runs/sparsetrack/synth/v2s0_cache --frames-per-bin 25 --ref-start 0
 # score parameter variants on the synthetic seeds (by failure class) and the legacy real grains
 .venv/bin/python scripts/synth_bench.py --suite v2 --breakdown --set evidence=matched
-# ... or on the dev movie's human benchmark only (~1 min per variant)
-.venv/bin/python scripts/synth_bench.py --real --no-synth --no-legacy --set tip_offset_px=2.5
+# ... or on the human benchmarks only, both movies in parallel (~2 min per variant), paired
+# against a saved run with a bootstrap over grains
+.venv/bin/python scripts/synth_bench.py --real --no-synth --no-legacy --dump-real base.json
+.venv/bin/python scripts/synth_bench.py --real --no-synth --no-legacy --set tip_offset_px=2.5 --baseline base.json
+# is it the route or the reading? the human's traced route as each grain's only path
+.venv/bin/python scripts/oracle_route.py m2 contact_px=-1000
 ```
 
 `analyze` works per grain, whole-movie and offline:

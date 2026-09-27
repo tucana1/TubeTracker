@@ -304,18 +304,14 @@ class Bench:
         """(n_bins, 2) offsets that keep a drifting grain centred in its views (grain registration
         on top of the field registration; zero before the reference bins and if it is erratic)."""
         if gid not in self._follow:
-            from ..analyze import local_shifts
+            from ..analyze import local_shifts, plausible_drift
             g = self.grain(gid)
             rs, half = self.renderer.ref_start, FOLLOW_HALF
             crops = np.stack([self.renderer.crop(b, g["x"], g["y"], half) for b in range(rs, self.n_bins)])
             if np.isnan(crops).any():
                 crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)))
             ls = local_shifts(crops, half - 0.5, g["r"], 12.0, 3)
-            steps = np.hypot(*np.diff(ls, axis=0).T) if len(ls) > 1 else np.zeros(1)
-            reach = float(np.hypot(*ls.T).max())
-            # a real drift (even a sudden push) moves a few px per bin and mostly one way; locking
-            # onto a neighbour or clump jumps far in one bin or wanders back and forth
-            if steps.max() > FOLLOW_MAX_STEP or (steps > 2).sum() > 10 or steps.sum() > 4 * reach + 30:
+            if not plausible_drift(ls, FOLLOW_MAX_STEP):
                 ls = np.zeros_like(ls)
             self._follow[gid] = np.vstack([np.repeat(ls[:1], rs, axis=0), ls])
         return self._follow[gid]
