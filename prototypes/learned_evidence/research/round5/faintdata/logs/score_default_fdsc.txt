@@ -1,0 +1,16 @@
+
+=== orig: default -> fdsc (lengths within max(2 px, 10%); onsets within 2 bins)
+thin (v5 s3-8, s13-15)   lengths 1310 -> 1265 /1807  diff  -45 [-85, -5] = -2.5 pt [-4.7, -0.3] | onsets 150 -> 143 /203 diff  -7 [-16, +2] (9 movies)
+faint s30+s31            lengths  209 ->  241 /385   diff  +32 [+13, +54] = +8.3 pt [+3.4, +14.0] | onsets  16 ->  19 /44  diff  +3 [+0, +7] (2 movies)
+thin+faint pooled        lengths 1519 -> 1506 /2192  diff  -13 [-59, +34] = -0.6 pt [-2.7, +1.6] | onsets 166 -> 162 /247 diff  -4 [-14, +5] (11 movies)
+thick s30+s31            lengths   88 ->   95 /419   diff   +7 [-7, +22] = +1.7 pt [-1.7, +5.3] | onsets  41 ->  39 /46  diff  -2 [-5, +0] (2 movies)
+wide s26+s27             lengths  311 ->  295 /445   diff  -15 [-32, +2] = -3.4 pt [-7.2, +0.4] | onsets  44 ->  41 /50  diff  -3 [-8, +2] (2 movies)
+
+=== human_t2: default -> fdsc (lengths within max(2 px, 10%); onsets within 2 bins)
+thin (v5 s3-8, s13-15)   lengths  453 ->  439 /642   diff  -14 [-34, +6] = -2.2 pt [-5.3, +0.9] | onsets  72 ->  62 /203 diff -10 [-23, +3] (9 movies)
+faint s30+s31            lengths   69 ->   84 /137   diff  +15 [+6, +24] = +10.9 pt [+4.4, +17.5] | onsets  14 ->  14 /44  diff  +0 [-4, +4] (2 movies)
+thin+faint pooled        lengths  522 ->  523 /779   diff   +1 [-21, +23] = +0.1 pt [-2.7, +3.0] | onsets  86 ->  76 /247 diff -10 [-24, +3] (11 movies)
+thick s30+s31            lengths   33 ->   33 /147   diff   +0 [-9, +9] = +0.0 pt [-6.1, +6.1] | onsets   5 ->   4 /46  diff  -1 [-5, +2] (2 movies)
+wide s26+s27             lengths  106 ->  104 /159   diff   -2 [-10, +6] = -1.3 pt [-6.3, +3.8] | onsets   9 ->  11 /50  diff  +2 [-4, +8] (2 movies)
+
+round-5 rule, development preview: thin+faint pooled lengths: -0.59 pt (lower -2.69): FAIL | thin onsets: -3.45 pt: FAIL | thick s30+s31 lengths: +1.67 pt (lower -1.67): PASS | wide s26+s27 lengths: -3.37 pt (lower -7.19): FAIL

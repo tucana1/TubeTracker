@@ -9,7 +9,7 @@ checkout. The prototype itself is the folder above; nothing here is needed to ru
 |---|---|
 | `heldout_rules.txt` | Every adoption rule, written before its round's results, and each round's outcome: rounds 2–4 (rules A–F) and round 5 (G, H). Read it before changing a default. |
 | `audit/verdicts.csv`, `audit/report.md` | A visual audit of the real sample movie's 35 grains (25 Sep 2026): onset, mid-movie (bin 64) and end length estimates, good to about 10–20%. It is the only real-footage check here. |
-| `round5/` | Round 5's brief and, once it reports, its agents' reports and code. |
+| `round5/` | Round 5 (faint tubes, label-free): the brief, both agents' reports (`report_tta.md`, `report_faintdata.md`), their code, logs and scores, and the best retrained network (`faintdata/models/unet_fd_scratch_cal.pt`, not adopted). |
 
 ## The protocol
 

@@ -146,9 +146,13 @@ Tune nothing after this.
   - an independent code review of the fusion default, with every finding fixed (commit 65ea175);
   - end-to-end runs of Adapt, Analyze and Review on a synthetic dev movie, the last on 27 Sep with the fused
     reading and the switch back (assessment, appendix B).
-- **Round 5** looks for label-free gains on faint tubes, the regime closest to the lab's movies. It was running when
-  the work paused. Its rule is in `research/heldout_rules.txt`; its brief, reports and any candidate are in
-  `research/round5/`.
+- **Round 5** looked for label-free gains on faint tubes, the regime closest to the lab's movies, and found none to
+  adopt (assessment, section 7.9).
+  - Test-time augmentation changed nothing.
+  - Training on faint synthetic tubes gained 8 points on faint tubes but lost thin tubes and real onsets to blobs at
+    grain rims.
+  - No candidate was frozen, so the sealed held-out set is still unopened.
+  - The reports, code, scores and the best retrained network are in `research/round5/`.
 - **Nothing runs now.** The daily routine that checked for movie-2 labels is disabled.
 
 ## Where everything is
@@ -176,8 +180,12 @@ See `research/README.md` for the details. In short:
 1. **The lab's dev labels, then Adapt** (Part A, steps 2 and 3). Adapt decides whether the fused reading stays (the
    dev test's verdict line), calibrates the decoder's end offset, and tries fine-tuning.
 2. **Movie 2, once** (Part A, steps 4 and 5).
-3. **Round 5's outcome** (`research/round5/`): a candidate frozen on development gets one look at the sealed set
-   under rule G/H, then the real-movie audit, before it can become a default.
+3. **Faint tubes, the lab's regime.** Round 5 showed that in one bin a faint young tube and a dark blob at a rim look
+   alike; a tube grows out from the rim and a blob does not. Two directions follow:
+   - evidence or decoding that uses growth across bins, for example a network reading several bins, or a birth test
+     at the rim like continuity's;
+   - fine-tuning on the lab's own faint tubes (`finetune.py`, already a step of Adapt).
+   A new candidate needs a rule written first, development on `research.common.DEV`, and one look at the sealed set.
 4. **Known weak spots,** from the development numbers in `research/README.md` and the audit:
    - faint tubes: about 54% of lengths in tolerance;
    - thick tubes read long: 21% raw, though the end-offset calibration corrects much of this per movie;

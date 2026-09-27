@@ -1,0 +1,17 @@
+=== orig: lengths within tol / n, onset hits / n
+v5s3         default: len  123/189  ( 65.1%) on  12/19  | fdft: len  116/189  ( 61.4%) on  12/19  | fds: len  115/189  ( 60.8%) on   9/19  | fdsc: len  110/189  ( 58.2%) on  11/19 
+v5s4         default: len  169/209  ( 80.9%) on  17/25  | fdft: len  162/209  ( 77.5%) on  19/25  | fds: len  160/209  ( 76.6%) on  14/25  | fdsc: len  161/209  ( 77.0%) on  15/25 
+v5s5         default: len  152/192  ( 79.2%) on  16/22  | fdft: len  144/192  ( 75.0%) on  16/22  | fds: len  144/192  ( 75.0%) on  13/22  | fdsc: len  146/192  ( 76.0%) on  12/22 
+v5s6         default: len  131/203  ( 64.5%) on  15/23  | fdft: len  141/203  ( 69.5%) on  15/23  | fds: len  122/203  ( 60.1%) on  16/23  | fdsc: len  130/203  ( 64.0%) on  17/23 
+v5s7         default: len  141/203  ( 69.5%) on  17/22  | fdft: - | fds: - | fdsc: len  146/203  ( 71.9%) on  17/22 
+v5s8         default: len  145/210  ( 69.0%) on  20/23  | fdft: - | fds: - | fdsc: len  155/210  ( 73.8%) on  22/23 
+v5s13        default: len  126/185  ( 68.1%) on  17/21  | fdft: - | fds: - | fdsc: len  120/185  ( 64.9%) on  14/21 
+v5s14        default: len  146/188  ( 77.7%) on  17/23  | fdft: - | fds: - | fdsc: len  138/188  ( 73.4%) on  18/23 
+v5s15        default: len  177/228  ( 77.6%) on  19/25  | fdft: - | fds: - | fdsc: len  159/228  ( 69.7%) on  17/25 
+v5faints30   default: len   91/186  ( 48.9%) on   7/22  | fdft: len  104/186  ( 55.9%) on   7/22  | fds: len  100/186  ( 53.8%) on   8/22  | fdsc: len  102/186  ( 54.8%) on   8/22 
+v5faints31   default: len  118/199  ( 59.3%) on   9/22  | fdft: len  113/199  ( 56.8%) on  11/22  | fds: len  138/199  ( 69.3%) on  12/22  | fdsc: len  139/199  ( 69.8%) on  11/22 
+v5thicks30   default: len   51/211  ( 24.2%) on  21/23  | fdft: len   47/211  ( 22.3%) on  21/23  | fds: - | fdsc: len   57/211  ( 27.0%) on  20/23 
+v5thicks31   default: len   37/208  ( 17.8%) on  20/23  | fdft: - | fds: - | fdsc: len   38/208  ( 18.3%) on  19/23 
+v5ws26       default: len  168/244  ( 68.9%) on  24/27  | fdft: - | fds: - | fdsc: len  150/244  ( 61.5%) on  20/27 
+v5ws27       default: len  143/201  ( 71.1%) on  20/23  | fdft: - | fds: - | fdsc: len  145/201  ( 72.1%) on  21/23 
+=== human_t2: lengths within tol / n, onset hits / n

@@ -1,0 +1,136 @@
+train samples 17920 from 16 shards; tube pixels 1.6%
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s50.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s51.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s52.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s53.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5mid_s54.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5mid_s55.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v2_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v2_s1.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v3_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v3_s2.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s1.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s10.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s11.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s2.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s9.npz
+parameters 0.49 M
+step   100    163s  bce 0.7901 dice 0.9432 tip 0.6604 total 2.0634
+step   200    312s  bce 0.6427 dice 0.9278 tip 0.5728 total 1.8569
+step   300    634s  bce 0.4616 dice 0.8978 tip 0.4072 total 1.5630
+train samples 17920 from 16 shards; tube pixels 1.6%
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s50.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s51.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s52.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s53.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5mid_s54.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5mid_s55.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v2_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v2_s1.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v3_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v3_s2.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s1.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s10.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s11.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s2.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s9.npz
+parameters 0.49 M
+resumed from /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/models/unet_fd_scratch.pt.ckpt at step 250
+step   300     67s  bce 0.1997 dice 0.4436 tip 0.1767 total 0.7317
+step   400    196s  bce 0.2234 dice 0.8050 tip 0.1987 total 1.1278
+step   500    332s  bce 0.1014 dice 0.5635 tip 0.0901 total 0.7100
+step   600    469s  bce 0.0822 dice 0.3579 tip 0.0588 total 0.4695
+step   700    610s  bce 0.0811 dice 0.2840 tip 0.0513 total 0.3907
+step   800    716s  bce 0.0831 dice 0.2605 tip 0.0467 total 0.3669
+step   900    816s  bce 0.0742 dice 0.2354 tip 0.0446 total 0.3319
+step  1000    899s  bce 0.0692 dice 0.2233 tip 0.0421 total 0.3135
+step  1100    973s  bce 0.0754 dice 0.2285 tip 0.0412 total 0.3245
+step  1200   1050s  bce 0.0659 dice 0.2143 tip 0.0393 total 0.2999
+step  1300   1142s  bce 0.0639 dice 0.1964 tip 0.0382 total 0.2795
+step  1400   1235s  bce 0.0678 dice 0.2007 tip 0.0368 total 0.2869
+step  1500   1317s  bce 0.0659 dice 0.1992 tip 0.0361 total 0.2832
+step  1600   1405s  bce 0.0589 dice 0.1853 tip 0.0344 total 0.2614
+step  1700   1468s  bce 0.0579 dice 0.1828 tip 0.0351 total 0.2583
+step  1800   1516s  bce 0.0600 dice 0.1828 tip 0.0343 total 0.2600
+step  1900   1580s  bce 0.0637 dice 0.1861 tip 0.0347 total 0.2671
+step  2000   1663s  bce 0.0577 dice 0.1737 tip 0.0336 total 0.2483
+step  2100   1743s  bce 0.0562 dice 0.1672 tip 0.0329 total 0.2398
+step  2200   1811s  bce 0.0591 dice 0.1769 tip 0.0331 total 0.2525
+step  2300   1881s  bce 0.0593 dice 0.1746 tip 0.0330 total 0.2504
+step  2400   1951s  bce 0.0610 dice 0.1756 tip 0.0312 total 0.2521
+step  2500   2027s  bce 0.0549 dice 0.1675 tip 0.0319 total 0.2384
+M1 paused (pid 1079) Sun Sep 27 04:51:08 UTC 2026
+train samples 17920 from 16 shards; tube pixels 1.6%
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s50.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s51.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s52.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5faint_s53.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5mid_s54.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/shards/train_v5mid_s55.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v2_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v2_s1.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v3_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v3_s2.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s0.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s1.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s10.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s11.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s2.npz
+  shard /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/le/shards/train_v5_s9.npz
+parameters 0.49 M
+resumed from /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/models/unet_fd_scratch.pt.ckpt at step 2500
+step  2600     59s  bce 0.0599 dice 0.1730 tip 0.0312 total 0.2485
+step  2700    114s  bce 0.0549 dice 0.1654 tip 0.0308 total 0.2357
+step  2800    170s  bce 0.0560 dice 0.1619 tip 0.0317 total 0.2338
+step  2900    223s  bce 0.0479 dice 0.1512 tip 0.0294 total 0.2137
+step  3000    279s  bce 0.0549 dice 0.1631 tip 0.0300 total 0.2331
+step  3100    336s  bce 0.0533 dice 0.1615 tip 0.0296 total 0.2295
+step  3200    389s  bce 0.0521 dice 0.1591 tip 0.0293 total 0.2258
+step  3300    442s  bce 0.0506 dice 0.1566 tip 0.0299 total 0.2222
+step  3400    494s  bce 0.0506 dice 0.1504 tip 0.0282 total 0.2151
+step  3500    547s  bce 0.0489 dice 0.1520 tip 0.0282 total 0.2150
+step  3600    601s  bce 0.0508 dice 0.1560 tip 0.0298 total 0.2217
+step  3700    655s  bce 0.0505 dice 0.1542 tip 0.0290 total 0.2192
+step  3800    707s  bce 0.0517 dice 0.1566 tip 0.0295 total 0.2231
+step  3900    763s  bce 0.0492 dice 0.1486 tip 0.0286 total 0.2121
+step  4000    818s  bce 0.0501 dice 0.1504 tip 0.0286 total 0.2148
+step  4100    871s  bce 0.0450 dice 0.1378 tip 0.0278 total 0.1967
+step  4200    924s  bce 0.0449 dice 0.1419 tip 0.0282 total 0.2009
+step  4300    977s  bce 0.0465 dice 0.1358 tip 0.0274 total 0.1960
+step  4400   1032s  bce 0.0443 dice 0.1395 tip 0.0282 total 0.1980
+step  4500   1085s  bce 0.0459 dice 0.1415 tip 0.0270 total 0.2009
+step  4600   1139s  bce 0.0447 dice 0.1456 tip 0.0273 total 0.2040
+step  4700   1193s  bce 0.0466 dice 0.1431 tip 0.0275 total 0.2035
+step  4800   1246s  bce 0.0426 dice 0.1373 tip 0.0278 total 0.1938
+step  4900   1298s  bce 0.0423 dice 0.1369 tip 0.0272 total 0.1927
+step  5000   1351s  bce 0.0424 dice 0.1300 tip 0.0275 total 0.1862
+step  5100   1404s  bce 0.0450 dice 0.1366 tip 0.0263 total 0.1947
+step  5200   1456s  bce 0.0386 dice 0.1266 tip 0.0270 total 0.1787
+step  5300   1509s  bce 0.0455 dice 0.1388 tip 0.0282 total 0.1985
+step  5400   1563s  bce 0.0426 dice 0.1338 tip 0.0282 total 0.1905
+step  5500   1617s  bce 0.0418 dice 0.1324 tip 0.0267 total 0.1876
+step  5600   1670s  bce 0.0425 dice 0.1319 tip 0.0271 total 0.1880
+step  5700   1724s  bce 0.0443 dice 0.1368 tip 0.0272 total 0.1947
+step  5800   1777s  bce 0.0444 dice 0.1345 tip 0.0270 total 0.1924
+step  5900   1830s  bce 0.0448 dice 0.1318 tip 0.0279 total 0.1906
+step  6000   1884s  bce 0.0389 dice 0.1296 tip 0.0270 total 0.1819
+saved /tmp/claude-0/-home-user-TubeTracker/21fce780-cdc3-5467-a04a-73e34cbe3068/scratchpad/agents/faintdata/models/unet_fd_scratch.pt (1884 s)
+final (eval mode, first 256 samples) train_v5faint_s50      bce 0.0087 dice 0.3172 tip 0.0112 total 0.3315
+final (eval mode, first 256 samples) train_v5faint_s51      bce 0.0109 dice 0.1735 tip 0.0131 total 0.1910
+final (eval mode, first 256 samples) train_v5faint_s52      bce 0.0062 dice 0.2309 tip 0.0173 total 0.2457
+final (eval mode, first 256 samples) train_v5faint_s53      bce 0.0054 dice 0.3268 tip 0.0131 total 0.3388
+final (eval mode, first 256 samples) train_v5mid_s54        bce 0.0063 dice 0.3171 tip 0.0159 total 0.3313
+final (eval mode, first 256 samples) train_v5mid_s55        bce 0.0066 dice 0.1049 tip 0.0116 total 0.1173
+final (eval mode, first 256 samples) train_v2_s0            bce 0.0123 dice 0.2565 tip 0.0132 total 0.2754
+final (eval mode, first 256 samples) train_v2_s1            bce 0.0035 dice 0.1887 tip 0.0097 total 0.1970
+final (eval mode, first 256 samples) train_v3_s0            bce 0.0031 dice 0.1876 tip 0.0103 total 0.1958
+final (eval mode, first 256 samples) train_v3_s2            bce 0.0047 dice 0.2452 tip 0.0112 total 0.2554
+final (eval mode, first 256 samples) train_v5_s0            bce 0.0073 dice 0.2155 tip 0.0107 total 0.2281
+final (eval mode, first 256 samples) train_v5_s1            bce 0.0054 dice 0.3101 tip 0.0117 total 0.3214
+final (eval mode, first 256 samples) train_v5_s10           bce 0.0086 dice 0.2916 tip 0.0145 total 0.3075
+final (eval mode, first 256 samples) train_v5_s11           bce 0.0039 dice 0.1056 tip 0.0094 total 0.1142
+final (eval mode, first 256 samples) train_v5_s2            bce 0.0150 dice 0.1984 tip 0.0114 total 0.2191
+final (eval mode, first 256 samples) train_v5_s9            bce 0.0084 dice 0.1626 tip 0.0139 total 0.1779
+TRAIN_EXIT 0

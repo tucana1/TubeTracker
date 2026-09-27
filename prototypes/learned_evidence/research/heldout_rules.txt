@@ -94,3 +94,15 @@ Adopted as the default only if ALL hold, on the fresh held-out set (one look per
   3. the real-movie audit (judged before the look) shows no more gross breaks than gross fixes;
   4. analysis time on a laptop at most doubles (G's cost is counted).
 Otherwise an option at most, with the numbers stated. A candidate is chosen on development only.
+
+----
+Round 5 outcome (27 Sep). No candidate was frozen; the sealed held-out set (v5 s40-44, v5faint s40, v5thick s40,
+v5w s40) stays unopened for the next frozen candidate. Development numbers against the default (fused v2+B3,
+continuity), orig truth:
+  G. Test-time augmentation (agent tta): every recipe within about +-2 pt on thin and faint lengths, intervals spanning
+     0; rule 1 fails for all (pooled lower bound -1.6 to -2.1 pt); v2-only recipes also fail rule 2 (thick, wide); every
+     recipe breaks more real grains than it fixes (rule 3); 4 and 8 transforms cost 1.7-4.2x (rule 4).
+  H. Faint and intermediate synthetic movies in training (agent faintdata; seeds 50-55): faint +7.5 to +8.3 pt (interval
+     above 0) but thin -2.5 pt (interval below 0), thin onsets -3.4 to -4.9 pt, wide about -3.5 pt; pooled about 0, so
+     rule 1 fails; real movie 2 fixes against 4-6 breaks (new early onsets from rim blobs), rule 3 fails.
+Reports, code and scores: research/round5/.

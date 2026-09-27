@@ -93,6 +93,9 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
      in-sample.
    - Held-out synthetic movies: thin tubes unhurt (+2 lengths, 95% CI −12 to +18, of 1014).
    - Your dev test scores the old reading beside it, so `ld_v1` confirms or overturns it.
+10. **Round 5 found no label-free way to see faint tubes better (section 7.9).** Averaging the networks over flipped
+    copies changed nothing. Training on faint synthetic tubes gained 8 points on faint tubes, but lost thin tubes and
+    real onsets to rim blobs. Telling a growing tube from a static blob needs time, or your labels.
 
 **This week:**
 1. Finish the movie-2 labels (about an hour, section 3.5).
@@ -1366,8 +1369,38 @@ rule written before any result (rule F).
 - **On synthetic thick and wide movies the original scoring is mixed** (−2 and −7). Only the human-style scoring
   shows gains there.
 
-**What round 4 leaves:** the label-free search is used up. The next gain needs your labels: first the dev test on
-`ld_v1`, which tells whether fusion holds on your footage; then movie 2, once.
+**What round 4 leaves:** the label-free search on the real movie's look is used up. The next gain needs your labels:
+first the dev test on `ld_v1`, which tells whether fusion holds on your footage; then movie 2, once.
+
+### 7.9 Round 5 (27 Sep): faint tubes without labels, nothing adopted
+
+Faint tubes are the weakest regime that matters to you: about 54% of lengths in tolerance on the development movies,
+against 72% for thin tubes. Two agents tried label-free ways to see them better. The rules were written first
+(`research/heldout_rules.txt`, G and H), and a fresh sealed held-out set was set aside. Neither candidate got as far
+as a look at it.
+
+**Test-time augmentation: no gain.** The networks read flipped and rotated copies of each bin, and the maps were
+averaged.
+- Every recipe moved thin and faint lengths by at most about 2 points, and every interval spanned zero.
+- Every recipe broke more real grains than it fixed.
+- Four or eight copies cost 1.7–4.2 times the analysis time.
+- 19–27% of faint tube cores lie below the threshold in every orientation, so no average can bring them back.
+
+**Faint synthetic tubes in training: a trade, not a gain.** The network was retrained with six more movies of faint
+and middling contrast.
+- Faint lengths rose 7.5–8.3 points, with the interval above zero.
+- Thin lengths fell 2.5 points (interval below zero), thin onsets fell 3–5 points, and wide lengths fell about 3.5.
+- On the real movie it broke more grains than it fixed, mostly with new early onsets.
+- The retrained network marks small dark blobs at grain rims as tube. A particle that docks on a rim becomes an
+  early onset.
+
+**What it shows:**
+- In a single bin, a faint young tube and a dark blob at a rim look alike. Round 3's networks were taught that rim
+  blobs are not tubes, and lost faint tubes; round 5's were taught more faint tubes, and found rim blobs.
+- What tells the two apart is time: a tube grows out from the rim, and a blob does not.
+- So the next gain on faint tubes is likely to come from evidence or decoding that uses growth across bins, or from
+  your own labels (fine-tuning on real faint tubes, `finetune.py`, is already a step of Adapt).
+- The reports, code, scores and the best retrained network are in `prototypes/learned_evidence/research/round5/`.
 
 ---
 

@@ -1,0 +1,47 @@
+faintdata, round 5 -- intermediate results (development numbers only)
+
+Training data: v2's 10 shards (SCR/le/shards/train_{v5_s0,s1,s2,s9,s10,s11, v2_s0,s1, v3_s0,s2}.npz)
+ + 6 new (gen.py; preset v5 on runs/sparsetrack/sample_movie/cache; 25 frames/bin; data.build defaults):
+   v5faint s50 s51 s52 s53 (amplitude 0.35-0.7), v5mid s54 s55 (amplitude 0.5-1.0); records.jsonl. 17,920 samples.
+M1 fds  : from scratch, train.py recipe 6000 steps lr 2e-3 (steps 1-250 at 2 threads, then 1 thread; resumed at 250, 2500)
+M2 fdft : continued from v2, 2000 steps, OneCycle peak 5e-4, 1 thread. sha1 229526a9..., fingerprint 3470de057bd045a5.
+          shard check (P>0.5, first 256 samples/shard): faint recall 0.40-0.69 -> 0.55-0.75; precision on v2's shards
+          0.82-0.92 -> 0.72-0.87 (more liberal).
+
+M2 first look (orig, lengths within tol; default -> fdft):
+  faint s30 91 -> 104, s31 118 -> 113; thin s3 123 -> 116, s4 169 -> 162, s5 152 -> 144 (thin losses = more
+  over-reads: blurred tips of normal-amplitude tubes now read as tube; faint gains = fewer under-reads).
+  Failure seen: docked particle at a rim (v5s3 s002, dock frame 1466) marked as tube -> early onset 1487 and the
+  fit collapsed to 2 px (a rim blob nearer the centre steals the reading's seed).
+
+M2 fdft first look (orig, paired 95%): thin s3-6 -13 [-40,+12]/793 = -1.6 pt; onsets +2 [-3,+7]/89
+  faint +8 [-28,+39]/385 = +2.1 pt; onsets +2; pooled -5 [-49,+37]/1178 = -0.4 pt.  thick s30 51 -> 47.
+  real audit: fix-only 1 (g001 end), break-only 1 (g031 onset early), 5 'short' (b64 23 -> 19 within 25%).
+M1 fds sha1 de7e7e2c..., fingerprint 96799d79e2dee936. first look (orig):
+  thin s3-6 -35 [-60,-12]/793 = -4.4 pt [-7.6,-1.5]; onsets -8 [-16,+0]/89 = -9.0 pt
+  faint +29 [+8,+52]/385 = +7.5 pt [+2.1,+13.5]; onsets +4 [+1,+8]/44; pooled -6 [-40,+29]/1178 = -0.5 pt
+  human_t2: thin -14 [-27,-2]/282; faint +8 [-5,+20]/137; thin onsets -7 [-15,+1].
+  thin losses: over-reads (long errors up) and early onsets (s3: 0 -> 4 early; rim blobs before emergence,
+  one a docked particle).
+M1c fdsc: M1 with body logit -0.696 (calib.py: matches v2's P>0.5 pixel count on v2's 10 shards; M1 marked 4.6% more
+  there; threshold P 0.667 in M1's terms).
+M1c fdsc first look (orig): thin -29 [-54,-6]/793 = -3.7 pt [-6.8,-0.8]; onsets -5 [-12,+2]/89 = -5.6 pt
+  faint +32 [+13,+54]/385 = +8.3 pt [+3.4,+14.0]; onsets +3 [+0,+7]/44; pooled +3 [-30,+37]/1178 = +0.3 pt [-2.5,+3.1]
+  human_t2: thin -12 [-26,+2]/282; faint +15 [+6,+24]/137; pooled +3 [-14,+20]/419; thin onsets -1 [-8,+6].
+  thin losses are in young tubes (true length < 20 px): 0-5 px 91 -> 80 ok (M1), long 17 -> 31; >= 20 px unchanged.
+  -> remaining 10 movies + real for M1c (best pooled on the first look).
+
+FULL development, all 15 movies, orig (paired 95%):
+M1 fds : thin -45 [-86,-5]/1807 = -2.5 pt [-4.8,-0.3], onsets -10 [-19,-1]/203 = -4.9 pt; faint +29 [+8,+52]/385 = +7.5 pt,
+         onsets +4 [+1,+8]/44; pooled -16 [-63,+33]/2192 = -0.7 pt [-2.9,+1.5]; thick -1 [-24,+19]/419 = -0.2 pt;
+         wide -17 [-37,+5]/445 = -3.8 pt [-8.3,+1.1]. human_t2: thin -19 [-39,0]/642, onsets -13 [-27,0]; faint +8 [-5,+20]/137;
+         pooled -11 [-34,+12]/779; thick 0 [-9,+9]/147; wide -5 [-14,+3]/159.
+         real: fix-only 2 (g001 end, g022 onset), break-only 6 (g007/g008/g033 onset early, g012 b64 tubeless, g016 onset
+         late, g031 b64 foreign), 6 short; marks onsets 29->26, b64 23->19, end 20->17 /34; early onsets 4->6.
+M1c fdsc: thin -45 [-85,-5]/1807 = -2.5 pt [-4.7,-0.3], onsets -7 [-16,+2] = -3.4 pt; faint +32 [+13,+54] = +8.3 pt,
+         onsets +3 [0,+7]; pooled -13 [-59,+34]/2192 = -0.6 pt [-2.7,+1.6]; thick +7 [-7,+22]/419 = +1.7 pt;
+         wide -15 [-32,+2]/445 = -3.4 pt [-7.2,+0.4]. human_t2: thin -14 [-34,+6]; faint +15 [+6,+24]; pooled +1 [-21,+23];
+         thick 0 [-9,+9]; wide -2 [-10,+6].
+         real: fix-only 2 (g001 end, g022 onset), break-only 4 (g007/g008/g033 onset early, g031 b64 foreign), 6 short;
+         marks onsets 29->27, b64 23->18, end 20->19; early onsets 4->6.
+Verdict: none to freeze.
