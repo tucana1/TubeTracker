@@ -102,8 +102,9 @@ Also tried in this round, not kept:
   sure than synthetic ones, so small synthetic gains need the human check).
 - Scored with the tip check (length and tip both right; 0.5.3 hybrid: m2 18/54), tighter flood
   settings to stop it jumping onto a touching tube: bridge 2 px (m2 -3), bridge 3 px (+0, lengths
-  -2), a 6-bin tip window (-3). The jumps need another idea (direction of growth at the tip) or
-  better maps.
+  -2), a 6-bin tip window (-3), and a heading rule (a new piece must lie within 60 or 90 degrees
+  of the tip's recent heading: -3 and +0 on movie 2, -2 and -1 on the dev movie). Tips wobble
+  too much in 300-frame bins for direction to separate a jump from growth; better maps it is.
 
 SparseTrack 0.5.1 also sends grains whose background change lifts the map threshold above
 its floor to the flood, keeping their change-reader onset: m2 23/54 (+14 vs 0.4.3, 95% CI +5 to
