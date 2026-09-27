@@ -90,7 +90,16 @@ Also tried in this round, not kept:
   hybrid, movie 2 fell from 23 to 14 of 54 (95% CI -16 to -2). More synthetic data is only
   better if it keeps tube widths honest: the 1-1.6x wider tubes probably taught over-painting.
 - Onset look-back (after the flood, walk the onset back while P at the tube's exit stays
-  above a lower threshold): 0.25 gave ld +2 onsets and m2 -1; 0.35 gave m2 -1. Not adopted.
+  above a lower threshold): 0.25 gave ld +2 onsets and m2 -1; 0.35 gave m2 -1. On the held-out
+  synthetic movie (v5m2 seed 20, exact truth) 0.25 took flood onsets 21 -> 26/42 (late 13 -> 6),
+  so it was adopted in 0.5.3.
+- On that synthetic movie the flood's weakest classes all over-read: fat stubs 0/84 (+12 px),
+  docked particles 22/82 (+11), curls 32/145 (+7). Tried against them, not kept (synthetic
+  lengths, flood 323/629): a tip that stops after 40 bins without growth (323); rejecting pieces
+  over 60 px (325); measuring to the centreline end, farthest pixel minus the local half-width
+  (293: it fixes stubs but under-reads the thinner tubes); counting P >= 0.6 as tube instead of
+  0.5 (synthetic 330, but movie 2 in the hybrid 23 -> 19/54, 95% CI -8 to -1: real maps are less
+  sure than synthetic ones, so small synthetic gains need the human check).
 
 SparseTrack 0.5.1 also sends grains whose background change lifts the map threshold above
 its floor to the flood, keeping their change-reader onset: m2 23/54 (+14 vs 0.4.3, 95% CI +5 to
