@@ -52,9 +52,12 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
   |change| combined with the change projected on the tube's own end-state cross-section.
 - **Onset.** Onset is called by a matched stub filter at the exit (end-state exit and
   rotation track), with hysteresis.
-- **Crowded grains** (reader `hybrid`, the default). Where a grain's change region
-  touches a neighbour, change evidence picks up foreign tubes, so that grain is read
-  instead from learned tube probabilities (`sparsetrack/learned.py`): a small U-Net
+- **Crowded or noisy grains** (reader `hybrid`, the default). Where a grain's change
+  region touches a neighbour, change evidence picks up foreign tubes; where the background
+  change is noisy enough to lift the tube-map threshold above its floor, it picks up bands
+  and blobs. Such grains are read instead from learned tube probabilities
+  (`sparsetrack/learned.py`; a grain that is only noisy keeps the change reader's
+  germination call and onset, taken at its clean rim): a small U-Net
   trained only on codec-exact synthetic movies of the two benchmark fields, read by an
   arrival flood in which the tube claims only material that arrives at its own tip.
   The first run on a movie writes its probability movie next to the cache (uint8, about

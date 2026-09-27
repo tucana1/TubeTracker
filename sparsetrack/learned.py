@@ -14,8 +14,10 @@ pixel claimed by then.
 
 On the human benchmarks (27 Sep 2026) the flood beat the change reader on crowded movie 2
 (22 vs 9 of 54 FULL traces in tolerance, paired +13, 95% CI +4 to +23) and lost on the sparse
-dev movie (39 vs 61 of 104). ``Params.reader = "hybrid"`` uses it only for grains whose change
-region touches a neighbour: dev movie 61/104 (unchanged), movie 2 19/54.
+dev movie (38 vs 61 of 104). ``Params.reader = "hybrid"`` uses it only for grains whose change
+region touches a neighbour or whose background change lifts the map threshold above its
+floor (keeping the change reader's onset for the latter): dev movie 61/104 (unchanged),
+movie 2 23/54 (paired +14, 95% CI +5 to +23), onsets 13/26 and 6/19.
 
 Needs torch (``pip install .[cnn]``) to build a probability movie; reading one does not.
 """
@@ -294,3 +296,18 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     pts = np.array([[x, y] for y, x in route], float) if len(route) > 1 else None
     res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), tube, pts, None, None, centre)
     return res
+
+
+def with_onset(flood_res: dict, change_res: dict) -> dict:
+    """The flood's lengths under the change reader's germination call and onset."""
+    out = dict(flood_res)
+    out.update(status=change_res["status"], onset_frame=change_res.get("onset_frame"),
+               onset_interval=change_res.get("onset_interval"), flags=flood_res["flags"] + ["onset:change"])
+    frames, px = flood_res["length"]["frames"], list(flood_res["length"]["px"])
+    if change_res["status"] == "no_emergence_by_end":
+        px = [0.0] * len(px)
+    elif change_res.get("onset_frame") is not None:
+        px = [v if f >= change_res["onset_frame"] else 0.0 for f, v in zip(frames, px)]
+    out["length"] = {"frames": frames, "px": px}
+    out["final_length_px"] = round(float(px[-1]), 2) if px else 0.0
+    return out

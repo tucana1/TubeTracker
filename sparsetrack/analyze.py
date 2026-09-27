@@ -1077,10 +1077,16 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             continue
         others = [o for o in physical if o["id"] != g["id"]]
         res = analyze_grain(renderer, meta, g, others, p) if p.reader != "flood" else None
-        if p.reader == "flood" or (p.reader == "hybrid" and any(
-                f.startswith(("touches:", "shared_change_split")) for f in res["flags"])):
+        crowded = res is not None and any(f.startswith(("touches:", "shared_change_split")) for f in res["flags"])
+        noisy = res is not None and res.get("map_threshold", 0.0) > p.map_floor  # background change above the floor
+        if p.reader == "flood" or (p.reader == "hybrid" and (crowded or noisy)):
             from . import learned
-            res = learned.read_grain(renderer, prob, meta, g, others, p)
+            fl = learned.read_grain(renderer, prob, meta, g, others, p)
+            if res is not None and not crowded:
+                # a clean rim still gives the better onset: keep the change reader's germination call,
+                # and the flood's lengths from that onset on
+                fl = learned.with_onset(fl, res)
+            res = fl
         cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)
         results.append(res)
