@@ -6,7 +6,7 @@ const S = {
   step: "coarse", fineStart: 0, fv: null, la: null, coarseTile: null, consulted: new Set(),
   contrast: "n", traceIdx: 0, pts: [], traceView: "near", overlay: true, marker: true,
   contact: false, smooth: 0, fieldWhich: "early",
-  timers: {}, openedAt: Date.now(), retest: null, retestIdx: 0, lretest: null, lretestIdx: 0,
+  timers: {}, openedAt: Date.now(), retest: null, retestIdx: 0, lretest: null, lretestIdx: 0, peek: 0,
 };
 const EMERGED = ["emerged_within", "emerged_at_start"];
 const VERDICT_TEXT = {
@@ -450,12 +450,13 @@ function renderTrace() {
   $("#chips").onclick = (e) => { const s = e.target.closest("span"); if (s) { S.traceIdx = +s.dataset.i; loadTrace(); render(); } };
   wireTraceControls(saveTrace);
 }
-function mountTraceCanvas(b) {  // bin b in the current view; clicks add points in movie coordinates
+function mountTraceCanvas(b, clickable = true) {  // bin b in the current view; clicks add points in movie coordinates
   const V = S.st.layout.trace[S.traceView], [cx, cy] = viewCentre(V);
   const cv = $("#tc"), img = new Image();
   img.onload = () => { S._img = img; drawTrace(); };
   img.src = `/api/img/frame/${S.gid}?bin=${b}&view=${S.traceView}&contrast=${S.contrast}&smooth=${S.smooth}&cx=${cx}&cy=${cy}`;
   cv.onclick = (e) => {
+    if (!clickable) { flash("Viewing another time: go back to the trace frame to click.", true); return; }
     const x = cx - V.half + e.offsetX / V.zoom, y = cy - V.half + e.offsetY / V.zoom;
     S.pts.push([x, y]); drawTrace(); updateCount();
   };
@@ -595,14 +596,22 @@ async function renderLengthRetest() {
   const item = S.lretest[S.lretestIdx];
   if (S.lretestKey !== `${item.grain}:${item.bin}`) return openLengthRetest();
   const V = S.st.layout.trace[S.traceView], size = Math.round(2 * V.half * V.zoom);
+  const last = S.st.n_bins - 2, shown = Math.min(Math.max(item.bin + S.peek, 0), last);
+  const frameOf = (bb) => bb * S.st.frames_per_bin + S.st.frames_per_bin / 2;
   help(`Length retest: trace this tube again, from scratch, exactly as you would the first time: its exit from
     the centre grain first, then along the centreline to the apex. Your earlier trace is hidden on purpose.
-    <kbd>F</kbd> full tube · <kbd>P</kbd> partial · <kbd>0</kbd> no tube · <kbd>U</kbd> unsure ·
-    <kbd>⌫</kbd> undo point · <kbd>T</kbd> touching · <kbd>W</kbd> wide/near ·
+    <kbd>[</kbd>/<kbd>]</kbd> look 10 bins earlier/later (view only) · <kbd>F</kbd> full tube · <kbd>P</kbd> partial ·
+    <kbd>0</kbd> no tube · <kbd>U</kbd> unsure · <kbd>⌫</kbd> undo point · <kbd>T</kbd> touching · <kbd>W</kbd> wide/near ·
     ${S.st.layout.trace.far ? "<kbd>X</kbd> extra wide · " : ""}<kbd>H</kbd> hide marks · <kbd>C</kbd> contrast ·
     <kbd>A</kbd> smoother.`);
+  const peeking = shown !== item.bin;
   $("#content").innerHTML = `<div class="row"><div class="wrap"><canvas id="tc" width="${size}" height="${size}"></canvas></div>
-    <div class="side"><h3>Length retest ${S.lretestIdx + 1} of ${S.lretest.length} · frame ${item.bin * S.st.frames_per_bin + S.st.frames_per_bin / 2}</h3>
+    <div class="side"><h3>Length retest ${S.lretestIdx + 1} of ${S.lretest.length} · trace frame ${frameOf(item.bin)}</h3>
+    ${peeking ? `<p class="error">Viewing frame ${frameOf(shown)} (${shown > item.bin ? "later" : "earlier"}): look only.
+      Trace at frame ${frameOf(item.bin)}.</p>` : ""}
+    <button class="act" id="pE">◀ [ earlier</button><button class="act" id="pL">later ] ▶</button>
+    <button class="act" id="pZ">end of movie</button>
+    ${peeking ? `<button class="act primary" id="pB">back to the trace frame</button>` : ""}<br>
     <p>${S.pts.length} point(s), ${traceLen().toFixed(1)} px </p>
     <button class="act primary" id="sF">F · full tube</button><button class="act" id="sP">P · partial</button><br>
     <button class="act" id="s0">0 · no tube</button><button class="act" id="sU">U · unsure</button><br>
@@ -613,8 +622,17 @@ async function renderLengthRetest() {
     <button class="act ${S.contrast === "h" ? "on" : ""}" id="tC">C · high contrast</button>
     <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button></div></div>`;
   S._img = null;
-  mountTraceCanvas(item.bin);
+  mountTraceCanvas(shown, !peeking);
   wireTraceControls(saveRetestTrace);
+  $("#pE").onclick = () => peek(-10);
+  $("#pL").onclick = () => peek(+10);
+  $("#pZ").onclick = () => { S.peek = last - item.bin; render(); };
+  if ($("#pB")) $("#pB").onclick = () => { S.peek = 0; render(); };
+}
+function peek(d) {  // look at the grain earlier or later without leaving the retest item
+  const item = S.lretest[S.lretestIdx];
+  S.peek = Math.min(Math.max(item.bin + S.peek + d, 0), S.st.n_bins - 2) - item.bin;
+  render();
 }
 function openLengthRetest() {
   S.view = "lretest";
@@ -622,7 +640,7 @@ function openLengthRetest() {
     if (S.gid) S.timers[S.gid] = spent();
     const item = S.lretest[S.lretestIdx];
     S.gid = item.grain; S.openedAt = Date.now(); S.lretestKey = `${item.grain}:${item.bin}`;
-    S.pts = []; S.contact = false;  // blind: nothing of the earlier trace is loaded
+    S.pts = []; S.contact = false; S.peek = 0;  // blind: nothing of the earlier trace is loaded
   }
   render();
 }
@@ -652,6 +670,8 @@ document.addEventListener("keydown", (e) => {
     if (k === "Backspace") { e.preventDefault(); S.pts.pop(); drawTrace(); return updateCount(); }
     if (k === "t") { S.contact = !S.contact; return render(); }
     if (!lr && k === "b" && canBurst()) return saveTrace("burst");
+    if (lr && k === "[") return peek(-10);
+    if (lr && k === "]") return peek(+10);
     if (k === "w") return toggleWide();
     if (k === "x") return toggleFar();
     if (k === "h") { S.overlay = !S.overlay; return drawTrace(); }
