@@ -36,7 +36,7 @@ Run each module from the repository root with `.venv/bin/python -m prototypes.le
 | Module | What it does |
 |---|---|
 | `common` | Movie names, groups, the seal, paths. |
-| `regen` | Rebuilds the data in a new container: `regen movies`, `regen maps`, `regen baselines`. That is hours of CPU and about 0.5 GB per prepared movie. |
+| `regen` | Rebuilds the data in a new container, in this order: `regen field` (the real sample movie's cache, the synthetic movies' field), `regen movies`, `regen maps`, `regen baselines`. That is hours of CPU and about 0.5 GB per prepared movie. |
 | `sparse` | Networks' probability maps stored sparse (P < 0.001 dropped, the rest exact): `sparse MODEL MOVIE ...`. |
 | `decode` | Fuses a base map with B3's and decodes with the repository's `reach.analyze` plus continuity, exactly as `pipeline.py` does: `decode TAG BASE THICK MOVIE,...`. The current default is `decode default v2 B3 ...`. |
 | `score` | `score BASE_TAG NEW_TAG`: every group, orig and human_t2, paired intervals, and round 5's rule preview. |

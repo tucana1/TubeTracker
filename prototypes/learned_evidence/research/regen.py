@@ -1,9 +1,7 @@
 """Regenerate the research data in a new container (hours of CPU; about 0.5 GB of disk per prepared movie).
 
-First prepare the real sample movie, which is also the synthetic movies' field, as Analyze_Movie_Learned.command does:
-``python -m sparsetrack prepare sample_movie.avi --out runs/sparsetrack/sample_movie/cache`` (or open the movie once
-with that launcher). Then:
-
+    python -m prototypes.learned_evidence.research.regen field               prepare the real sample movie (in git),
+                                                                            which is also the synthetic movies' field
     python -m prototypes.learned_evidence.research.regen movies [MOVIE ...]   render and prepare (default: every
                                                                             development movie, common.DEV)
     python -m prototypes.learned_evidence.research.regen maps [MODEL ...]     sparse maps (default v2 and B3) on every
@@ -22,7 +20,18 @@ import io
 import sys
 import time
 
-from .common import DEV, FIELD, SYNTH, config, image_cache, parse, sparse_path
+from .common import DEV, FIELD, REPO, SYNTH, config, image_cache, parse, sparse_path
+
+
+def field() -> None:
+    """The real sample movie's cache as Analyze_Movie_Learned.command prepared it (1 frame per bin, 3 reference bins
+    from the start)."""
+    from sparsetrack import stack
+    from sparsetrack.cli import auto_frames_per_bin, write_census
+    if not (FIELD / "grains.json").exists():
+        movie = REPO / "sample_movie.avi"
+        stack.prepare(movie, FIELD, frames_per_bin=auto_frames_per_bin(movie), ref_bins=3, ref_start=0)
+        write_census(FIELD, 3, False)
 
 
 def render(movie: str, sealed: bool = False) -> None:
@@ -30,7 +39,7 @@ def render(movie: str, sealed: bool = False) -> None:
     from sparsetrack.cli import write_census
     from sparsetrack.synth import make_movie
     if not (FIELD / "meta.json").exists():
-        raise SystemExit(f"no prepared field at {FIELD}: prepare sample_movie.avi first (see this module's docstring)")
+        raise SystemExit(f"no prepared field at {FIELD}: run `regen field` first")
     kind, seed = parse(movie)
     name = f"synth_{kind}_s{seed}"
     SYNTH.mkdir(parents=True, exist_ok=True)
@@ -47,7 +56,9 @@ def main(argv=None) -> None:
     argv = sys.argv[1:] if argv is None else argv
     what, rest = argv[0], argv[1:]
     t0 = time.time()
-    if what == "movies":
+    if what == "field":
+        field()
+    elif what == "movies":
         for mv in rest or DEV:
             render(mv)
             print(f"MOVIE_DONE {mv} ({time.time() - t0:.0f} s)", flush=True)
