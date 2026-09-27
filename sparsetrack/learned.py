@@ -201,7 +201,11 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
     dist = np.full(arr.shape, np.inf)
     length = np.zeros(n)
     emerge = None
+    grew = None  # last bin at which the tube claimed anything
     for b in range(n):
+        if emerge is not None and b - grew > give_up and not (tube & (rg > gr + min_len)).any():
+            tube[:], t_in[:], dist[:], emerge = False, -1, np.inf, None  # stopped short: rim noise, start again
+            length[:b] = 0.0                                               # ...and forget its lengths
         new = (arr == b) & ~blocked
         if new.any():
             nl, lab = cv2.connectedComponents(new.astype(np.uint8), connectivity=8)
@@ -222,7 +226,7 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
                     dist[c & start] = rg[c & start] - gr    # lengths count from the rim, gap included
                     _extend_dist(dist, c, c & start, 1)
                 if tube.any():
-                    emerge = b
+                    emerge = grew = b
             else:
                 tip = tube & (t_in >= t_in.max() - recent)
                 seeds = cv2.dilate(tip.astype(np.uint8), ker).astype(bool)
@@ -232,8 +236,7 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
                         _extend_dist(dist, c, tip, bridge)
                         tube |= c
                         t_in[c] = b
-                if b - emerge > give_up and not (tube & (rg > gr + min_len)).any():
-                    tube[:], t_in[:], dist[:], emerge = False, -1, np.inf, None  # rim noise: start again
+                        grew = b
         fin = tube & np.isfinite(dist)
         length[b] = float(dist[fin].max()) if fin.any() else 0.0
     return {"tube": tube, "t_in": t_in, "dist": dist, "emerge": emerge, "length": np.maximum.accumulate(length)}

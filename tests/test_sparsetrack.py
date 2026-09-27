@@ -514,3 +514,28 @@ def test_flood_follows_its_own_tip_not_an_older_crossing_tube():
     assert abs(fl["length"][25] - 24.0) <= 2.5               # 20 bins after emergence: ~24 px from the rim
     assert not fl["tube"][20:40, 95:98].any()                # the crossing tube is never claimed
     assert fl["length"][-1] >= 40                            # but the tube is followed past it
+
+
+def test_flood_forgets_a_false_start():
+    from sparsetrack.learned import flood
+    size, c, gr = 131, 65.0, 10.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
+    arr = np.full((size, size), 120)
+    arr[64:67, 78:81] = 3                                    # a 3-px stub at bin 3 that never grows
+    for k, x in enumerate(range(int(c - gr - 4), int(c - gr - 34), -1)):  # the real tube, other side, from bin 60
+        arr[64:67, x] = 60 + k
+    fl = flood(arr, rg, ang, np.zeros((size, size), bool), gr)
+    assert fl["emerge"] == 60 and fl["length"][:60].max() == 0.0 and fl["length"][-1] > 20
+
+
+def test_flood_keeps_a_slow_start():
+    from sparsetrack.learned import flood
+    size, c, gr = 131, 65.0, 10.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
+    arr = np.full((size, size), 200)
+    for k, x in enumerate(range(int(c + gr + 3), int(c + gr + 33))):  # one px every 5 bins: 8 px only after 40
+        arr[64:67, x] = 5 + 5 * k
+    fl = flood(arr, rg, ang, np.zeros((size, size), bool), gr)
+    assert fl["emerge"] == 5 and fl["length"][-1] > 25
