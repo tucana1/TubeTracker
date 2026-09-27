@@ -56,6 +56,22 @@ def test_a_cache_from_before_fingerprints_is_built_again(image_cache, tmp_path):
     assert any("another model" in n for n in notes) and "model_sha1" in json.loads((out / "meta.json").read_text())
 
 
+def test_a_cache_of_another_preparation_of_the_movie_is_built_again(image_cache, tmp_path):
+    out, notes = tmp_path / "prob", []
+    net = _net(0)
+    evaluate.prob_cache(image_cache, net, out, log=notes.append)
+    meta = json.loads((image_cache / "meta.json").read_text())
+    (image_cache / "meta.json").write_text(json.dumps({**meta, "created": "2026-09-28T10:00:00"}))  # prepared again
+    notes.clear()
+    evaluate.prob_cache(image_cache, net, out, log=notes.append)
+    assert any("another preparation" in n for n in notes)
+    assert json.loads((out / "meta.json").read_text())["created"] == "2026-09-28T10:00:00"
+    notes.clear()
+    evaluate.prob_cache(image_cache, net, out, log=notes.append)  # now it is this preparation's
+    assert not notes
+    assert evaluate.find_cache(net, [out], image_cache) == out
+
+
 def test_e2e_summary_counts_a_grain_left_unanalysed_apart_from_false_positives():
     from prototypes.learned_evidence.evaluate import e2e_summary
     rep = {"onset": {"hits": 1, "n_human_emerged_within": 1, "median_abs_error": 0.0},

@@ -150,6 +150,12 @@ def test_evidence_takes_the_dev_tests_thick_cache_when_that_network_built_it(tmp
     monkeypatch.setattr(evaluate, "fingerprint", lambda net: "another")  # the dev test's was another network's
     fuse.evidence(b, tmp_path / "field", tmp_path / "work", "thick.pt", tag="_x", reuse=[dev], **quiet)
     assert built == [tmp_path / "work" / "prob_thick"]
+    built.clear()  # the same network, but the dev test's cache is of another preparation of the movie
+    monkeypatch.setattr(evaluate, "fingerprint", lambda net: "thick")
+    (tmp_path / "field").mkdir()
+    (tmp_path / "field" / "meta.json").write_text(json.dumps({"n_bins": 2, "created": "2026-09-28T10:00:00"}))
+    fuse.evidence(b, tmp_path / "field", tmp_path / "work2", "thick.pt", tag="_x", reuse=[dev], **quiet)
+    assert built == [tmp_path / "work2" / "prob_thick"]
 
 
 def test_readings_are_recorded_and_records_from_before_mean_the_models_own_evidence_without_continuity():

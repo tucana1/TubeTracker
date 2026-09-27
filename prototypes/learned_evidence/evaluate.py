@@ -60,17 +60,28 @@ def fingerprint(net) -> str:
     return h.hexdigest()[:16]
 
 
+def same_movie(meta: dict, image_cache: str | Path | None) -> bool:
+    """Whether a probability cache's meta (copied from its image cache) comes from this preparation of the movie, as
+    far as the image cache's own metadata tells."""
+    path = Path(image_cache) / "meta.json" if image_cache is not None else None
+    want = json.loads(path.read_text()) if path is not None and path.exists() else {}
+    return all(meta.get(k) == want[k] for k in ("n_bins", "frames_per_bin", "created", "movie") if k in want)
+
+
 def prob_cache(image_cache: str | Path, net, out_cache: str | Path, log=print) -> Path:
     """A SparseTrack cache whose "bins" are the network's tube probability x SCALE_P, in
     reference coordinates (shifts zero); census and meta copied from the image cache. An existing
-    one is used again only if this network built it (a movie analysed again after the model has
-    changed, fine-tuned say, gets the new model's evidence)."""
+    one is used again only if this network built it from this preparation of the movie (a movie
+    analysed again after the model has changed, fine-tuned say, gets the new model's evidence).
+    ``meta.json`` is written last: a stopped build does not look finished."""
     out_cache = Path(out_cache)
     model_sha1 = fingerprint(net)
     if (out_cache / "meta.json").exists():
-        if json.loads((out_cache / "meta.json").read_text()).get("model_sha1") == model_sha1:
+        old = json.loads((out_cache / "meta.json").read_text())
+        if old.get("model_sha1") == model_sha1 and same_movie(old, image_cache):
             return out_cache
-        log(f"probability cache {out_cache.name} holds another model's evidence: building it again")
+        log(f"probability cache {out_cache.name} holds another model's evidence or another preparation of the movie: "
+            "building it again")
         (out_cache / "meta.json").unlink()  # a stopped rebuild must not look finished
     out_cache.mkdir(parents=True, exist_ok=True)
     bins, meta = stack.load(image_cache)
@@ -87,8 +98,8 @@ def prob_cache(image_cache: str | Path, net, out_cache: str | Path, log=print) -
     del out
     m = {**meta, "shifts": [[0.0, 0.0]] * nb, "raw_shifts": [[0.0, 0.0]] * nb,
          "evidence": f"learned tube probability x {SCALE_P} (from {image_cache})", "model_sha1": model_sha1}
-    (out_cache / "meta.json").write_text(json.dumps(m, indent=1))
     shutil.copy(Path(image_cache) / "grains.json", out_cache / "grains.json")
+    (out_cache / "meta.json").write_text(json.dumps(m, indent=1))
     log(f"probability cache {out_cache.name}: {nb} bins in {time.time() - started:.0f} s")
     return out_cache
 
@@ -97,14 +108,12 @@ def find_cache(net, candidates, field: Path | None = None) -> Path | None:
     """A probability cache this network built already for this movie (the dev test's, calibration's or
     fine-tuning's): the same model, and the same prepared movie as far as the field's own metadata tells."""
     fp = fingerprint(net)
-    want = json.loads((field / "meta.json").read_text()) if field is not None and (field / "meta.json").exists() else {}
     for c in candidates:
         meta = Path(c) / "meta.json"
         if not meta.exists():
             continue
         m = json.loads(meta.read_text())
-        if m.get("model_sha1") == fp and all(m.get(k) == want[k] for k in ("n_bins", "frames_per_bin", "created", "movie")
-                                             if k in want):
+        if m.get("model_sha1") == fp and same_movie(m, field):
             return Path(c)
     return None
 

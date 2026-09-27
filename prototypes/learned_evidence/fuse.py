@@ -90,8 +90,8 @@ def fused_cache(base_cache: str | Path, thick_cache: str | Path, out_cache: str 
     del out
     meta = {k: v for k, v in mb.items() if k != "model_sha1"}
     meta.update(evidence=f"fused: {mb.get('evidence', base_cache)}; wide structures from {thick_cache}", fusion=record)
-    (out_cache / "meta.json").write_text(json.dumps(meta, indent=1))
     shutil.copy(base_cache / "grains.json", out_cache / "grains.json")
+    (out_cache / "meta.json").write_text(json.dumps(meta, indent=1))  # last: a stopped build does not look finished
     log(f"fused cache {out_cache.name}: {pb.shape[0]} bins in {time.time() - started:.0f} s")
     return out_cache
 

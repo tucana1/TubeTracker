@@ -6,7 +6,8 @@
 # cross-validated check adopted it (runs/learned_evidence/ld_ft/unet_ft.pt), else trained on your dev
 # movie's field (runs/learned_evidence/ld/unet.pt), else the one shipped in prototypes/learned_evidence/models/.
 # The per-bin decoder's end offset: as calibrated on your dev movie's traces when that was adopted
-# (runs/learned_evidence/ld_cal/decoder.json), else the default.
+# (runs/learned_evidence/ld_cal/decoder.json), else the default. The reading: fused evidence with continuity, unless
+# adapting chose the plain one (runs/learned_evidence/reading.json).
 cd "$(dirname "$0")" || exit 1
 ONLY_PERBIN=0  # 1: only the per-bin decoder (about twice as fast), once the dev test has shown it is the one to use
 MOVIE=$(osascript -e 'POSIX path of (choose file with prompt "Choose a pollen movie to analyse")' 2>/dev/null)
@@ -28,6 +29,8 @@ MODEL="runs/learned_evidence/ld_ft/unet_ft.pt"
 [ -f "$MODEL" ] || MODEL="prototypes/learned_evidence/models/unet_v2_sample_field.pt"
 DECODER=()
 [ -f "runs/learned_evidence/ld_cal/decoder.json" ] && DECODER=(--decoder "runs/learned_evidence/ld_cal/decoder.json")
+# the reading Adapt_Learned_To_Dev_Movie.command chose for your dev movie: plain if your labels found the fused one worse
+grep -q '"reading": "plain"' runs/learned_evidence/reading.json 2>/dev/null && DECODER+=(--no-thick-model --no-continuity)
 [ "$ONLY_PERBIN" = 1 ] && DECODER+=(--only-perbin)
 echo "Analysing with $MODEL ${DECODER[*]} (about 15-25 minutes on a laptop)..."
 .venv/bin/python -m prototypes.learned_evidence.pipeline --field "$CACHE" --work "runs/learned_evidence/$NAME" \

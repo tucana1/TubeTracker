@@ -132,3 +132,28 @@ def test_a_branch_leaving_a_stopped_tube_before_its_apex_is_not_read():
     RP, RI, meta, g = mv = _movie(T=75, own_max=70.0, foreign=55.0, t_foreign=60, f_half=25.0)
     off, on = _read(mv)
     assert max(on["length"]["px"][60:]) <= 72.0 < max(off["length"]["px"][60:])
+
+
+def test_review_pictures_draw_what_was_measured_not_the_foreign_tube_left_out():
+    RP, RI, meta, g = _movie(foreign=12.0, t_foreign=40)
+    keep = (30, 45, 55)
+    on = R.reach_grain(RP, RI, meta, g, [], half=80, vmax=4.0, continuity="path", keep=keep)
+    off = R.reach_grain(RP, RI, meta, g, [], half=80, vmax=4.0, keep=keep)
+    assert set(keep[1:]) <= set(on["continuity"]["reread_bins"])
+    for i in keep[1:]:
+        _, region, axis = on["_views"][i]
+        ys, _ = np.nonzero(region)
+        assert ys.max() - ys.min() + 1 <= 8  # the grain's own tube (3 px wide), not the 120 px foreign one
+        assert abs(int(axis.sum()) - on["raw_reach_px"][i]) <= 6  # the drawn path is the one measured
+        _, region_off, _ = off["_views"][i]
+        ys, _ = np.nonzero(region_off)
+        assert ys.max() - ys.min() + 1 >= 100  # without continuity the foreign tube is read, and drawn
+    assert np.array_equal(on["_views"][30][1], off["_views"][30][1])  # before it joins: the same picture
+
+
+def test_a_held_bin_draws_nothing():
+    region = np.zeros((20, 20), bool)
+    region[9:12, 2:18] = True
+    assert R.drawn_path(region, None) == (None, None)
+    drawn, axis = R.drawn_path(region, np.array([[2.0, 10.0], [17.0, 10.0]]))
+    assert axis.sum() == 16 and (drawn == region).all()

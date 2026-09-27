@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import time
 from pathlib import Path
 
@@ -67,6 +68,8 @@ def main(argv=None):
                     help="read the model's own evidence")
     ap.add_argument("--no-continuity", dest="continuity", action="store_false",
                     help="per-bin decoder: without tip-growth continuity")
+    ap.add_argument("--keep-caches", action="store_true",
+                    help="keep the probability caches it builds in --work (by default removed after the runs)")
     args = ap.parse_args(argv)
     field, labels_path, work = Path(args.field), Path(args.labels), Path(args.work)
     if "m2" in labels_path.name:
@@ -90,18 +93,23 @@ def main(argv=None):
                                                 "model": str(model), "decoder": str(decoder), "reading": read}))
     started = time.time()
     net = load_model(str(model))
-    pcache = (find_cache(net, [DEV / f"prob_{field.name}", CAL / "prob", *sorted(FT.glob("prob_*"))], field)
-              or evaluate.prob_cache(field, net, work / f"prob_{field.name}"))
-    vmax = speed_cap(pcache, field, labels_path)  # on the model's own evidence, as the pipeline sets it
-    ecache = fuse.evidence(pcache, field, work, args.thick_model, tag=f"_{field.name}",
-                           reuse=[DEV / f"prob_thick_{field.name}", CAL / "prob_thick", FT / "prob_thick"])
-    kw = dict(big=300, burst=True, vmax=vmax) | calibrate.decoder_settings(decoder, model, reading=read)
-    kw |= {"continuity": "path"} if args.continuity else {}
-    pp = prefix.Params(vmax_px=vmax, onset_px=kw.get("onset_px", prefix.Params.onset_px))
-    quiet = dict(grains_path=labels_path, log=lambda *a: None)
-    runs = {"per-bin": reach.analyze(ecache, field, **quiet, **kw),
-            "prefix": prefix.analyze(ecache, field, **quiet, params=pp),
-            "anchored": prefix.analyze(ecache, field, **quiet, params=pp, anchors=anchors)}
+    try:  # the caches it builds itself (the dev test's are taken when they fit) are removed after the runs
+        pcache = (find_cache(net, [DEV / f"prob_{field.name}", CAL / "prob", *sorted(FT.glob("prob_*"))], field)
+                  or evaluate.prob_cache(field, net, work / f"prob_{field.name}"))
+        vmax = speed_cap(pcache, field, labels_path)  # on the model's own evidence, as the pipeline sets it
+        ecache = fuse.evidence(pcache, field, work, args.thick_model, tag=f"_{field.name}",
+                               reuse=[DEV / f"prob_thick_{field.name}", CAL / "prob_thick", FT / "prob_thick"])
+        kw = dict(big=300, burst=True, vmax=vmax) | calibrate.decoder_settings(decoder, model, reading=read)
+        kw |= {"continuity": "path"} if args.continuity else {}
+        pp = prefix.Params(vmax_px=vmax, onset_px=kw.get("onset_px", prefix.Params.onset_px))
+        quiet = dict(grains_path=labels_path, log=lambda *a: None)
+        runs = {"per-bin": reach.analyze(ecache, field, **quiet, **kw),
+                "prefix": prefix.analyze(ecache, field, **quiet, params=pp),
+                "anchored": prefix.analyze(ecache, field, **quiet, params=pp, anchors=anchors)}
+    finally:
+        if not args.keep_caches:
+            for c in (f"prob_{field.name}", "prob_thick", f"prob_fused_{field.name}"):
+                shutil.rmtree(work / c, ignore_errors=True)
     for name, pred in runs.items():
         (work / f"{name}.json").write_text(json.dumps(pred))
     test = leave_anchor_out(labels, anchors)

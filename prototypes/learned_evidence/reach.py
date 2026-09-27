@@ -595,6 +595,21 @@ def fill_small_holes(region: np.ndarray, max_r: float = 4.0) -> np.ndarray:
     return region | np.isin(lab, fill) if len(fill) else region
 
 
+def drawn_path(region: np.ndarray, path: np.ndarray | None) -> tuple[np.ndarray | None, np.ndarray | None]:
+    """What a review picture draws for a bin that continuity re-read or held: the path it measured along ((x, y) crop
+    pixels) and the part of the region within the tube's half-width of it, so a foreign tube the reading left out is
+    not outlined; a held bin (``path`` None) draws nothing."""
+    if path is None or len(path) < 2:
+        return None, None
+    axis = np.zeros(region.shape, np.uint8)
+    cv2.polylines(axis, [np.round(np.asarray(path, float)).astype(np.int32).reshape(-1, 1, 2)], False, 1, 1)
+    axis = axis.astype(bool)
+    on = cv2.distanceTransform(region.astype(np.uint8), cv2.DIST_L2, 3)[axis & region]
+    half = float(np.percentile(on, 90)) if len(on) else 2.0
+    near = cv2.distanceTransform((~axis).astype(np.uint8), cv2.DIST_L2, 3) <= half + 1.0
+    return region & near, axis
+
+
 class TipContinuity:
     """Tip growth for one grain's per-bin readings (``reach_grain(continuity="path")``): a reading longer than the
     tube's accepted path stands only if it continues that path at the tip; otherwise the bin is read along the path.
@@ -1118,6 +1133,8 @@ def reach_grain(RP: Renderer, R_img: Renderer, meta: dict, grain: dict, others: 
         width[i] = float(region.sum()) / max(float(cum[far]) + 1.0, 1.0)
         if cont is not None and not absent[i]:  # tip growth: a reading that jumps off the tube's path is re-read
             raw[i], cpath = cont.read(i, comp, region, end, raw[i], route)
+            if i in views and cpath is not route:  # the picture shows what was measured, not the region left out
+                views[i][1], views[i][2] = drawn_path(region, cpath)
             if i in routes and cpath is None:  # held: the farthest point's path is not the grain's
                 del routes[i]
             elif i in routes and cpath is not route:  # its exit: where the path itself leaves the rim

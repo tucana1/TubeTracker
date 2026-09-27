@@ -1,18 +1,23 @@
 """Adapt the learned pipeline to your dev movie in one go: the dev test, then calibration, then fine-tuning.
 
 1. ``pipeline.py`` with the dev labels: trains the model on the dev movie's field (``--quick``: the shipped
-   model instead) and scores its runs on the labels (the per-bin decoder also on the model's evidence alone).
+   model instead) and scores its runs on the labels. The per-bin decoder is also scored as it read movies before
+   27 Sep 2026, and the summary says whether your labels find the reading in use worse.
 2. ``calibrate.py``: fits the per-bin decoder's end offset on the same traces; kept only if its check adopts it.
 3. ``finetune.py``: tunes the network on the traces, judged with the decoder it will be used with; kept only
    if its check adopts it.
 4. ``trace_once.py``: with the model and decoder now in use, how well one traced tube per grain gives the rest of
    your traces (the prefix decoder anchored on your latest trace), against the per-bin decoder.
 
+Every step reads the movie one way, ``--reading fused`` (the default since 27 Sep 2026: the model's evidence
+fused with the thick-tube network's, with tip-growth continuity) or ``--reading plain`` (the model's evidence
+alone, without continuity, as before). The choice is kept in ``runs/learned_evidence/reading.json``: later runs,
+``Analyze_Movie_Learned.command`` and the movie-2 command in ``SUMMARY.md`` follow it until another is given.
+
 Each step is skipped when its report is already there, so the command can be stopped and started again;
-a step that ran on labels since changed, or read the movie as the launcher did before 27 Sep 2026 (the
-model's evidence alone, without continuity), is said so. ``--redo`` runs every step again on the current labels
-(calibration's and fine-tuning's earlier outputs are moved aside to ``*_old``); the dev test keeps the model
-it trained, the longest part, and is only scored again. ``SUMMARY.md`` then says what each step found, which
+a step that ran on labels since changed, or read the movie otherwise than the reading in use, is said so.
+``--redo`` runs every step again on the current labels (calibration's and fine-tuning's earlier outputs are
+moved aside to ``*_old``); the dev test keeps the model it trained, the longest part, and is only scored again. ``SUMMARY.md`` then says what each step found, which
 model and decoder the launcher (``Analyze_Movie_Learned.command``) now uses, and the one command that
 scores movie 2, once.
 
@@ -30,6 +35,8 @@ from pathlib import Path
 
 ROOT = Path("runs/learned_evidence")
 DEV, CAL, FT, ONCE = ROOT / "ld", ROOT / "ld_cal", ROOT / "ld_ft", ROOT / "ld_once"
+READING = ROOT / "reading.json"  # the reading every step, the launcher and the movie-2 command use
+FLAGS = {"fused": [], "plain": ["--no-thick-model", "--no-continuity"]}  # for pipeline, calibrate, finetune, trace-once
 
 
 def _here(path: Path) -> Path:
@@ -49,13 +56,48 @@ def in_use() -> tuple[Path, Path | None]:
     return _here(model), (decoder if decoder.exists() else None)
 
 
-def _stale_note(stale, other=()) -> str:
+def reading_in_use() -> str:
+    """The reading the last run chose ("fused" unless ``--reading plain`` was)."""
+    import json
+    try:
+        return json.loads(READING.read_text()).get("reading", "fused")
+    except (OSError, ValueError):
+        return "fused"
+
+
+def _want(reading: str) -> dict:
+    from .fuse import THICK
+    from .fuse import reading as rec
+    return rec(THICK, True) if reading == "fused" else rec(None, False)
+
+
+def _stale_note(stale, other=(), reading: str = "fused") -> str:
+    from .fuse import describe
     notes = ([f"The labels have changed since {' and '.join(stale)} ran"] if stale else []) + (
-        [f"{' and '.join(other)} read the movie as the launcher did before 27 Sep 2026 (the model's evidence alone, "
-         "without continuity)"] if other else [])
+        [f"{' and '.join(other)} read the movie otherwise than now ({describe(_want(reading))})"] if other else [])
     if not notes:
         return ""
-    return f"\n**{'. '.join(notes)}: run this again with `--redo` for results on the current labels and decoder.**\n"
+    return (f"\n**{'. '.join(notes)}: run this again with `--redo` for results on the current labels and "
+            "reading.**\n")
+
+
+def _plain_verdict(reading: str) -> str:
+    """What the dev test's labels say about the fused reading against the plain one (``pipeline.py``'s paired
+    comparison). The fused reading stays unless the labels find it clearly worse: a 95% interval below zero for
+    lengths or for onsets."""
+    import json
+    path = DEV / "scores.json"
+    if reading != "fused" or not path.exists():
+        return ""
+    p = json.loads(path.read_text()).get("paired_perbin_plain")
+    if not p:
+        return ""
+    txt = (f"lengths {p['length_diff']:+.0f} [{p['length_ci'][0]:+.0f}, {p['length_ci'][1]:+.0f}], onsets "
+           f"{p['onset_diff']:+.0f} [{p['onset_ci'][0]:+.0f}, {p['onset_ci'][1]:+.0f}] over {p['grains']} grains")
+    if p["length_ci"][1] < 0 or p["onset_ci"][1] < 0:
+        return (f"\n**Your labels find the fused reading worse than the plain one ({txt}). Switch back with "
+                "`--reading plain --redo`; the Adapt launcher offers it.**\n")
+    return f"\nOn your labels the fused reading is not clearly worse than the plain one ({txt}), so it stays.\n"
 
 
 def _read_before(name: str, work: Path) -> dict | None:
@@ -78,20 +120,20 @@ def _read_before(name: str, work: Path) -> dict | None:
     return None
 
 
-def _read_otherwise(name: str, work: Path) -> bool:
-    """Whether a finished step read the movie otherwise than the steps do now (fused evidence, continuity)."""
-    from .fuse import DEFAULT, same_reading
+def _read_otherwise(name: str, work: Path, want: dict) -> bool:
+    """Whether a finished step read the movie otherwise than ``want`` (``fuse.reading``)."""
+    from .fuse import same_reading
     before = _read_before(name, work)
-    return before is not None and not same_reading(before, DEFAULT)
+    return before is not None and not same_reading(before, want)
 
 
 def _report(path: Path) -> str:
     return path.read_text().strip() if path.exists() else "(not run)"
 
 
-def _checked_other(work: Path) -> bool:
-    """Whether step 4 ran for another model or decoder than the ones in use now, or read the movie otherwise
-    (``trace_once.py`` records them)."""
+def _checked_other(work: Path, want: dict) -> bool:
+    """Whether step 4 ran for another model or decoder than the ones in use now, or read the movie otherwise than
+    ``want`` (``trace_once.py`` records them)."""
     used = work / "used.json"
     if not used.exists():
         return False
@@ -99,14 +141,17 @@ def _checked_other(work: Path) -> bool:
     rec = json.loads(used.read_text())
     model, decoder = in_use()
     return ((rec.get("in_use_model"), rec.get("in_use_decoder")) != (str(model), str(decoder))
-            or _read_otherwise("once", work))
+            or _read_otherwise("once", work, want))
 
 
-def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None = None, other: tuple = ()) -> str:
+def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None = None, other: tuple = (),
+            reading: str = "fused") -> str:
+    from .fuse import describe
     model, decoder = in_use()
     m2 = (f".venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \\\n"
           f"    --labels benchmark/labels/m2_v1.json --model {model} \\\n"
           + (f"    --decoder {decoder} \\\n" if decoder else "")
+          + (f"    {' '.join(FLAGS[reading])} \\\n" if FLAGS[reading] else "")
           + "    --work runs/learned_evidence/m2 --prefix --heldout-once")
     cal = ("adopted: `" + str(CAL / "decoder.json") + "`" if (CAL / "decoder.json").exists()
            else "not adopted: the default end offset stays" if (CAL / "report.txt").exists() else "not run")
@@ -115,13 +160,13 @@ def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None
     return f"""# Learned pipeline adapted to {labels.name}
 
 Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
-{_stale_note(stale, other)}
+{_stale_note(stale, other, reading)}
 ## 1. Dev test: the runs scored on your labels
 
 ```
 {_report(DEV / "report.txt")}
 ```
-
+{_plain_verdict(reading)}
 ## 2. Decoder calibration: {cal}
 
 ```
@@ -144,13 +189,14 @@ Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
 
 - Model: `{model}`
 - Per-bin decoder: {"`" + str(decoder) + "`" if decoder else "default settings"}
-- `Analyze_Movie_Learned.command` picks both up by itself.
+- Reading: {reading} ({describe(_want(reading))}), kept in `{READING}`
+- `Analyze_Movie_Learned.command` picks all three up by itself.
 - A fine-tuned model belongs to the imaging conditions of the movie it was tuned on.
 
 ## Movie 2, once, when its labels are in
 
-This scores the model and decoder above on movie 2. Run it once. Changing either afterwards and scoring again
-would turn movie 2 into a development set. The per-bin decoder is the one this summary recommends; the prefix
+This scores the model, decoder and reading above on movie 2. Run it once. Changing any of them afterwards and
+scoring again would turn movie 2 into a development set. The per-bin decoder is the one this summary recommends; the prefix
 decoder is scored alongside it in the same run, to tell whether its synthetic lead carries over to a real movie,
 not to pick between the two afterwards.
 
@@ -171,6 +217,11 @@ def main(argv=None, steps=None):
     ap.add_argument("--redo", action="store_true", help="run every step again on the current labels (calibration's "
                                                         "and fine-tuning's earlier outputs are moved aside to *_old); "
                                                         "the dev test keeps its trained model and is scored again")
+    ap.add_argument("--reading", choices=tuple(FLAGS), default=None,
+                    help="how every step reads the movie: fused (the default since 27 Sep 2026: the model's evidence "
+                         "fused with the thick-tube network's, with tip-growth continuity) or plain (the model's "
+                         "evidence alone, without continuity); kept for later runs and the launcher (default: the "
+                         "one kept, else fused)")
     args = ap.parse_args(argv)
     field, labels = Path(args.field), Path(args.labels)
     if "m2" in labels.name:
@@ -185,6 +236,11 @@ def main(argv=None, steps=None):
         steps = {"dev": pipeline.main, "calibrate": calibrate.main, "finetune": finetune.main, "once": trace_once.main}
     from .finetune import SHIPPED
     started = time.time()
+    import json
+    reading = args.reading or reading_in_use()
+    want, flags = _want(reading), FLAGS[reading]
+    ROOT.mkdir(parents=True, exist_ok=True)
+    READING.write_text(json.dumps({"reading": reading, **want}))  # first: a stopped run leaves the choice in force
     if args.redo:
         for d in (CAL, FT, ONCE):
             if d.exists():
@@ -195,28 +251,37 @@ def main(argv=None, steps=None):
             os.replace(DEV / "report.txt", DEV / "report_old.txt")
     stamp = hashlib.sha1(labels.read_bytes()).hexdigest()
     stale, other = [], []
-    plan = [("dev", DEV, ["--field", str(field), "--labels", str(labels), "--work", str(DEV)]
-             + (["--model", str(SHIPPED)] if args.quick else [])),
-            ("calibrate", CAL, ["--field", str(field), "--labels", str(labels), "--work", str(CAL)])]
+    common = ["--field", str(field), "--labels", str(labels)]
+    plan = [("dev", DEV, common + ["--work", str(DEV)] + (["--model", str(SHIPPED)] if args.quick else []) + flags),
+            ("calibrate", CAL, common + ["--work", str(CAL)] + flags)]
     if not args.skip_finetune:
-        plan.append(("finetune", FT, ["--field", str(field), "--labels", str(labels), "--work", str(FT)]))
+        plan.append(("finetune", FT, common + ["--work", str(FT)] + flags))
     if not args.skip_trace_once:  # with the model and decoder the steps before leave in use
-        plan.append(("once", ONCE, ["--field", str(field), "--labels", str(labels), "--work", str(ONCE)]))
+        plan.append(("once", ONCE, common + ["--work", str(ONCE)] + flags))
     failed = {}
+
+    def flag(name: str, work: Path) -> None:  # a finished step on other labels or another reading
+        seen = work / "labels.sha1"
+        changed = seen.exists() and seen.read_text().strip() != stamp
+        otherwise = _read_otherwise(name, work, want)
+        stale.extend([name] if changed else [])
+        other.extend([name] if otherwise else [])
+        print(f"== {name}: done before ({work / 'report.txt'}), skipped"
+              + ("; the labels have changed since" if changed else "")
+              + ("; it read the movie otherwise than now" if otherwise else ""), flush=True)
+
     for name, work, cmd in plan:
-        if name == "once" and (work / "report.txt").exists() and _checked_other(work):
+        if name == "once" and (work / "report.txt").exists() and _checked_other(work, want):
+            if stale or other:  # the steps before run again first (--redo): running this now would be wasted
+                print("== once: done before for another model, decoder or reading, skipped until those are redone",
+                      flush=True)
+                other.append(name)
+                continue
             os.replace(work / "report.txt", work / "report_old.txt")
             print("== once: the model, decoder or reading in use has changed since it ran: running it again",
                   flush=True)
         if (work / "report.txt").exists():
-            seen = work / "labels.sha1"
-            changed = seen.exists() and seen.read_text().strip() != stamp
-            otherwise = _read_otherwise(name, work)
-            stale += [name] if changed else []
-            other += [name] if otherwise else []
-            print(f"== {name}: done before ({work / 'report.txt'}), skipped"
-                  + ("; the labels have changed since" if changed else "")
-                  + ("; it read the movie as the launcher did before 27 Sep 2026" if otherwise else ""), flush=True)
+            flag(name, work)
             continue
         print(f"== {name}: {' '.join(cmd)}", flush=True)
         try:
@@ -229,14 +294,14 @@ def main(argv=None, steps=None):
             continue
         work.mkdir(parents=True, exist_ok=True)
         (work / "labels.sha1").write_text(stamp + "\n")  # the labels this step's results are on
-    ROOT.mkdir(parents=True, exist_ok=True)
+    if args.skip_finetune and (FT / "report.txt").exists():  # skipped, but a model it adopted is still in use
+        flag("finetune", FT)
     out = ROOT / "SUMMARY.md"
-    out.write_text(summary(labels, time.time() - started, tuple(stale), failed, tuple(other)))
+    out.write_text(summary(labels, time.time() - started, tuple(stale), failed, tuple(other), reading))
     if stale:
         print(f"== the labels have changed since {' and '.join(stale)} ran: run again with --redo", flush=True)
     if other:
-        print(f"== {' and '.join(other)} read the movie as the launcher did before 27 Sep 2026: run again with --redo",
-              flush=True)
+        print(f"== {' and '.join(other)} read the movie otherwise than now: run again with --redo", flush=True)
     print(f"== summary: {out}")
     return out
 

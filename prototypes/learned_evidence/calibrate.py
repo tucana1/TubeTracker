@@ -84,7 +84,8 @@ def decoder_settings(path: str | Path | None, model: str | Path | None = None, l
         from .fuse import describe, same_reading
         if not same_reading(doc, reading):
             log(f"note: {path} was fitted on {describe(doc)}, and this reads {describe(reading)} "
-                "(adapt.py --redo fits it again)")
+                f"(adapt.py --redo --reading {'fused' if reading.get('thick_model') else 'plain'} fits it again "
+                "for this reading)")
     return {"end_px": float(doc["end_px"]), **({"onset_px": float(doc["onset_px"])} if "onset_px" in doc else {})}
 
 
@@ -322,6 +323,8 @@ def main(argv=None):
         doc["picked_end_px"], doc["picked_onset_px"] = end, onset
     out = work / ("decoder.json" if check["adopted"] or adopt_onset else "decoder_not_adopted.json")
     out.write_text(json.dumps(doc, indent=1))
+    other = work / ("decoder_not_adopted.json" if out.name == "decoder.json" else "decoder.json")
+    other.unlink(missing_ok=True)  # an earlier run's verdict must not stay in use beside this one
     (work / "report.txt").write_text("\n".join(lines) + "\n")  # last: adapt.py takes it to mean the step is done
     print(f"wrote {out}")
 

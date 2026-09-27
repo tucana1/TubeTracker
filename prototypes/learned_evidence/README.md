@@ -41,8 +41,10 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
      leave those out too.
    - If you analyse the movie again later (after adapting to your dev movie, say), the launcher offers to start a
      new review of the new analysis, and keeps the earlier review whole in a folder beside it.
-   - Each analysed movie keeps its probability cache (`prob_cache/`, about 0.5 GB) for the review. Once the review
-     is pre-filled, it can be deleted; re-running the analysis rebuilds it, and so does analysing with another model.
+   - Each analysed movie keeps three probability caches, about 0.5 GB each: the model's (`prob_cache/`), the
+     thick-tube network's (`prob_thick_cache/`) and the fused one the per-bin decoder read (`prob_fused_cache/`),
+     which the review uses. Once the review is pre-filled, all three can be deleted; re-running the analysis
+     rebuilds them.
 
 For physical units, run the pipeline command below with `--um-per-px` and `--s-per-frame`.
 
@@ -51,7 +53,9 @@ time; it can be stopped and started again). It runs the dev test on your labels,
 fine-tunes the network on your traces, keeping each only if its check says so. Last, it checks how well one traced
 tube per grain gives the rest of your traces ("trace once", below). `runs/learned_evidence/SUMMARY.md` then
 says what each step found and what the launcher above uses from now on. If you change the labels later, double-click
-it again: it offers to run every step again on them (about an hour; the model trained on your field is kept).
+it again: it offers to run every step again on them (about an hour; the model trained on your field is kept). If
+your labels find the way of reading movies adopted on 27 Sep (fused evidence with continuity) worse than the one
+before, it offers to switch back; the choice is kept, and the launcher above follows it.
 
 **This is a prototype.** Its accuracy has been measured only on synthetic movies. Your dev benchmark (`ld_v1`,
 appendix B of the assessment) is the real test. Until it is done, trust the numbers only for grains whose card looks

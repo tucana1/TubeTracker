@@ -17,8 +17,9 @@ The per-bin decoder (and the prefix decoder) read the model's evidence fused wit
 network's where that marks tubes too wide to be thin (``fuse.py``; the shipped network by default,
 ``--thick-model`` another, ``--no-thick-model`` none), and keep a tube's reading on its accepted path
 (tip-growth continuity; ``--no-continuity`` drops it). Both became the default on 27 Sep 2026, after
-the held-out synthetic look; with labels, the same decoder is also scored on the model's own evidence
-without continuity, so a movie's own traces can overturn that. The SparseTrack runs keep the model's own.
+the held-out synthetic look; with labels, the same decoder is also scored as it read movies before (the
+model's own evidence, without continuity), so the dev movie's traces can overturn that (not with
+``--heldout-once``: the held-out movie scores the frozen reading alone). The SparseTrack runs keep the model's own.
 """
 
 from __future__ import annotations
@@ -225,8 +226,10 @@ def main(argv=None):
     labels = load(labels_path)
     rp = score(labels, perbin)
     tol = rp["onset"]["tolerance_frames"]
-    plain = None  # on labels, the same decoder on the model's own evidence and without continuity, for comparison
-    if args.thick_model or args.continuity:
+    # on labels, the same decoder as it read movies before 27 Sep (the model's own evidence, no continuity), so the
+    # dev movie's traces can overturn the default; not on the held-out movie, which scores the frozen reading alone
+    plain, what = None, " and ".join(w for w, on in (("fusion", args.thick_model), ("continuity", args.continuity)) if on)
+    if what and not args.heldout_once:
         pkw = {k: v for k, v in kw.items() if k != "continuity"}
         plain = score(labels, reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, **pkw))
 
@@ -238,8 +241,8 @@ def main(argv=None):
     extra, scores = [], {"perbin": rp}
     if plain is not None:
         po = evaluate.paired_bootstrap(rp, plain, tol)
-        extra = [evaluate.e2e_summary("per-bin, model's evidence only", plain),
-                 diff("per-bin - per-bin on the model's evidence only (fusion, continuity)", po)]
+        extra = [evaluate.e2e_summary("per-bin, as before 27 Sep", plain),
+                 diff(f"per-bin - per-bin as before 27 Sep (without {what})", po)]
         scores.update(perbin_plain=plain, paired_perbin_plain=po)
     if "prefix" in runs:
         rq = score(labels, runs["prefix"])

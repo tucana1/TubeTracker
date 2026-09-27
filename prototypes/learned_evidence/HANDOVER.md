@@ -58,15 +58,17 @@ is done:
 3. fine-tuning;
 4. trace-once.
 
-If it says the labels have changed, or that a step read the movie as the launcher did before 27 Sep 2026, run it
-again with `--redo`.
+If it says the labels have changed, or that a step read the movie otherwise than now, run it again with `--redo`
+(the launcher offers this).
 
 ### 3. Read `runs/learned_evidence/SUMMARY.md`
 
-- **Section 1, the dev test.** Find the line
-  `per-bin - per-bin on the model's evidence only (fusion, continuity) over N grains: ... lengths D [lo, hi]`.
-  - If the whole interval lies below zero (`hi < 0`), the default reading does not hold on this footage. Then use
-    `--no-thick-model --no-continuity` for movie 2.
+- **Section 1, the dev test.** Under the report, one line says whether your labels find the default reading (fused
+  evidence with continuity) worse than the reading from before 27 Sep. The rule: worse means a 95% interval below
+  zero for lengths or for onsets.
+  - If it says **worse**, switch back: `python -m prototypes.learned_evidence.adapt --reading plain --redo` (the Adapt
+    launcher offers this). Every step then reads the old way, and the choice is kept for later runs, the Analyze
+    launcher and the movie-2 command.
   - Otherwise keep the default.
   - Decide this now, on the dev movie.
 - **Sections 2 and 3.** They say whether calibration (`ld_cal/decoder.json`) and fine-tuning (`ld_ft/unet_ft.pt`)
@@ -79,14 +81,15 @@ Write `runs/learned_evidence/FROZEN.md` with:
 - the commit (`git rev-parse HEAD`);
 - the model file and its `shasum`;
 - the decoder file (or "none") and its `shasum`;
-- the flags: the default, or `--no-thick-model --no-continuity`;
+- the reading (`runs/learned_evidence/reading.json`: fused or plain);
 - the date.
 
 ### 5. Score movie 2, once
 
 1. First SparseTrack, 0.4.0 and 0.4.3, as appendix C of the assessment says.
-2. Then the learned pipeline, with the frozen model and decoder: the command under "Movie 2, once" in `SUMMARY.md`,
-   plus the flags from step 3 if any. It looks like this:
+2. Then the learned pipeline, with the frozen model, decoder and reading: the command under "Movie 2, once" in
+   `SUMMARY.md`, as it stands (it carries `--no-thick-model --no-continuity` if the plain reading was chosen). It
+   looks like this:
 
 ```bash
 .venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \

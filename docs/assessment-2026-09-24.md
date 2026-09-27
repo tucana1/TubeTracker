@@ -1347,12 +1347,15 @@ rule written before any result (rule F).
 - `pipeline.py` and the launchers read fused evidence with continuity. `--no-thick-model` and `--no-continuity`
   bring back the old reading.
 - A second network pass per movie: an analysis takes about 15–25 minutes on a laptop instead of 10–20.
-- On your labels the dev test also scores the per-bin decoder on the shipped network alone, without continuity,
-  with the paired difference. **Your footage decides:** if that difference is clearly negative on `ld_v1`, switch
-  fusion off.
-- Calibration, fine-tuning's check and trace-once read the same evidence the launcher uses. Each records how it read
-  the movie. `Adapt_Learned_To_Dev_Movie.command` says when a step ran with the old reading, and offers to run it
-  again.
+- On your labels the dev test also scores the per-bin decoder as it read movies before, with the paired
+  difference. **Your footage decides.** If that difference is clearly negative on `ld_v1` (a 95% interval below
+  zero, for lengths or onsets), `SUMMARY.md` says so, and `Adapt_Learned_To_Dev_Movie.command` offers to switch
+  back (`adapt.py --reading plain --redo`). The choice is kept: calibration, fine-tuning, trace-once,
+  `Analyze_Movie_Learned.command` and the movie-2 command all follow it.
+- Calibration, fine-tuning's check and trace-once read the movie as the launcher does. Each records how it read the
+  movie, and `Adapt_Learned_To_Dev_Movie.command` says when a step read it otherwise, and offers to run it again.
+- With continuity on, the review pictures draw the path that was measured. When continuity leaves a foreign tube out
+  of a reading, the picture leaves it out too.
 
 **Caveats:**
 - **The real-movie gains are in-sample.** The same movie and audit were used during development. The held-out look
@@ -1405,8 +1408,9 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
 - **Or all of this appendix in one go:** double-click `Adapt_Learned_To_Dev_Movie.command` in the worktree (or run
   `python -m prototypes.learned_evidence.adapt --labels ../TubeTracker/benchmark/labels/ld_v1.json`). It runs this test, then the calibration and fine-tuning below, in
   that order. It reads your current labels from the checkout that holds `runs/`, and skips steps already done. If
-  your labels have changed since a step ran, or a step read the movie as the launcher did before 27 Sep, it offers
-  to run every step again (`--redo`; the trained model is kept). It ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and
+  your labels have changed since a step ran, or a step read the movie otherwise, it offers to run every step again
+  (`--redo`; the trained model is kept). If your labels find the reading adopted on 27 Sep worse than the one
+  before, it offers to switch back (`--reading plain`). It ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and
   the movie-2 command.
 - **Checked end to end (25 Sep)** in a scratch copy of the repository, with a synthetic movie as the dev movie. The
   one-command adaptation (`--quick`, 40 min) adopted a calibrated offset and kept the start model after
@@ -1418,8 +1422,9 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
   - learned evidence through the per-bin decoder (decoder v2), with its burst safeguard, reading fused evidence
     with tip-growth continuity (section 7.8).
 
-  A fourth line scores the per-bin decoder on the model's evidence alone, without continuity (the reading before
-  27 Sep), with the paired difference. It tells whether fusion holds on your footage.
+  A fourth line scores the per-bin decoder as it read movies before 27 Sep (the model's evidence alone, without
+  continuity), with the paired difference. It tells whether fusion holds on your footage. The movie-2 run leaves it
+  out: the held-out movie scores the frozen reading alone.
 - **One double-click, any movie:** `Analyze_Movie_Learned.command` prepares a chosen movie, runs all three without
   labels, and opens the review gallery. It uses the model trained on your dev movie once that exists.
 - **Any movie, no labels:** leave out `--labels`. The pipeline then writes all three runs' predictions and a
