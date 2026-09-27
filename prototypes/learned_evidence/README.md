@@ -100,6 +100,10 @@ Also tried in this round, not kept:
   (293: it fixes stubs but under-reads the thinner tubes); counting P >= 0.6 as tube instead of
   0.5 (synthetic 330, but movie 2 in the hybrid 23 -> 19/54, 95% CI -8 to -1: real maps are less
   sure than synthetic ones, so small synthetic gains need the human check).
+- Scored with the tip check (length and tip both right; 0.5.3 hybrid: m2 18/54), tighter flood
+  settings to stop it jumping onto a touching tube: bridge 2 px (m2 -3), bridge 3 px (+0, lengths
+  -2), a 6-bin tip window (-3). The jumps need another idea (direction of growth at the tip) or
+  better maps.
 
 SparseTrack 0.5.1 also sends grains whose background change lifts the map threshold above
 its floor to the flood, keeping their change-reader onset: m2 23/54 (+14 vs 0.4.3, 95% CI +5 to
