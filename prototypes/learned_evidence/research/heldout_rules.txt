@@ -1,0 +1,96 @@
+Round 2: rules for the one held-out look per frozen candidate. Written 2026-09-25 ~22:45 UTC, before any round-2 held-out look.
+
+Held-out synthetic movies: v5 seeds 7, 8, 13, 14, 15 (never trained, tuned or calibrated on). One look per frozen candidate.
+The candidate is frozen first: its model file sha1 and every option are recorded in SCR/heldout_round2/<cand>/frozen.json.
+
+Metric: sparsetrack.evaluate.score(truth, pred, onset_tol=50): length_full within max(2 px, 10%), and onset hits.
+There are two truth documents: the original truth, and the human-style document (redteam rescore.docs_for "human_t2").
+Pairing: paired bootstrap over grains (prototypes/learned_evidence/evaluate.py paired_bootstrap), candidate minus baseline.
+
+A. Evidence-model candidates (e.g. simreal v4). Baseline: the shipped v2 under the SAME decoder, the current per-bin defaults.
+   This is mainly a real-footage fix, so the held-out look is a NON-INFERIORITY check on thin synthetic tubes.
+   Adopt as the default model only if ALL of these hold:
+     1. Held-out length_full point difference >= -1.0 percentage point, and its 95% lower bound >= -3.0 points,
+        on the original truth.
+     2. Held-out onset hits: point difference >= -1.0 point.
+     3. The real-footage audit check, judged BEFORE the held-out look, shows more gross fixes than gross breaks.
+        A gross fix is a tubeless call or a missed thick tube that now matches the audit estimate (±25%).
+        A gross break is a new tubeless call, a new foreign-tube reading, or an onset now more than 6 bins off.
+   Otherwise, ship it as an option only, off by default, with the numbers stated.
+
+B. Label-free per-movie adaptation (e.g. selftrain). The same rules as A, on the same held-out movies. The adaptation
+   runs on each held-out movie's own frames, which is allowed because no labels are used. The baseline is the
+   unadapted model under the same decoder.
+
+C. New decoders or paradigms (birthmap, invrender). Baseline: the per-bin decoder at its current defaults on v2.
+   Adopt as a default only if the held-out length_full improves (95% lower bound > 0) AND the real-footage audit
+   check is no worse. Otherwise it stays a development-test run.
+
+Any rule failing means no adoption, with no second look. A fix after a failed look makes a new frozen version,
+scored once on the same held-out movies, and the report states that it is the second version scored there.
+
+----
+Round 3 (written 2026-09-26 ~20:30 UTC, before any round-3 result or held-out look). Same held-out movies (v5 seeds 7, 8,
+13, 14, 15); one look per frozen candidate; metric and pairing as above.
+
+D. Evidence model "B2" (round-2 model B's data plus synthetic negatives, no sim2real augmentation): rule A unchanged.
+   It must be non-inferior on thin tubes (held-out: lengths point >= -1.0 pt, 95% lower bound >= -3.0 pt; onsets point
+   >= -1.0 pt), and the real-movie audit check (judged before the held-out look) must show more gross fixes than gross
+   breaks against the shipped model under the same decoder. A gross fix is a thick or missed tube now within ±25%, or
+   an onset now within 6 bins. A gross break is an onset now more than 6 bins off, a new tubeless call, or a length
+   that newly runs onto a foreign tube.
+
+E. Per-bin decoder option "continuity" (a grain's region limited by tip growth, against foreign tubes): adopted as a
+   default only if, on the shipped model's evidence:
+     1. held-out lengths point >= -1.0 pt and 95% lower bound >= -3.0 pt, and onsets point >= -1.0 pt;
+     2. the real-movie audit check (judged before the held-out look) shows more gross fixes than gross breaks.
+   Otherwise it ships as an option, off by default, with the numbers stated.
+   If B2 and continuity each pass, the combination gets one further held-out look as its own frozen version.
+
+----
+Round 3 outcome (27 Sep ~00:10 UTC): continuity (fixed version, commit e7d94b4) on the real movie with the shipped model's
+evidence: 1 gross fix (g002 end), 1 gross break (g005 end) -> a tie, not "more fixes" -> E.2 fails -> option, off by
+default; no held-out look spent. B2/B3 (negatives): thin+faint pooled -43 / -42 with 95% CI below 0 on dev, and more
+breaks than fixes on the real movie -> rule D fails; no held-out look.
+
+Round 4 (written 27 Sep ~00:10 UTC, before any fusion result). F. Fused evidence: the shipped model's probability maps
+combined with a thick-tube model's (B3, A or B) by a label-free rule, decoded by the per-bin decoder (current defaults, with
+or without continuity). Adopted as the default only if ALL hold:
+  1. dev (seeds 3-6) and then held-out (7, 8, 13, 14, 15; one look): thin lengths point >= -1.0 pt, lower bound >= -3.0 pt;
+  2. faint s30+s31 lengths point >= -1.0 pt of 385 and lower bound >= -3.0 pt (dev only: no held-out faint movies);
+  3. onsets point >= -1.0 pt (thin, held-out);
+  4. real-movie audit, judged before the held-out look, against the shipped model under the current defaults: more gross
+     fixes than gross breaks.
+Otherwise an option at most.
+
+----
+Round 4 outcome (27 Sep). Frozen candidate (agents/fusion/frozen_candidate.json): fusion rule w3f (thr 0.5, radius 3,
+fill 4, grow 1) of the shipped v2 (fingerprint 700bc853fe451ce2) with B3 (unet_b3_negfaint.pt, sha1 49a20691...,
+fingerprint 546340f7406614ef), per-bin decoder current defaults + continuity="path"; against v2 at the current defaults
+without continuity.
+  1. dev thin: -1 [-14, +13] of 793 = -0.13 pt (lower -1.77 pt) PASS; held-out (one look, heldout_round4/fusion/
+     result.json): +2 [-12, +18] of 1014 = +0.20 pt (lower -1.18 pt) PASS; human_t2 +2 [-6, +10] of 360.
+  2. dev faint: +7 [-9, +29] of 385 = +1.82 pt (lower -2.34 pt) PASS.
+  3. held-out onsets: +0 [+0, +0] PASS (human_t2 -1 [-3, +0] of 114 = -0.88 pt).
+  4. real audit (judged before the look): 8 grains gross fix, 4 gross break (g001, g003, g015, g037), 2 mixed; onsets
+     29 -> 29, b64 17 -> 23, end 15 -> 20 PASS. (Strict view, every foreign over-read a break: 8 fix-only, 7 break-only.)
+Rule F passed -> fused evidence + continuity made the pipeline default (commit ff49fb5); calibrate, finetune's check and
+trace_once read the same way (4ae4fc9). No second look spent. The real gains are in-sample; no held-out movie has thick
+tubes.
+
+----
+Round 5 (written 27 Sep, before any round-5 result). Target: faint and thin tubes (the lab's regime), label-free.
+Held-out retirement: seeds 7, 8, 13, 14, 15 have had four looks (decoder v2, front-end fixes, fusion, and the v2
+replication); they are retired to development. Development thin = v5 seeds 3-8 and 13-15; faint s30, s31; thick s30,
+s31; wide s26, s27. A FRESH held-out set is rendered before any round-5 candidate is frozen and is not opened until
+then: v5 seeds 40-44 (thin), v5faint s40, v5thick s40, v5w s40 (the first held-out movies with faint, thick and wide
+tubes). Baseline for every comparison: the current default (shipped v2 fused with B3, per-bin decoder current defaults,
+continuity="path"), same decoder, paired over grains, 95% bootstrap.
+G. Test-time augmentation of evidence (probabilities averaged over dihedral transforms, for both networks).
+H. A larger evidence network and/or more synthetic training movies (faint, thick, wide presets), as the fusion's base.
+Adopted as the default only if ALL hold, on the fresh held-out set (one look per frozen candidate):
+  1. thin+faint pooled lengths: 95% lower bound > 0 (a clear gain where the lab's movies are);
+  2. thin onsets point >= -1.0 pt; thick and wide lengths point >= -1.0 pt and lower bound >= -3.0 pt;
+  3. the real-movie audit (judged before the look) shows no more gross breaks than gross fixes;
+  4. analysis time on a laptop at most doubles (G's cost is counted).
+Otherwise an option at most, with the numbers stated. A candidate is chosen on development only.
