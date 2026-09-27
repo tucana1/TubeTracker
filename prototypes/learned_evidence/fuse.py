@@ -33,6 +33,7 @@ from .evaluate import SCALE_P
 from .reach import fill_small_holes
 
 RULE = {"thr": 0.5, "radius": 3.0, "fill": 4.0, "grow": 1}
+THICK = Path(__file__).parent / "models" / "unet_thick_b3.pt"  # the shipped thick-tube network (round 3's B3)
 
 
 def disc(r: float) -> np.ndarray:

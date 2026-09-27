@@ -29,7 +29,7 @@ MODEL="runs/learned_evidence/ld_ft/unet_ft.pt"
 DECODER=()
 [ -f "runs/learned_evidence/ld_cal/decoder.json" ] && DECODER=(--decoder "runs/learned_evidence/ld_cal/decoder.json")
 [ "$ONLY_PERBIN" = 1 ] && DECODER+=(--only-perbin)
-echo "Analysing with $MODEL ${DECODER[*]} (about 10-20 minutes on a laptop)..."
+echo "Analysing with $MODEL ${DECODER[*]} (about 15-25 minutes on a laptop)..."
 .venv/bin/python -m prototypes.learned_evidence.pipeline --field "$CACHE" --work "runs/learned_evidence/$NAME" \
     --model "$MODEL" "${DECODER[@]}" || { echo "Analysis failed."; read; exit 1; }
 open "runs/learned_evidence/$NAME/perbin/index.html"

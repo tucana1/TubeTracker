@@ -11,10 +11,14 @@ movie's field only: the held-out movie 2 must never supply training data, and it
 scored once per frozen model (``--heldout-once``). Both SparseTrack runs read a grain again at
 +/-300 px when its path reaches the edge of the +/-150 px crop (``evaluate.adaptive_crop``;
 ``--fixed-crop`` keeps SparseTrack as is). ``--prefix`` adds a run of the prefix decoder
-(``prefix.py``) on the same evidence, scored against the per-bin decoder. ``--thick-model`` fuses a
-thick-tube network's evidence into the model's where it marks tubes too wide to be thin (``fuse.py``):
-the per-bin decoder (and the prefix decoder) then read the fused map; the SparseTrack runs keep the
-model's own.
+(``prefix.py``) on the same evidence, scored against the per-bin decoder.
+
+The per-bin decoder (and the prefix decoder) read the model's evidence fused with a thick-tube
+network's where that marks tubes too wide to be thin (``fuse.py``; the shipped network by default,
+``--thick-model`` another, ``--no-thick-model`` none), and keep a tube's reading on its accepted path
+(tip-growth continuity; ``--no-continuity`` drops it). Both became the default on 27 Sep 2026, after
+the held-out synthetic look; with labels, the same decoder is also scored on the model's own evidence
+without continuity, so a movie's own traces can overturn that. The SparseTrack runs keep the model's own.
 """
 
 from __future__ import annotations
@@ -149,13 +153,18 @@ def main(argv=None):
     ap.add_argument("--prefix", action="store_true",
                     help="also run the prefix decoder (prefix.py: the whole movie as prefixes of the tube's "
                          "end state) and score it against the per-bin decoder; about 1 s per grain")
-    ap.add_argument("--thick-model", default=None,
-                    help="a thick-tube network (e.g. trained on thick, hollow tubes): its tube probability is fused "
-                         "into the model's where it marks structures too wide to be thin (fuse.py), and the per-bin "
-                         "decoder reads the fused map; off by default")
+    ap.add_argument("--thick-model", default=str(fuse.THICK),
+                    help="a thick-tube network: its tube probability is fused into the model's where it marks "
+                         "structures too wide to be thin (fuse.py), and the per-bin decoder reads the fused map "
+                         "(default: the shipped one, models/unet_thick_b3.pt)")
+    ap.add_argument("--no-thick-model", dest="thick_model", action="store_const", const=None,
+                    help="the per-bin decoder reads the model's own evidence (as before 27 Sep 2026)")
     ap.add_argument("--continuity", action="store_true",
                     help="per-bin decoder: tip-growth continuity (reach_grain(continuity='path')): a reading that "
-                         "jumps off the tube's accepted path onto a foreign tube is read along the path; off by default")
+                         "jumps off the tube's accepted path onto a foreign tube is read along the path (default)")
+    ap.add_argument("--no-continuity", dest="continuity", action="store_false",
+                    help="per-bin decoder: without tip-growth continuity (as before 27 Sep 2026)")
+    ap.set_defaults(continuity=True)
     ap.add_argument("--fixed-crop", action="store_true",
                     help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
                          "(by default such grains are read again at +/-300 px, in both runs)")
@@ -215,6 +224,10 @@ def main(argv=None):
     labels = load(labels_path)
     rp = score(labels, perbin)
     tol = rp["onset"]["tolerance_frames"]
+    plain = None  # on labels, the same decoder on the model's own evidence and without continuity, for comparison
+    if args.thick_model or args.continuity:
+        pkw = {k: v for k, v in kw.items() if k != "continuity"}
+        plain = score(labels, reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, **pkw))
 
     def diff(name, p):
         return (f"{name} over {p['grains']} grains: onset {p['onset_diff']:+.0f} "
@@ -222,10 +235,15 @@ def main(argv=None):
                 f"[{p['length_ci'][0]:+.0f}, {p['length_ci'][1]:+.0f}] (95% paired bootstrap over grains)")
 
     extra, scores = [], {"perbin": rp}
+    if plain is not None:
+        po = evaluate.paired_bootstrap(rp, plain, tol)
+        extra = [evaluate.e2e_summary("per-bin, model's evidence only", plain),
+                 diff("per-bin - per-bin on the model's evidence only (fusion, continuity)", po)]
+        scores.update(perbin_plain=plain, paired_perbin_plain=po)
     if "prefix" in runs:
         rq = score(labels, runs["prefix"])
         pq = evaluate.paired_bootstrap(rq, rp, tol)
-        extra = [evaluate.e2e_summary("prefix", rq), diff("prefix - per-bin", pq)]
+        extra += [evaluate.e2e_summary("prefix", rq), diff("prefix - per-bin", pq)]
         scores.update(prefix=rq, paired_prefix_perbin=pq)
     if args.only_perbin:
         lines = [f"{labels_path.name}: {time.time() - started:.0f} s", evaluate.e2e_summary("per-bin", rp), *extra]

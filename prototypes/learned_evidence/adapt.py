@@ -1,7 +1,7 @@
 """Adapt the learned pipeline to your dev movie in one go: the dev test, then calibration, then fine-tuning.
 
 1. ``pipeline.py`` with the dev labels: trains the model on the dev movie's field (``--quick``: the shipped
-   model instead) and scores the three runs on the labels.
+   model instead) and scores its runs on the labels (the per-bin decoder also on the model's evidence alone).
 2. ``calibrate.py``: fits the per-bin decoder's end offset on the same traces; kept only if its check adopts it.
 3. ``finetune.py``: tunes the network on the traces, judged with the decoder it will be used with; kept only
    if its check adopts it.
@@ -84,7 +84,7 @@ def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None
 
 Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
 {_stale_note(stale)}
-## 1. Dev test: three runs scored on your labels
+## 1. Dev test: the runs scored on your labels
 
 ```
 {_report(DEV / "report.txt")}
