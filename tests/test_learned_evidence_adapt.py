@@ -189,6 +189,9 @@ def test_the_summary_says_whether_your_labels_find_the_fused_reading_worse(repo)
     text = adapt.main([], steps=_steps([])).read_text()
     assert "the fused reading is not clearly worse" in text
     assert "find the fused reading worse" not in text  # the launcher's cue to offer the switch
+    scores.write_text(json.dumps({"paired_perbin_plain": {**paired, "length_diff": 7, "length_ci": [1, 14]}}))
+    text = adapt.main([], steps=_steps([])).read_text()
+    assert "the fused reading does better than the plain one (lengths +7 [+1, +14]" in text
 
 
 def test_a_skipped_fine_tuning_whose_model_is_in_use_is_still_checked(repo):

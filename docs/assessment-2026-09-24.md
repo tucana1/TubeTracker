@@ -1416,6 +1416,16 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
   one-command adaptation (`--quick`, 40 min) adopted a calibrated offset and kept the start model after
   fine-tuning. Then `Analyze_Movie_Learned.command` picked up that offset by itself, and
   `Review_Movie_Learned.command` pre-filled with the same settings, opened the tool and exported after Ctrl-C.
+- **Checked again (27 Sep) with the fused reading and the switch back,** on a synthetic thick-tube dev movie, one
+  thread per process on a shared machine:
+  - Adapt (`--quick --skip-finetune`, 31 min): the dev test's verdict line (+7 lengths, 95% CI +1 to +14, for the
+    fused reading), then calibration and trace-once on fused evidence;
+  - `--reading plain --redo` (18 min): every step read the plain way, calibration was fitted again, and the movie-2
+    command carried the flags;
+  - `Analyze_Movie_Learned.command` followed the kept reading by itself (12 min), and the review pre-filled and
+    exported;
+  - Adapt again: nothing flagged, nothing re-run.
+  - Fine-tuning's fused check is covered by the unit tests and by the code review's end-to-end harness.
 - **Output:** three runs, each scored on `ld_v1`, with paired bootstraps of the differences:
   - SparseTrack 0.4.2 as it is;
   - learned evidence through SparseTrack's decoder;

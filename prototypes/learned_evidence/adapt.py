@@ -97,6 +97,8 @@ def _plain_verdict(reading: str) -> str:
     if p["length_ci"][1] < 0 or p["onset_ci"][1] < 0:
         return (f"\n**Your labels find the fused reading worse than the plain one ({txt}). Switch back with "
                 "`--reading plain --redo`; the Adapt launcher offers it.**\n")
+    if p["length_ci"][0] > 0 or p["onset_ci"][0] > 0:
+        return f"\nOn your labels the fused reading does better than the plain one ({txt}), so it stays.\n"
     return f"\nOn your labels the fused reading is not clearly worse than the plain one ({txt}), so it stays.\n"
 
 

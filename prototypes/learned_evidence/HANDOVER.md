@@ -144,7 +144,8 @@ Tune nothing after this.
 - **Checks:**
   - the test suite (`pytest -q tests`);
   - an independent code review of the fusion default, with every finding fixed (commit 65ea175);
-  - end-to-end runs of Adapt, Analyze and Review on a synthetic dev movie (assessment, appendix B).
+  - end-to-end runs of Adapt, Analyze and Review on a synthetic dev movie, the last on 27 Sep with the fused
+    reading and the switch back (assessment, appendix B).
 - **Round 5** looks for label-free gains on faint tubes, the regime closest to the lab's movies. It was running when
   the work paused. Its rule is in `research/heldout_rules.txt`; its brief, reports and any candidate are in
   `research/round5/`.
