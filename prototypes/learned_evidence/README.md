@@ -4,9 +4,11 @@ A small U-Net reads SparseTrack's three images (the bin, the "before" and the "a
 and outputs, per pixel, the probability that tube body is there (and a tip heatmap). The idea
 (from the 24 Sep assessment on branch `claude/magical-maxwell-i5tpeh`, whose scaffold this is):
 exact labels from the codec-exact synthetic movies, fine-tuned on the human traces, feeding
-SparseTrack's decoder. **Result: not yet better than SparseTrack's change-based evidence on
-either human benchmark. Nothing here is used by `sparsetrack`.** Kept so the experiments are not
-repeated blind, and as the starting point if more real traces become available.
+SparseTrack's decoder. **Result: in its first round (below) not better than change evidence
+on either benchmark. In the second round, synthetic movies built on movie 2's own field made
+the maps good enough that an arrival flood beats change evidence on crowded movie 2. That model and
+reader now live in `sparsetrack/learned.py` (reader `hybrid`, SparseTrack 0.5.0).** This folder
+keeps the training and evaluation code and the record of every experiment.
 
 | file | what |
 |---|---|
@@ -56,7 +58,32 @@ is good it is precise (many ld grains within 1-5 px at every trace time); it fai
 has gaps near the rim (5-7 grains per movie never start) and on raw or ridge-filtered change
 (focus/illumination blobs and rim halos start it on noise).
 
-## Conclusions
+## Second round: synthetic movies on movie 2's field
+
+The generator (`sparsetrack synth`) draws tubes over any prepared movie's real pre-germination
+field and grains. Three movies on movie 2's field, sized like it (351 bins, onsets to bin 250,
+tubes to 280 px, seeds 10-12; 11-12 with 80% light-cored, 1-1.6x wider tubes like movie 2's),
+were added to the three dev-field movies: 7,200 synthetic crops, 8,000 steps (19 min, MPS),
+synthetic validation Dice about 0.83. No human labels.
+
+| model | traced tube found: ld | m2 |
+|---|---|---|
+| synthetic, both fields (`sparsetrack/models/tubes_synth_v1.pt`) | 78% (beside 6.0%) | 68% (beside 5.3%) |
+| + ld traces | - | 67% (held out) |
+| + m2 traces | 86% (held out) | - |
+
+The flood on the synthetic-only maps (lengths in tolerance; 0.4.3: ld 61/104, m2 9/54):
+ld 39/104, **m2 22/54 (paired +13, 95% CI +4 to +23)**. Crowding decides which reader wins:
+using the flood only where a grain's change region touches a neighbour gives ld 61/104
+(unchanged), m2 19/54 (+10, CI +2 to +19), onsets ld 13/26, m2 6/19. That is SparseTrack
+0.5.0's default. Caveat: the flood's rules were settled while looking at movie-2 grains; an
+honest score needs a movie labelled after 0.5.0.
+
+Also tried in this round, not kept: a wider start band for the flood (ld +5, m2 -2); an
+arrival-order front along SparseTrack's path (robust monotone fit of per-point arrival bins:
+neutral on model paths, worse on human routes, where crossings are too dense to be outliers).
+
+## Conclusions (first round)
 
 - The network sees real tubes cleanly where it fires (no blobs, halos, banding or vignetting),
   but on a movie it was not trained on it finds only half to two thirds of the traced tube.

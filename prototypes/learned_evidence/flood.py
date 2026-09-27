@@ -154,11 +154,12 @@ def _extend_dist(dist, comp, seeds_mask, bridge):
 HALO = 3.0   # the rim's own change (focus, swelling) reaches this far out: the tube is read beyond it
 
 
-def flood(arr, rg, blocked, gr, R=12, bridge=4, min_len=8.0, give_up=40, ang=None):
+def flood(arr, rg, blocked, gr, R=12, bridge=4, min_len=8.0, give_up=40, ang=None, start_band=4.0):
     """Returns (tube mask, arrival bin per tube pixel, emergence bin, length per bin)."""
     n = int(arr.max())
     blocked = blocked | (rg < gr + HALO)
-    ring = (rg >= gr + HALO) & (rg <= gr + HALO + 4.0)
+    # a tube may start anywhere in this band: probability maps often miss the few px next to the rim
+    ring = (rg >= gr + HALO) & (rg <= gr + HALO + start_band)
     ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * bridge + 1, 2 * bridge + 1))
     our = np.zeros(arr.shape, bool)
     t_our = np.full(arr.shape, -1, np.int32)
@@ -185,7 +186,7 @@ def flood(arr, rg, blocked, gr, R=12, bridge=4, min_len=8.0, give_up=40, ang=Non
                         continue
                     our |= c
                     t_our[c] = b
-                    dist[c & ring] = 0.0
+                    dist[c & ring] = rg[c & ring] - gr  # lengths count from the rim, gap included
                     _extend_dist(dist, c, c & ring, 1)
                 if our.any():
                     t_emerge = b
@@ -221,6 +222,8 @@ def main():
     ap.add_argument("--ridge", action="store_true")
     ap.add_argument("--k", type=float, default=5.0)
     ap.add_argument("--prob", help="tube-probability cache to flood instead of change")
+    ap.add_argument("--start-band", type=float, default=4.0, help="px beyond the halo where a tube may start")
+    ap.add_argument("--tip", type=float, default=2.5, help="subtracted from the flood's reach (tip blur)")
     args = ap.parse_args()
     labels = json.load(open(f"{REPO}/benchmark/labels/{args.movie}_v1.json"))
     if args.gids == ["all"]:
@@ -238,8 +241,8 @@ def main():
         arr, thr = arrival_map(reg, rg, blocked, g["r"], ridge=args.ridge, k=args.k, prob=prob is not None)
         yy, xx = np.mgrid[0:rg.shape[0], 0:rg.shape[1]]
         ang = np.arctan2(yy - centre, xx - centre)
-        our, t_our, t_em, L = flood(arr, rg, blocked, g["r"], R=args.R, bridge=args.bridge, ang=ang)
-        L = np.where(L > 0, L + HALO, 0.0)
+        our, t_our, t_em, L = flood(arr, rg, blocked, g["r"], R=args.R, bridge=args.bridge, ang=ang,
+                                    start_band=args.start_band)
         L = np.concatenate([L, np.full(len(reg) - len(L), L[-1] if len(L) else 0.0)])
         lab = labels["labels"].get(gid, {})
         on = lab.get("onset") or {}
@@ -247,7 +250,7 @@ def main():
         for b, t in sorted(lab.get("traces", {}).items(), key=lambda kv: int(kv[0])):
             i = int(b) - rs
             if t["state"] == "full" and not t.get("contact") and 0 <= i < len(L):
-                est = max(L[i] - 2.5, 0.0)
+                est = max(L[i] - args.tip, 0.0) if L[i] > 0 else 0.0
                 ok = abs(est - t["length_px"]) <= max(2.0, 0.1 * t["length_px"])
                 TOTAL.append(ok)
                 rows.append(f"b{b}: {est:.1f}/{t['length_px']:.1f} ({est - t['length_px']:+.1f}{' ok' if ok else ''})")

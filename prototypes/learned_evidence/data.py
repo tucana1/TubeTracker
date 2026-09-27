@@ -67,10 +67,11 @@ def tip_heatmap(tips, cx: float, cy: float, half: int, sigma: float = TIP_SIGMA)
 
 def build(field_cache: str | Path, movie_cache: str | Path, preset_name: str, seed: int, out: str | Path,
           n_bins: int = 60, crops_per_bin: int = 16, half: int = 48, pos_frac: float = 0.65,
-          rng_seed: int = 0, log=print) -> Path:
+          rng_seed: int = 0, log=print, **overrides) -> Path:
     """Write one shard of training samples for a synthetic movie built by
-    ``sparsetrack synth FIELD_CACHE --preset P --seed S`` and binned into ``movie_cache``."""
-    scene = Scene(field_cache, preset(preset_name, seed=seed))
+    ``sparsetrack synth FIELD_CACHE --preset P --seed S`` (with the same config ``overrides``,
+    e.g. a longer movie) and binned into ``movie_cache``."""
+    scene = Scene(field_cache, preset(preset_name, seed=seed, **overrides))
     view = CacheView(movie_cache)
     grains = json.loads((Path(field_cache) / "grains.json").read_text())["grains"]
     rng = np.random.default_rng(rng_seed + 1000 * seed)

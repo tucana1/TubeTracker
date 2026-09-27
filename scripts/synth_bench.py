@@ -239,8 +239,10 @@ if __name__ == "__main__":
             print(f"  {movie} predictions: {g['pred']}")
         if real and args.baseline:
             print(paired(json.loads(Path(args.baseline).read_text()), res["real"]), flush=True)
-        if real and args.dump_real:
-            Path(args.dump_real).write_text(json.dumps(res["real"], default=float))
+        if real and args.dump_real:  # one file per variant (the default run has two)
+            out = Path(args.dump_real)
+            out = out if len(variants) == 1 or i == 0 else out.with_name(f"{out.stem}_{i}{out.suffix}")
+            out.write_text(json.dumps(res["real"], default=float))
         if args.breakdown:
             print(breakdown(res), flush=True)
         if args.dump:
