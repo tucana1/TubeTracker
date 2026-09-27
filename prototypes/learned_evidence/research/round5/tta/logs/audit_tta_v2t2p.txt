@@ -1,0 +1,36 @@
+g001 audit on        6 b64        ~95 end              ~95 | default on    6 b64   92.5 end  133.5 | tta_v2t2p on    7 b64   91.5 end  133.0 | no change in verdict
+g002 audit on      ~44 b64        ~15 end   ~75 (b104-112) | default on    8 b64   18.0 end  160.0 | tta_v2t2p on    8 b64   18.0 end  163.0 | no change in verdict
+g003 audit on      ~58 b64        ~35 end             ~200 | default on   32 b64   82.0 end  255.5 | tta_v2t2p on   32 b64  117.0 end  117.0 | no change in verdict
+g004 audit on  unclear b64          ? end                ? | default on   13 b64   33.0 end  242.5 | tta_v2t2p on   13 b64   21.0 end  276.5 | no change in verdict
+g005 audit on      ~11 b64        ~75 end             ~120 | default on   10 b64   55.0 end  138.0 | tta_v2t2p on   13 b64   54.0 end  138.0 | no change in verdict
+g006 audit on      ~17 b64       ~110 end             ~250 | default on   17 b64   35.0 end  186.5 | tta_v2t2p on   17 b64   35.0 end   46.0 | no change in verdict
+g007 audit on      ~22 b64       ~100 end                ? | default on   24 b64  135.5 end  476.0 | tta_v2t2p on   12 b64  137.0 end  475.5 | -onset
+g008 audit on      ~28 b64        ~72 end         ~230-250 | default on   30 b64   73.5 end  257.5 | tta_v2t2p on   30 b64   74.5 end  254.0 | no change in verdict
+g009 audit on      ~11 b64       ~150 end ~220 (last seen  | default on   11 b64  153.5 end  271.5 | tta_v2t2p on   11 b64  149.0 end  274.0 | no change in verdict
+g010 audit on      ~41 b64        ~30 end             ~170 | default on   45 b64   30.0 end   78.5 | tta_v2t2p on   45 b64   31.5 end   90.0 | no change in verdict
+g011 audit on      ~19 b64        ~50 end            >=200 | default on   18 b64   63.5 end  108.0 | tta_v2t2p on   18 b64   63.0 end  108.0 | no change in verdict
+g012 audit on      ~20 b64        ~72 end >=200 (175 @b96) | default on   36 b64   72.0 end  164.5 | tta_v2t2p on   36 b64   68.5 end  160.0 | no change in verdict
+g013 audit on      ~17 b64        ~84 end              ~85 | default on   16 b64   85.5 end   87.0 | tta_v2t2p on   17 b64   85.0 end   86.5 | no change in verdict
+g014 audit on       ~7 b64       ~120 end             ~200 | default on    7 b64  111.5 end  262.0 | tta_v2t2p on    8 b64  112.5 end  261.5 | no change in verdict
+g015 audit on       ~8 b64        ~60 end           ~60-70 | default on    7 b64   77.5 end  238.0 | tta_v2t2p on    7 b64   77.0 end  179.5 | no change in verdict
+g016 audit on      ~10 b64 ~80 (visib end             >100 | default on    9 b64   46.5 end   46.5 | tta_v2t2p on   14 b64   46.5 end   46.5 | no change in verdict
+g017 audit on      ~11 b64 >100 (coil end      >100 (coil) | default on   10 b64   12.0 end   12.0 | tta_v2t2p on   10 b64   25.0 end   25.0 | no change in verdict
+g019 audit on      ~15 b64       ~120 end             ~220 | default on   16 b64  102.0 end  256.0 | tta_v2t2p on   16 b64  103.5 end  257.0 | no change in verdict
+g020 audit on      ~11 b64        ~75 end             ~200 | default on   10 b64  102.0 end  227.5 | tta_v2t2p on   10 b64  106.5 end  228.5 | no change in verdict
+g021 audit on      ~18 b64       ~135 end ~135 (last seen) | default on   19 b64  140.5 end  140.5 | tta_v2t2p on   18 b64  140.0 end  140.0 | no change in verdict
+g022 audit on      ~40 b64        ~40 end             ~110 | default on   28 b64   23.0 end  257.5 | tta_v2t2p on   29 b64   23.5 end  258.0 | no change in verdict
+g023 audit on       ~6 b64 60-100 (co end      ~100 (coil) | default on    7 b64   59.5 end   94.0 | tta_v2t2p on    7 b64   40.0 end   97.5 | -b64
+g026 audit on       ~9 b64     ~45-60 end           ~45-60 | default on   12 b64   70.0 end   73.5 | tta_v2t2p on   10 b64   70.0 end   74.0 | no change in verdict
+g027 audit on      ~10 b64       ~122 end             ~265 | default on   12 b64   82.5 end   82.5 | tta_v2t2p on   13 b64   82.0 end   82.0 | no change in verdict
+g028 audit on       ~5 b64       ~154 end         ~345-365 | default on    5 b64  154.0 end  376.5 | tta_v2t2p on    6 b64  157.5 end  376.0 | no change in verdict
+g029 audit on      ~21 b64        ~66 end      ~210 (b107) | default on   20 b64   71.5 end  210.0 | tta_v2t2p on   20 b64   71.5 end  252.5 | no change in verdict
+g031 audit on      ~10 b64        ~80 end             ~230 | default on    4 b64   80.5 end  162.0 | tta_v2t2p on    5 b64   78.0 end  163.0 | no change in verdict
+g032 audit on       ~8 b64       ~140 end ~200 (last seen  | default on    8 b64  137.5 end  209.5 | tta_v2t2p on    7 b64  137.5 end  255.0 | -end
+g033 audit on      ~27 b64        ~50 end         ~135-140 | default on   33 b64   50.5 end  147.0 | tta_v2t2p on   20 b64   53.0 end  147.5 | -onset
+g034 audit on      ~12 b64      ~110+ end            >=150 | default on   13 b64  145.5 end  156.0 | tta_v2t2p on   11 b64  144.5 end  155.0 | no change in verdict
+g035 audit on      ~12 b64 >=40 (tang end    >=40 (tangle) | default on   13 b64   31.0 end   36.0 | tta_v2t2p on   13 b64   31.5 end   36.0 | no change in verdict
+g036 audit on       ~9 b64        ~95 end            >=125 | default on   13 b64  101.0 end  117.0 | tta_v2t2p on   13 b64  102.0 end  276.5 | no change in verdict
+g037 audit on       ~7 b64 ~45 (to ed end >=45 (exits fram | default on   98 b64    0.0 end    9.5 | tta_v2t2p on   98 b64    0.0 end   19.0 | no change in verdict
+default        onsets within 6 bins 29/35 | b64 within 25% 23/35 | end within 25% 20/34
+tta_v2t2p      onsets within 6 bins 27/35 | b64 within 25% 22/35 | end within 25% 19/34
+grains changed 33; fixes 0 []; breaks 4 ['g007:onset', 'g023:b64', 'g032:end', 'g033:onset']

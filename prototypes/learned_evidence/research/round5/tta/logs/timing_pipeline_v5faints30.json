@@ -1,0 +1,36 @@
+{
+ "movie": "v5faints30",
+ "threads": 1,
+ "pieces": {
+  "fuse": {
+   "wall_s": 5.5,
+   "cpu_s": 3.4
+  },
+  "speed_cap (only-perbin)": {
+   "wall_s": 13.1,
+   "cpu_s": 8.6
+  },
+  "sparsetrack_baseline (default mode)": {
+   "wall_s": 48.5,
+   "cpu_s": 31.8
+  },
+  "sparsetrack_learned (default mode)": {
+   "wall_s": 59.4,
+   "cpu_s": 39.2
+  },
+  "perbin_decoder": {
+   "wall_s": 37.2,
+   "cpu_s": 24.5
+  },
+  "review": {
+   "wall_s": 40.6,
+   "cpu_s": 26.6
+  },
+  "reports": {
+   "wall_s": 2.0,
+   "cpu_s": 1.3
+  }
+ },
+ "passes_timed_here": false,
+ "finished": "05:10:13"
+}

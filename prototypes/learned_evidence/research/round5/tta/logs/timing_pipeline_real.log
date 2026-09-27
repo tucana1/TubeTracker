@@ -1,0 +1,7 @@
+05:20:50 fuse {'wall_s': 18.6, 'cpu_s': 9.9}
+05:21:17 speed_cap (only-perbin) {'wall_s': 27.4, 'cpu_s': 13.5}
+05:27:52 sparsetrack_baseline (default mode) {'wall_s': 394.2, 'cpu_s': 196.8}
+05:29:33 sparsetrack_learned (default mode) {'wall_s': 101.4, 'cpu_s': 50.7}
+05:34:49 perbin_decoder {'wall_s': 316.3, 'cpu_s': 158.9}
+05:39:59 review {'wall_s': 309.7, 'cpu_s': 155.9}
+05:40:03 reports {'wall_s': 4.2, 'cpu_s': 2.2}

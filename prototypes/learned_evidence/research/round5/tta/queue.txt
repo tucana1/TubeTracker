@@ -1,0 +1,132 @@
+# decodes first (taken as soon as their passes exist), then passes in priority order
+decode tta_v2t2m v5s7
+decode tta_v2t2m v5s8
+decode tta_v2t2m v5s13
+decode tta_v2t2m v5s14
+decode tta_v2t2m v5s15
+decode tta_v2t2m v5thicks30
+decode tta_v2t2m v5thicks31
+decode tta_v2t2m v5ws26
+decode tta_v2t2m v5ws27
+decode tta_v2t2m real
+decode tta_botht2p v5s3
+decode tta_botht2l v5s3
+decode tta_botht2p v5s4
+decode tta_botht2l v5s4
+decode tta_botht2p v5s5
+decode tta_botht2l v5s5
+decode tta_botht2p v5s6
+decode tta_botht2l v5s6
+decode tta_botht2p v5s7
+decode tta_botht2l v5s7
+decode tta_botht2p v5s8
+decode tta_botht2l v5s8
+decode tta_botht2p v5s13
+decode tta_botht2l v5s13
+decode tta_botht2p v5s14
+decode tta_botht2l v5s14
+decode tta_botht2p v5s15
+decode tta_botht2l v5s15
+decode tta_v2t2m v5s3
+decode tta_v2t2m v5s4
+decode tta_v2t2m v5s5
+decode tta_v2t2m v5s6
+decode tta_v2t4m v5faints30
+decode tta_v2t4m v5faints31
+decode tta_v2t2m v5faints30
+decode tta_v2t2m v5faints31
+decode tta_id v5faints30
+decode tta_v2t2p v5faints30
+decode tta_v2t2l v5faints30
+decode tta_v2t2p v5faints31
+decode tta_v2t2l v5faints31
+decode tta_v2t4p v5faints30
+decode tta_v2t4l v5faints30
+decode tta_v2t4p v5faints31
+decode tta_v2t4l v5faints31
+decode tta_v2t2p v5s3
+decode tta_v2t2l v5s3
+decode tta_v2t2p v5s4
+decode tta_v2t2l v5s4
+decode tta_v2t2p v5s5
+decode tta_v2t2l v5s5
+decode tta_v2t2p v5s6
+decode tta_v2t2l v5s6
+decode tta_v2t4rp v5faints30
+decode tta_v2t4rl v5faints30
+decode tta_v2t4rp v5faints31
+decode tta_v2t4rl v5faints31
+decode tta_v2t8p v5faints30
+decode tta_v2t8l v5faints30
+decode tta_v2t8p v5faints31
+decode tta_v2t8l v5faints31
+decode tta_v2t2p v5s7
+decode tta_v2t2l v5s7
+decode tta_v2t2p v5s8
+decode tta_v2t2l v5s8
+decode tta_v2t2p v5s13
+decode tta_v2t2l v5s13
+decode tta_v2t2p v5s14
+decode tta_v2t2l v5s14
+decode tta_v2t2p v5s15
+decode tta_v2t2l v5s15
+decode tta_v2t2p v5thicks30
+decode tta_v2t2l v5thicks30
+decode tta_botht2p v5thicks30
+decode tta_botht2l v5thicks30
+decode tta_v2t2p v5thicks31
+decode tta_v2t2l v5thicks31
+decode tta_botht2p v5thicks31
+decode tta_botht2l v5thicks31
+decode tta_v2t2p v5ws26
+decode tta_v2t2l v5ws26
+decode tta_botht2p v5ws26
+decode tta_botht2l v5ws26
+decode tta_v2t2p v5ws27
+decode tta_v2t2l v5ws27
+decode tta_botht2p v5ws27
+decode tta_botht2l v5ws27
+decode tta_botht2p v5faints30
+decode tta_botht2l v5faints30
+decode tta_botht2p v5faints31
+decode tta_botht2l v5faints31
+decode tta_v2t2p real
+decode tta_v2t2l real
+decode tta_botht2p real
+decode tta_botht2l real
+pass v2 r180 v5s6
+timing real
+pass v2 r90 v5faints30
+pass v2 r270 v5faints30
+pass v2 r90 v5faints31
+pass v2 r270 v5faints31
+pass v2 t v5faints30
+pass v2 at v5faints30
+pass v2 t v5faints31
+pass v2 at v5faints31
+pass v2 r180 v5s7
+pass v2 r180 v5s8
+pass v2 r180 v5s13
+pass v2 r180 v5s14
+pass v2 r180 v5s15
+pass v2 r180 v5thicks30
+pass B3 r180 v5thicks30
+pass v2 r180 v5thicks31
+pass B3 r180 v5thicks31
+pass v2 r180 v5ws26
+pass B3 r180 v5ws26
+pass v2 r180 v5ws27
+pass B3 r180 v5ws27
+pass B3 r180 v5faints30
+pass B3 r180 v5faints31
+pass v2 r180 real
+pass B3 r180 real
+pass B3 r180 v5s3
+pass B3 r180 v5s4
+pass B3 r180 v5s5
+pass B3 r180 v5s6
+pass B3 r180 v5s7
+pass B3 r180 v5s8
+pass B3 r180 v5s13
+pass B3 r180 v5s14
+pass B3 r180 v5s15
