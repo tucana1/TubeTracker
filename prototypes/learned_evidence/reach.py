@@ -44,7 +44,11 @@ earlier frozen decoder. The others were tried and are off (``track``, ``burst_ru
 * ``continuity="path"``: tip growth (``TipContinuity``): a reading longer than the tube's accepted path stands only
   if it continues that path at the tip; a tube crossing or touching it, one lying across the tip's way before the tip
   got there, a neighbour's tube at the rim make the farthest point jump off the grain's own tube, and such a bin is
-  read along the path instead (or held).
+  read along the path instead (or held). Development numbers (26 Sep 2026): +2 lengths in tolerance on the thin
+  development movies (95% CI -3 to +9), +3 on the thick one, the faint and wide ones unchanged; on the real sample
+  movie a tie with the shipped network (one end length fixed, one broken) but most foreign over-reads removed with
+  a network that sees thick tubes (end lengths within 25% of an audit by eye: 16 -> 20 of 34). Off by default: the
+  rule fixed beforehand asked for more fixes than breaks on the real movie with the shipped network.
 * ``analyze(..., ghosts=True)``: census discs that are soft and faint in every early window (out-of-focus
   ghosts, smears of grains still landing) are not analysed and not treated as grains (``census_ghosts``); the
   review pre-fill excludes them as "not_a_grain", so a person can re-include one.

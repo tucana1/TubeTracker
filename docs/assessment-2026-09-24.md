@@ -1228,6 +1228,73 @@ of the first pass; the other three moved by 5, 8 and 19 bins.
 - Agreement with a single human pass cannot go much higher. Lengths, within max(2 px, 10%), are where methods
   separate.
 
+### 7.7 Round 3 (26 Sep): foreign tubes and false onsets
+
+Round 2's thick-tube models failed in two ways: foreign tubes joined a grain's reading, and dark structures that are
+not tubes started onsets early. Two agents took one each, under rules fixed before any result.
+
+**Tip-growth continuity in the per-bin decoder (`continuity="path"`): kept as an option, off by default.**
+
+How it works:
+- A tube grows only at its tip. So a reading much longer than the tube's accepted path stands only if it continues
+  that path at the tip, which it checks four ways:
+  - it stays in a corridor along the path;
+  - it grows no faster than a growth cap;
+  - it passes a turn test at the apex;
+  - it passes a birth test: a tube that lay across the tip's way before the tip got there is not this tube.
+- Otherwise the bin is re-read along the path, swung or turned onto the region, or held.
+
+Results:
+- **Synthetic movies:**
+  - thin development: +2 lengths (95% CI −3 to +9) of 793, and +2 (0 to +6) human-style;
+  - thick: +3 (0 to +9);
+  - faint and wide: unchanged, to the reading;
+  - onsets: unchanged everywhere.
+- **Real movie with the shipped network: a tie.**
+  - g002's end is fixed: 172 → 76 px, audit about 75.
+  - g005's end breaks: 104 → 88 px, against about 120.
+- **Real movie with round 2's model A**, which sees thick tubes: end lengths within ±25% go from 16 to 20 of 34.
+  - It removes A's foreign over-reads on g001, g011, g021 and g029.
+  - It keeps A's thick-tube gains.
+- **An independent code review found five bugs that changed lengths.** Each is fixed, with a test that fails without
+  the fix:
+  - a static crossing path could replace the tube's own after 4 bins;
+  - a longer path that never came near the apex was accepted without the tip tests;
+  - the turn test rejected meandering tubes;
+  - a stale alignment could swing the path onto a foreign tube;
+  - a re-read trace started at the wrong rim point.
+- **One suggested change was reverted.** It reset the run of rejected paths at every standing bin, and it broke the
+  recovery from early errors on two real grains (g005, g029).
+- **The rule** asked for more gross fixes than breaks on the real movie with the shipped network, then one held-out
+  look. A tie is not more, so it stays an option, and no held-out look was spent.
+- It is the piece a thick-tube network would need beside it.
+
+**Evidence networks taught what is not a tube (B2, B3): not adopted.** The agent first measured what round 2's
+model B marks falsely before germination on the real movie:
+- **Uneven darkening inside grains:** a blob forming on one side before germination.
+- **Rim crescents:**
+  - every real rim changes from bin to bin, 16.5 grey levels rms on grains not yet germinated, against 2–3.5 in the
+    synthetic movies;
+  - the "before" reference is soft;
+  - grains wobble about 1 px.
+- **Soft bins.**
+
+It generated movies with such negatives, labelled as background (for B3, also fainter thin tubes), and retrained:
+- **Real movie:** B3 has the most onsets within 6 bins of any network (30 of 35; shipped 29, B 26). Only 3 onsets are
+  more than 6 bins early (B: 8), and it keeps most thick-tube gains: mid-movie lengths 20, end 16 (shipped 17 and 15).
+- **Synthetic movies:** thin and faint lengths pooled −42 (−79 to −7) against the shipped network; B2 −43 (−78 to −11).
+  Taught to discount faint changes near rims and structures, the network discounted faint tubes too.
+- **Verdict:** not adopted. The rule required no loss on thin and faint tubes, so no held-out look was spent.
+
+**What round 3 leaves:**
+- The two halves work, but separately:
+  - continuity keeps foreign tubes out;
+  - negatives stop the false onsets.
+  - Neither yet sees thick tubes without costing the thin and faint ones.
+- **Round 4 (running):** a label-free fusion that keeps the shipped network's evidence for thin and faint tubes and
+  takes a thick-tube network's only where it sees a wide structure. By construction the thin and faint regime stays
+  the shipped network's, and continuity keeps foreign tubes out.
+
 ---
 
 ## Appendix A: numbers used here
