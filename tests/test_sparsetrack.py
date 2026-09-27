@@ -539,3 +539,15 @@ def test_flood_keeps_a_slow_start():
         arr[64:67, x] = 5 + 5 * k
     fl = flood(arr, rg, ang, np.zeros((size, size), bool), gr)
     assert fl["emerge"] == 5 and fl["length"][-1] > 25
+
+
+def test_score_counts_a_right_length_on_the_wrong_tube_apart():
+    labels = {"frames_per_bin": 300, "grains": {"g1": {"x": 100, "y": 100, "isolated": True}},
+              "labels": {"g1": {"traces": {"20": {"state": "full", "length_px": 30.0, "source_frame": 6150,
+                                                  "path_xy_view": [[112, 100], [142, 100]]}}}}}
+    tip_right = {"grains": [{"id": "g1", "x": 100, "y": 100, "status": "emerged_within",
+                             "length": {"frames": [6150], "px": [31.0]}, "tip": {"frames": [6150], "xy": [[143, 101]]}}]}
+    tip_wrong = {"grains": [{**tip_right["grains"][0], "tip": {"frames": [6150], "xy": [[100, 131]]}}]}
+    assert score(labels, tip_right)["tips"]["length_and_tip"] == 1
+    rep = score(labels, tip_wrong)
+    assert rep["length_full"]["within_tolerance"] == 1 and rep["tips"]["length_and_tip"] == 0

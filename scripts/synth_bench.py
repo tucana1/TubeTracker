@@ -88,10 +88,13 @@ def score_real(name: str, params: Params, tag: str) -> dict:
     for r in rep["rows"]:
         full = r.get("full", [])
         grains[r["grain"]] = {"onset_hit": (abs(r["onset_error"]) <= 600) if "onset_error" in r else None,
-                              "len_hit": sum(_within(f["error"], f["human"]) for f in full), "len_n": len(full)}
+                              "len_hit": sum(_within(f["error"], f["human"]) for f in full), "len_n": len(full),
+                              "both_hit": sum(_within(f["error"], f["human"]) and f.get("tip_error", 1e9)
+                                              <= max(5.0, 0.1 * f["human"]) for f in full)}
     return {"on_hit": rep["onset"]["hits"], "on_n": rep["onset"]["n_timed"],
             "len_hit": rep["length_full"]["within_tolerance"], "len_n": rep["length_full"]["n"],
             "len_med": rep["length_full"]["median_abs_error"], "len_bias": rep["length_full"]["bias"],
+            "both": rep["tips"]["length_and_tip"],
             "errs": [(f["error"], f["human"], r["grain"], f["frame"]) for r in rep["rows"] for f in r.get("full", [])],
             "grains": grains, "pred": f"/tmp/tt_bench/{name}_real_{tag}/predictions.json"}
 
@@ -110,8 +113,13 @@ def paired(base: dict, new: dict, n_boot: int = 4000, seed: int = 0) -> str:
         idx = rng.integers(0, len(g), (n_boot, len(g)))
         ci = lambda d: np.percentile(d[idx].sum(axis=1), [2.5, 97.5])
         (a, b), (c, e) = ci(d_on), ci(d_len)
-        out.append(f"  vs baseline, {name}: onset {d_on.sum():+d} (95% CI {a:+.0f} to {b:+.0f}), "
-                   f"lengths {d_len.sum():+d} (95% CI {c:+.0f} to {e:+.0f}) over {len(g)} grains")
+        line = (f"  vs baseline, {name}: onset {d_on.sum():+d} (95% CI {a:+.0f} to {b:+.0f}), "
+                f"lengths {d_len.sum():+d} (95% CI {c:+.0f} to {e:+.0f})")
+        if all("both_hit" in base[name]["grains"][k] and "both_hit" in new[name]["grains"][k] for k in g):
+            d_both = np.array([new[name]["grains"][k]["both_hit"] - base[name]["grains"][k]["both_hit"] for k in g])
+            lo, hi = ci(d_both)
+            line += f", length and tip {d_both.sum():+d} (95% CI {lo:+.0f} to {hi:+.0f})"
+        out.append(line + f" over {len(g)} grains")
     return "\n".join(out)
 
 
@@ -169,7 +177,7 @@ def line(name: str, r: dict) -> str:
            f"ctrl FP {s['ctrl_fp']}/{s['ctrl_n']}")
     for name, g in r.get("real", {}).items():
         txt += (f" || {name} onset {g['on_hit']}/{g['on_n']}, len {g['len_hit']}/{g['len_n']} "
-                f"(med {g['len_med']:.2f}, bias {g['len_bias']:+.2f})")
+                f"(med {g['len_med']:.2f}, bias {g['len_bias']:+.2f}; with tip {g.get('both', '-')})")
     if "legacy" in r:
         g = r["legacy"]
         txt += f" || legacy onset {g['on_hit']}/{g['on_n']}, len {g['len_hit']}/{g['len_n']} (med {g['len_med']:.2f})"

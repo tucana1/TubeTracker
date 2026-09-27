@@ -2,6 +2,7 @@
 
 - Onset: 4/16 within ±600 frames of the human bracket (of 19 human 'emerged during movie'); median |error| 5250, mean 5869; early 5, late 7
 - Length (FULL traces): 12/54 within max(2 px, 10%); median |error| 5.66 px, bias -15.04 px
+- Tips (FULL traces with a predicted tip): 17/38 within max(5 px, 10%) of the human apex, median 5.7 px; length and tip both right: 10/54
 - PARTIAL traces consistent: 0/2; absences correct: 2/2
 - Germination calls (human → predicted): {"emerged_within": {"emerged_within": 16, "emerged_at_start": 1, "no_emergence_by_end": 2}, "unobservable": {"emerged_within": 2, "no_emergence_by_end": 1}, "emerged_at_start": {"emerged_within": 1}, "no_emergence_by_end": {"no_emergence_by_end": 1}}
 
@@ -36,6 +37,7 @@
 
 - Onset: 3/17 within ±600 frames of the human bracket (of 19 human 'emerged during movie'); median |error| 8400, mean 9265; early 6, late 8
 - Length (FULL traces): 10/54 within max(2 px, 10%); median |error| 6.43 px, bias -17.22 px
+- Tips (FULL traces with a predicted tip): 15/34 within max(5 px, 10%) of the human apex, median 6.8 px; length and tip both right: 8/54
 - PARTIAL traces consistent: 0/2; absences correct: 2/2
 - Germination calls (human → predicted): {"emerged_within": {"emerged_within": 17, "no_emergence_by_end": 2}, "unobservable": {"emerged_within": 2, "no_emergence_by_end": 1}, "emerged_at_start": {"emerged_within": 1}, "no_emergence_by_end": {"no_emergence_by_end": 1}}
 
@@ -70,6 +72,7 @@
 
 - Onset: 3/17 within ±600 frames of the human bracket (of 19 human 'emerged during movie'); median |error| 8400, mean 9265; early 6, late 8
 - Length (FULL traces): 10/54 within max(2 px, 10%); median |error| 6.43 px, bias -17.22 px
+- Tips (FULL traces with a predicted tip): 15/34 within max(5 px, 10%) of the human apex, median 6.8 px; length and tip both right: 8/54
 - PARTIAL traces consistent: 0/2; absences correct: 2/2
 - Germination calls (human → predicted): {"emerged_within": {"emerged_within": 17, "no_emergence_by_end": 2}, "unobservable": {"emerged_within": 2, "no_emergence_by_end": 1}, "emerged_at_start": {"emerged_within": 1}, "no_emergence_by_end": {"no_emergence_by_end": 1}}
 

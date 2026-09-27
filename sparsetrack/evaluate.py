@@ -12,7 +12,10 @@ legacy answers). Predictions: a ``sparsetrack.pred.v1`` document::
 Onset timing error is the signed distance from the predicted onset frame to the human
 bracket (0 inside ``(last_absent_frame, first_visible_frame]``, negative = early).
 Lengths are compared at every human trace: FULL traces by error, PARTIAL traces as
-lower bounds, "no tube" traces as absences.
+lower bounds, "no tube" traces as absences. Where the prediction has tip positions, a FULL
+trace's tip error is the distance from the predicted tip to the human apex, both in the
+grain-following view the trace was clicked in: a right length on the wrong tube is not a
+hit for "length and tip".
 """
 
 from __future__ import annotations
@@ -73,13 +76,22 @@ def length_at(pred: dict, frame: int) -> float | None:
     return float(px[i])
 
 
+def tip_at(pred: dict, frame: int) -> np.ndarray | None:
+    series = pred.get("tip") or {}
+    frames, xy = series.get("frames") or [], series.get("xy") or []
+    if not frames:
+        return None
+    return np.asarray(xy[int(np.argmin(np.abs(np.asarray(frames) - frame)))], float)
+
+
 def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2.0, len_rel: float = 0.10,
-          absent_px: float = 2.0, subset: str = "isolated") -> dict:
+          absent_px: float = 2.0, subset: str = "isolated", tip_abs: float = 5.0, tip_rel: float = 0.10) -> dict:
     """Return a report dict; ``subset`` = "isolated" (sparse benchmark) or "all" included grains."""
     grains = {gid: g for gid, g in labels["grains"].items()
               if not g.get("excluded") and (subset == "all" or g.get("isolated", True))}
     matched = match_grains({"grains": grains}, pred.get("grains", []), radius=float(pred.get("match_radius_px", 12.0)))
     rows, onset_err, full_err, absences, partial_ok, contact_n, burst_n = [], [], [], [], [], [], []
+    tips = []  # (tip error, human length, length within tolerance)
     confusion: dict[str, dict[str, int]] = {}
     for gid in sorted(grains):
         lab = labels["labels"].get(gid, {})
@@ -115,8 +127,13 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
             elif tr["state"] == "full":
                 h = tr["length_px"]
                 full_err.append((model - h, h))
-                row.setdefault("full", []).append({"frame": frame, "human": h, "pred": round(model, 2),
-                                                   "error": round(model - h, 2)})
+                entry = {"frame": frame, "human": h, "pred": round(model, 2), "error": round(model - h, 2)}
+                apex = (tr.get("path_xy_view") or tr.get("path_xy_ref") or [None])[-1]
+                tip = tip_at(p, frame)
+                if apex is not None and tip is not None and model > 0:
+                    entry["tip_error"] = round(float(np.hypot(*(tip - np.asarray(apex, float)))), 2)
+                    tips.append((entry["tip_error"], h, abs(model - h) <= max(len_abs, len_rel * h)))
+                row.setdefault("full", []).append(entry)
             else:
                 partial_ok.append(model >= tr["length_px"] - len_abs)
         rows.append(row)
@@ -141,6 +158,10 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
                         "bias": float(np.mean(e)) if len(e) else None},
         "length_partial": {"n": len(partial_ok), "consistent": int(sum(partial_ok))},
         "absences": {"n": len(absences), "correct": int(sum(absences))},
+        # tips are judged where both a human apex and a predicted (non-zero) tip exist
+        "tips": {"n": len(tips), "within": int(sum(te <= max(tip_abs, tip_rel * h) for te, h, _ in tips)),
+                 "median_px": float(np.median([te for te, _, _ in tips])) if tips else None,
+                 "length_and_tip": int(sum(ok and te <= max(tip_abs, tip_rel * h) for te, h, ok in tips))},
         "traces_in_contact_skipped": len(contact_n),
         "traces_burst_skipped": len(burst_n),
         "rows": rows,
@@ -157,6 +178,9 @@ def markdown(report: dict) -> str:
              f"mean {fmt(o['mean_error'], 0)}; early {o['early']}, late {o['late']}",
              f"- Length (FULL traces): {L['within_tolerance']}/{L['n']} within max(2 px, 10%); median |error| "
              f"{fmt(L['median_abs_error'], 2)} px, bias {fmt(L['bias'], 2)} px",
+             f"- Tips (FULL traces with a predicted tip): {report['tips']['within']}/{report['tips']['n']} within "
+             f"max(5 px, 10%) of the human apex, median {fmt(report['tips']['median_px'], 1)} px; length and tip "
+             f"both right: {report['tips']['length_and_tip']}/{L['n']}",
              f"- PARTIAL traces consistent: {report['length_partial']['consistent']}/{report['length_partial']['n']}; "
              f"absences correct: {a['correct']}/{a['n']}",
              f"- Germination calls (human → predicted): {json.dumps(report['germination_confusion'])}",
