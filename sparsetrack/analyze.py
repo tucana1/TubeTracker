@@ -118,6 +118,16 @@ class Params:
     tip_offset_px: float = 2.5   # reported length = front - this (the signal's blurred end lies beyond the apex)
     front_lead_px: float = 12.0  # if the front is already this long at the stub's onset...
     run_min_px: float = 0.5      # ...onset = start of the growth run (> this per 3 bins) that led there
+    # reader: "change" (the evidence above), "flood" (learned tube probabilities read by an arrival
+    # flood, sparsetrack/learned.py) or "hybrid" (the flood only where the grain's change region
+    # touches a neighbour: crowded grains, where change evidence picks up foreign tubes)
+    reader: str = "hybrid"
+    model: str | None = None     # tube-probability model (default learned.MODEL)
+    flood_half: int = 270        # the flood's crop half-size (px): long tubes in crowded fields
+    flood_recent: int = 12       # bins: a new piece joins if it touches pixels claimed this recently
+    flood_bridge: int = 4        # px a new piece may be from them
+    flood_start_band: float = 4.0  # px beyond the rim halo where a tube may start
+    flood_tip_px: float = 0.0    # subtracted from the flood's reach
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
     settle_bins: int = 24
     grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
@@ -1052,12 +1062,25 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             log(f"growth scale {scale:.2f} px/bin (90th pct, median of isolated grains): front speed cap "
                 f"{vmax:.1f} px/bin")
             p = replace(p, vmax_px=vmax)
+    prob = None
+    if p.reader != "change":
+        from dataclasses import replace
+        from . import learned
+        try:
+            prob = Renderer(*stack.load(learned.prob_cache(cache_dir, p.model or learned.MODEL, log)))
+        except ImportError:  # building the probability movie needs torch (pip install .[cnn])
+            log("torch is not installed: reading every grain from change evidence (reader=change)")
+            p = replace(p, reader="change")
     results = []
     for g in grains:
         if only and g["id"] not in only:
             continue
         others = [o for o in physical if o["id"] != g["id"]]
-        res = analyze_grain(renderer, meta, g, others, p)
+        res = analyze_grain(renderer, meta, g, others, p) if p.reader != "flood" else None
+        if p.reader == "flood" or (p.reader == "hybrid" and any(
+                f.startswith(("touches:", "shared_change_split")) for f in res["flags"])):
+            from . import learned
+            res = learned.read_grain(renderer, prob, meta, g, others, p)
         cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)
         results.append(res)

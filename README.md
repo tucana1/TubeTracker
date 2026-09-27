@@ -39,9 +39,10 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 ```
 
 `analyze` works per grain, whole-movie and offline:
-- **Registration and settling.** Local registration follows the grain as it drifts.
-  Grains still landing in the census bins are read from when they settle, and
-  detections with no grain rim are reported unobservable.
+- **Registration and settling.** Local registration follows the grain as it drifts;
+  a track that jumps or wanders (it has locked onto a neighbour) falls back to the
+  field registration. Grains still landing in the census bins are read from when they
+  settle, and detections with no grain rim are reported unobservable.
 - **Path.** Candidate centrelines are traced on the end-of-movie change map, one per
   branch end and rim contact. The one kept is the candidate whose monotone growth from
   the exit explains the most evidence, weighted by how ridge-like its end-state
@@ -51,6 +52,15 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
   |change| combined with the change projected on the tube's own end-state cross-section.
 - **Onset.** Onset is called by a matched stub filter at the exit (end-state exit and
   rotation track), with hysteresis.
+- **Crowded grains** (reader `hybrid`, the default). Where a grain's change region
+  touches a neighbour, change evidence picks up foreign tubes, so that grain is read
+  instead from learned tube probabilities (`sparsetrack/learned.py`): a small U-Net
+  trained only on codec-exact synthetic movies of the two benchmark fields, read by an
+  arrival flood in which the tube claims only material that arrives at its own tip.
+  The first run on a movie writes its probability movie next to the cache (uint8, about
+  half the cache's size; ~1-2 min on an Apple GPU). This needs torch (`pip install
+  .[cnn]`); without it every grain is read from change evidence. `--set reader=change`
+  or `reader=flood` choose one reader for all grains.
 
 It writes:
 - `predictions.json`, `grains.csv`, `growth.csv` and a diagnostic image per grain;

@@ -488,3 +488,29 @@ def test_matched_kymograph_reads_paths_longer_than_opencvs_map_limit():
     out = matched_kymograph(np.zeros((2, 400, 400), np.float32), np.zeros((n, len(across))), pts, normal, 20.0,
                             across, np.arange(-45, 45.1, 1.5))
     assert out.shape == (2, 61, n)
+
+
+def test_arrivals_need_persistence():
+    from sparsetrack.learned import arrivals
+    present = np.zeros((30, 3, 3), bool)
+    present[4:6, 0, 0] = True       # a transient: never arrives
+    present[7:, 1, 1] = True        # stays from bin 7
+    arr = arrivals(present, np.zeros((3, 3), bool))
+    assert arr[0, 0] == 30 and arr[1, 1] == 7
+
+
+def test_flood_follows_its_own_tip_not_an_older_crossing_tube():
+    from sparsetrack.learned import flood
+    size, c, gr = 131, 65.0, 10.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
+    n = 80
+    arr = np.full((size, size), n)
+    for k, x in enumerate(range(int(c + gr + 3), int(c + gr + 43))):  # our tube: 1 px per bin from bin 5
+        arr[64:67, x] = 5 + k
+    arr[10:120, 95:98] = np.minimum(arr[10:120, 95:98], 2)  # a foreign tube across the path, there from bin 2
+    fl = flood(arr, rg, ang, np.zeros((size, size), bool), gr)
+    assert fl["emerge"] == 5
+    assert abs(fl["length"][25] - 24.0) <= 2.5               # 20 bins after emergence: ~24 px from the rim
+    assert not fl["tube"][20:40, 95:98].any()                # the crossing tube is never claimed
+    assert fl["length"][-1] >= 40                            # but the tube is followed past it

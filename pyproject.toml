@@ -48,6 +48,7 @@ include-package-data = true
 
 [tool.setuptools.package-data]
 "sparsetrack.bench" = ["static/*"]
+"sparsetrack" = ["models/*.pt"]
 tubetracker_assets = ["logo.png"]
 "tubetracker_assets.tip_templates" = ["*.json", "*.png"]
 

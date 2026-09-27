@@ -1,0 +1,296 @@
+"""Learned tube evidence and the arrival-flood reader, for crowded fields.
+
+A small U-Net reads each registered bin with the movie's "before" and "after" images and
+outputs P(tube body) per pixel. The shipped model (``models/tubes_synth_v1.pt``) was trained
+only on codec-exact synthetic movies built on the real fields of the dev movie and movie 2
+(no human labels), so both human benchmarks stay held out for it.
+
+The flood reads one grain's tube from those maps: every pixel gets an arrival bin (the first
+bin from which it stays tube), and the tube grows in arrival order from the rim. A newly
+arrived piece joins only if it touches the tube's most recently joined pixels (its tip), so
+material that was there first (a foreign tube, a crossing) or that appears beside old tube
+(sway) is never claimed. Length at a bin = geodesic distance from the rim to the farthest
+pixel claimed by then.
+
+On the human benchmarks (27 Sep 2026) the flood beat the change reader on crowded movie 2
+(22 vs 9 of 54 FULL traces in tolerance, paired +13, 95% CI +4 to +23) and lost on the sparse
+dev movie (39 vs 61 of 104). ``Params.reader = "hybrid"`` uses it only for grains whose change
+region touches a neighbour: dev movie 61/104 (unchanged), movie 2 19/54.
+
+Needs torch (``pip install .[cnn]``) to build a probability movie; reading one does not.
+"""
+
+from __future__ import annotations
+
+import heapq
+import json
+import math
+import shutil
+import time
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from . import stack
+from .render import Renderer
+
+MODEL = Path(__file__).parent / "models" / "tubes_synth_v1.pt"
+P_SCALE = 250.0       # probability movies are stored as uint8 P x P_SCALE
+IN_SCALE = 20.0       # network input: grey levels per unit, relative to the before image's median
+HALO = 3.0            # the rim's own change (focus, swelling) reaches this far out
+
+
+# ----------------------------------------------------------------------------- network
+def _unet(widths=(16, 32, 64, 128)):
+    import torch
+    from torch import nn
+    import torch.nn.functional as F
+
+    def block(cin, cout):
+        return nn.Sequential(
+            nn.Conv2d(cin, cout, 3, padding=1, bias=False), nn.GroupNorm(8, cout), nn.ReLU(inplace=True),
+            nn.Conv2d(cout, cout, 3, padding=1, bias=False), nn.GroupNorm(8, cout), nn.ReLU(inplace=True))
+
+    class UNet(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.widths = tuple(widths)
+            self.enc = nn.ModuleList()
+            c = 3
+            for w in widths:
+                self.enc.append(block(c, w))
+                c = w
+            self.dec = nn.ModuleList(block(widths[i + 1] + widths[i], widths[i]) for i in reversed(range(len(widths) - 1)))
+            self.head = nn.Conv2d(widths[0], 2, 1)
+
+        def forward(self, x):
+            skips = []
+            for i, blk in enumerate(self.enc):
+                x = blk(x if i == 0 else F.max_pool2d(x, 2))
+                skips.append(x)
+            x = skips.pop()
+            for blk in self.dec:
+                s = skips.pop()
+                x = blk(torch.cat([F.interpolate(x, size=s.shape[-2:], mode="bilinear", align_corners=False), s], 1))
+            return self.head(x)
+
+    return UNet()
+
+
+def load_model(path: str | Path = MODEL, device: str | None = None):
+    import torch
+    if device is None:
+        device = "mps" if torch.backends.mps.is_available() else "cpu"
+    ck = torch.load(str(path), map_location="cpu", weights_only=False)
+    net = _unet(ck.get("widths", (16, 32, 64, 128)))
+    net.load_state_dict(ck["state"])
+    return net.eval().to(device)
+
+
+def tube_probability(net, img: np.ndarray, early: np.ndarray, late: np.ndarray) -> np.ndarray:
+    """P(tube body) for one registered frame, given the movie's before and after images."""
+    import torch
+    m = float(np.nanmedian(early))
+    x = np.nan_to_num((np.stack([img, early, late]).astype(np.float32) - m) / IN_SCALE, nan=0.0)
+    h, w = img.shape
+    k = 2 ** (len(net.widths) - 1)
+    x = np.pad(x, ((0, 0), (0, (-h) % k), (0, (-w) % k)), mode="reflect")
+    dev = next(net.parameters()).device
+    with torch.no_grad():
+        return torch.sigmoid(net(torch.from_numpy(x)[None].to(dev)))[0, 0, :h, :w].cpu().numpy()
+
+
+def _registered(bins: np.ndarray, shifts: np.ndarray, b: int) -> np.ndarray:
+    dx, dy = shifts[b]
+    img = np.asarray(bins[b], np.float32)
+    return cv2.warpAffine(img, np.float32([[1, 0, -dx], [0, 1, -dy]]), (img.shape[1], img.shape[0]),
+                          flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+
+def prob_cache(cache_dir: str | Path, model: str | Path = MODEL, log=print) -> Path:
+    """The movie's tube-probability cache (built once, next to the image cache): a SparseTrack
+    cache in reference coordinates whose bins are uint8 P(tube) x P_SCALE."""
+    cache_dir = Path(cache_dir)
+    out = cache_dir / f"prob_{Path(model).stem}"
+    if (out / "meta.json").exists():
+        return out
+    net = load_model(model)
+    bins, meta = stack.load(cache_dir)
+    shifts = np.asarray(meta["shifts"], np.float64)
+    rs, nb = int(meta.get("ref_start", 0)), int(meta["n_bins"])
+    early = np.mean([_registered(bins, shifts, b) for b in range(rs, rs + 3)], axis=0)
+    late = np.mean([_registered(bins, shifts, b) for b in range(nb - 4, nb - 1)], axis=0)
+    out.mkdir(parents=True, exist_ok=True)
+    arr = np.lib.format.open_memmap(out / "bins.npy", mode="w+", dtype=np.uint8, shape=bins.shape)
+    started = time.time()
+    for b in range(nb):
+        arr[b] = np.round(tube_probability(net, _registered(bins, shifts, b), early, late) * P_SCALE).astype(np.uint8)
+    arr.flush()
+    del arr
+    m = {**meta, "shifts": [[0.0, 0.0]] * nb, "raw_shifts": [[0.0, 0.0]] * nb,
+         "evidence": f"P(tube) x {P_SCALE} from {Path(model).name}"}
+    (out / "meta.json").write_text(json.dumps(m, indent=1))
+    shutil.copy(cache_dir / "grains.json", out / "grains.json")
+    log(f"tube probabilities ({Path(model).name}): {nb} bins in {time.time() - started:.0f} s -> {out}")
+    return out
+
+
+# ----------------------------------------------------------------------------- flood
+def arrivals(present: np.ndarray, blocked: np.ndarray, persist: int = 10, frac: float = 0.7) -> np.ndarray:
+    """Per pixel, the first bin from which it is present in >= ``frac`` of the next ``persist``
+    bins (len(present) where never)."""
+    ex = present & ~blocked[None]
+    n = len(ex)
+    cs = np.concatenate([np.zeros((1,) + ex.shape[1:], np.int16), np.cumsum(ex, axis=0, dtype=np.int16)])
+    idx = np.arange(n)
+    hi = np.minimum(idx + persist, n)
+    ok = ex & ((cs[hi] - cs[idx]) / (hi - idx)[:, None, None] >= frac)
+    return np.where(ok.any(axis=0), ok.argmax(axis=0), n)
+
+
+def _extend_dist(dist: np.ndarray, comp: np.ndarray, sources: np.ndarray, bridge: int) -> None:
+    """Rim distances for a joining component: a straight hop of <= ``bridge`` px from the tube's
+    pixels (with their distances), then geodesically inside the component."""
+    ys, xs = np.nonzero(comp)
+    y0, y1 = max(ys.min() - bridge - 1, 0), min(ys.max() + bridge + 2, dist.shape[0])
+    x0, x1 = max(xs.min() - bridge - 1, 0), min(xs.max() + bridge + 2, dist.shape[1])
+    sub_d, sub_c = dist[y0:y1, x0:x1], comp[y0:y1, x0:x1]
+    sy, sx = np.nonzero(np.isfinite(sub_d) & sources[y0:y1, x0:x1])
+    h, w = sub_c.shape
+    out = np.full((h, w), np.inf)
+    pq = []
+    for y, x in zip(*np.nonzero(sub_c)):
+        dd = np.hypot(sy - y, sx - x)
+        near = dd <= bridge + 0.5
+        if near.any():
+            out[y, x] = float(np.min(sub_d[sy[near], sx[near]] + dd[near]))
+            pq.append((out[y, x], int(y), int(x)))
+    heapq.heapify(pq)
+    while pq:
+        d, y, x = heapq.heappop(pq)
+        if d > out[y, x]:
+            continue
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                yy, xx = y + dy, x + dx
+                if (dy or dx) and 0 <= yy < h and 0 <= xx < w and sub_c[yy, xx]:
+                    nd = d + math.hypot(dy, dx)
+                    if nd < out[yy, xx]:
+                        out[yy, xx] = nd
+                        heapq.heappush(pq, (nd, yy, xx))
+    upd = sub_c & (out < sub_d)
+    sub_d[upd] = out[upd]
+
+
+def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray, gr: float, recent: int = 12,
+          bridge: int = 4, start_band: float = 4.0, min_len: float = 8.0, give_up: int = 40) -> dict:
+    """Grow one grain's tube through an arrival map (see the module docstring).
+
+    Returns the tube mask, each tube pixel's arrival bin and rim distance, the emergence bin
+    and the length per bin.
+    """
+    n = int(arr.max())
+    blocked = blocked | (rg < gr + HALO)
+    start = (rg >= gr + HALO) & (rg <= gr + HALO + start_band)  # the map may miss the px next to the rim
+    ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * bridge + 1, 2 * bridge + 1))
+    tube = np.zeros(arr.shape, bool)
+    t_in = np.full(arr.shape, -1, np.int32)
+    dist = np.full(arr.shape, np.inf)
+    length = np.zeros(n)
+    emerge = None
+    for b in range(n):
+        new = (arr == b) & ~blocked
+        if new.any():
+            nl, lab = cv2.connectedComponents(new.astype(np.uint8), connectivity=8)
+            if not tube.any():
+                _, lab_all = cv2.connectedComponents(((arr <= b) & ~blocked).astype(np.uint8), connectivity=8)
+                old_far = (arr < b - 3) & (rg > gr + 10.0)
+                for l in range(1, nl):
+                    c = lab == l
+                    if not (c & start).any():
+                        continue
+                    a = np.angle(np.exp(1j * (ang[c] - np.angle(np.mean(np.exp(1j * ang[c]))))))
+                    if np.ptp(a) > np.deg2rad(60):          # an arc round the rim, not a stub leaving it
+                        continue
+                    if (np.isin(lab_all, np.unique(lab_all[c])) & old_far).any():
+                        continue                             # the leading end of a structure already there
+                    tube |= c
+                    t_in[c] = b
+                    dist[c & start] = rg[c & start] - gr    # lengths count from the rim, gap included
+                    _extend_dist(dist, c, c & start, 1)
+                if tube.any():
+                    emerge = b
+            else:
+                tip = tube & (t_in >= t_in.max() - recent)
+                seeds = cv2.dilate(tip.astype(np.uint8), ker).astype(bool)
+                for l in range(1, nl):
+                    c = lab == l
+                    if (c & seeds).any():
+                        _extend_dist(dist, c, tip, bridge)
+                        tube |= c
+                        t_in[c] = b
+                if b - emerge > give_up and not (tube & (rg > gr + min_len)).any():
+                    tube[:], t_in[:], dist[:], emerge = False, -1, np.inf, None  # rim noise: start again
+        fin = tube & np.isfinite(dist)
+        length[b] = float(dist[fin].max()) if fin.any() else 0.0
+    return {"tube": tube, "t_in": t_in, "dist": dist, "emerge": emerge, "length": np.maximum.accumulate(length)}
+
+
+def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, others: list[dict], p) -> dict:
+    """One grain read by the flood, as a result dict of the same shape as ``analyze_grain``'s."""
+    from .analyze import local_shifts, plausible_drift
+    fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
+    n_bins = int(meta["n_bins"]) - rs
+    gx, gy, gr = grain["x"], grain["y"], grain["r"]
+    half = p.flood_half
+    centre = half - 0.5
+    crops = np.stack([renderer.crop(b, gx, gy, half) for b in range(rs, rs + n_bins)])
+    ls = local_shifts(np.nan_to_num(crops, nan=float(np.nanmedian(crops))), centre, gr, p.reg_pad, p.ref_bins)
+    flags = ["reader:flood"]
+    if p.drift_check and not plausible_drift(ls):
+        ls, flags = np.zeros_like(ls), flags + ["drift_rejected"]
+    late = np.nan_to_num(crops[-4:-1].mean(axis=0), nan=0.0)
+    del crops
+    warp = lambda c, s: cv2.warpAffine(np.nan_to_num(c).astype(np.float32), np.float32([[1, 0, -s[0]], [0, 1, -s[1]]]),
+                                       (2 * half, 2 * half), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
+    present = np.stack([warp(prob.crop(b, gx, gy, half), s) >= 0.5 * P_SCALE for b, s in zip(range(rs, rs + n_bins), ls)])
+    yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float32)
+    rg, ang = np.hypot(xx - centre, yy - centre), np.arctan2(yy - centre, xx - centre)
+    blocked = rg < gr - 1.0
+    for o in others:
+        ox, oy = o["x"] - gx + centre, o["y"] - gy + centre
+        if -o["r"] - 5 < ox < 2 * half + o["r"] + 5 and -o["r"] - 5 < oy < 2 * half + o["r"] + 5:
+            blocked |= np.hypot(xx - ox, yy - oy) < o["r"] + p.other_block_px
+    arr = arrivals(present, blocked)
+    fl = flood(arr, rg, ang, blocked, gr, p.flood_recent, p.flood_bridge, p.flood_start_band)
+    length = np.maximum(fl["length"] - p.flood_tip_px, 0.0) * (fl["length"] > 0)
+    frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
+    to_ref = lambda y, x: [round(float(x - centre + gx), 2), round(float(y - centre + gy), 2)]
+    res = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": flags, "map_threshold": 1.0,
+           "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
+    b = fl["emerge"]
+    if b is None or length[-1] < p.min_tube_px:
+        res.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,
+                   length={"frames": frames, "px": [0.0] * n_bins}, path=[])
+        res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), fl["tube"], None, None, None, centre)
+        return res
+    tube, t_in, dist = fl["tube"], fl["t_in"], fl["dist"]
+    tips = []
+    for t in range(n_bins):  # tip = the farthest tube pixel claimed by then
+        sel = tube & (t_in <= t) & np.isfinite(dist)
+        y, x = np.unravel_index(int(np.argmax(np.where(sel, dist, -1.0))), dist.shape) if sel.any() else (centre, centre)
+        tips.append(to_ref(y, x))
+    # the route for the gallery: rim to the final tip through the tube
+    ty, tx = np.unravel_index(int(np.argmax(np.where(tube & np.isfinite(dist), dist, -1.0))), dist.shape)
+    order = sorted(zip(*np.nonzero(tube & np.isfinite(dist))), key=lambda q: dist[q])
+    route = [q for q in order if math.hypot(q[0] - ty, q[1] - tx) <= dist[ty, tx] - dist[q] + 3.0][::3]
+    status = "emerged_at_start" if b == 0 else "emerged_within"
+    res.update(status=status, onset_frame=frames[b], onset_interval=None if b == 0 else [frames[b - 1], frames[b]],
+               length={"frames": frames, "px": [round(float(v), 2) for v in length]},
+               tip={"frames": frames, "xy": tips}, path=[to_ref(y, x) for y, x in route],
+               exit_xy=to_ref(*route[0]) if route else to_ref(centre, centre),
+               final_length_px=round(float(length[-1]), 2), path_length_px=round(float(dist[ty, tx]), 2))
+    pts = np.array([[x, y] for y, x in route], float) if len(route) > 1 else None
+    res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), tube, pts, None, None, centre)
+    return res
