@@ -6,7 +6,7 @@ const S = {
   step: "coarse", fineStart: 0, fv: null, la: null, coarseTile: null, consulted: new Set(),
   contrast: "n", traceIdx: 0, pts: [], traceView: "near", overlay: true, marker: true,
   contact: false, smooth: 0, fieldWhich: "early",
-  timers: {}, openedAt: Date.now(), retest: null, retestIdx: 0,
+  timers: {}, openedAt: Date.now(), retest: null, retestIdx: 0, lretest: null, lretestIdx: 0,
 };
 const EMERGED = ["emerged_within", "emerged_at_start"];
 const VERDICT_TEXT = {
@@ -90,21 +90,26 @@ function renderChrome() {
   if (g.border) chips.push(`<span class="chip warn">near edge</span>`);
   if (g.source === "user") chips.push(`<span class="chip">added by you</span>`);
   if (g.excluded) chips.push(`<span class="chip bad">excluded: ${g.exclude_reason}</span>`);
-  if (on && S.view !== "retest") {
+  const blind = S.view === "retest" || S.view === "lretest";
+  if (on && !blind) {
     let t = VERDICT_TEXT[on.verdict];
     if (on.verdict === "emerged_within") t += ` (${on.last_absent_frame ?? "?"}, ${on.first_visible_frame}]`;
     chips.push(`<span class="chip ok">${t}</span>`);
   }
-  const pos = S.view === "retest"
-    ? `retest ${S.retestIdx + 1}/${(S.retest || []).length}`
+  const pos = S.view === "retest" ? `retest ${S.retestIdx + 1}/${(S.retest || []).length}`
+    : S.view === "lretest" ? `length retest ${S.lretestIdx + 1}/${(S.lretest || []).length}`
     : `${included().indexOf(S.gid) + 1}/${included().length}`;
   bar.innerHTML = `<button class="act" id="prevg">◀ grain</button>
-    <span class="gid">${S.view === "retest" ? "retest" : S.gid}</span>
+    <span class="gid">${blind ? "retest" : S.gid}</span>
     <button class="act" id="nextg">grain ▶</button>
     <button class="act" id="pend">next unfinished ⏭</button>
     <span class="muted">${pos} · centre (${g.x.toFixed(0)}, ${g.y.toFixed(0)}) · r ${g.r.toFixed(1)} px</span>
-    ${S.view === "retest" ? "" : chips.join(" ")}`;
-  if (S.view === "retest") {
+    ${blind ? "" : chips.join(" ")}`;
+  if (S.view === "lretest") {
+    $("#prevg").onclick = () => { S.lretestIdx = Math.max(0, S.lretestIdx - 1); openLengthRetest(); };
+    $("#nextg").onclick = () => { S.lretestIdx = Math.min(S.lretest.length - 1, S.lretestIdx + 1); openLengthRetest(); };
+    $("#pend").style.display = "none";
+  } else if (S.view === "retest") {
     $("#prevg").onclick = () => { S.retestIdx = Math.max(0, S.retestIdx - 1); openRetest(); };
     $("#nextg").onclick = () => { S.retestIdx = Math.min(S.retest.length - 1, S.retestIdx + 1); openRetest(); };
     $("#pend").style.display = "none";
@@ -120,7 +125,7 @@ function render() {
   $("#content").onclick = null;
   renderChrome();
   ({ census: renderCensus, onset: () => renderOnset(false), trace: renderTrace,
-     review: renderReview, retest: renderRetestView })[S.view]();
+     review: renderReview, retest: renderRetestView, lretest: renderLengthRetest })[S.view]();
 }
 
 // ---------------------------------------------------------------- 1. grain census
@@ -414,7 +419,7 @@ function renderTrace() {
     if (!on) $("#go").onclick = () => { S.view = "onset"; render(); };
     return;
   }
-  const b = p[S.traceIdx]; const V = S.st.layout.trace[S.traceView]; const [cx, cy] = viewCentre(V);
+  const b = p[S.traceIdx]; const V = S.st.layout.trace[S.traceView];
   const size = Math.round(2 * V.half * V.zoom);
   const tr = label().traces || {};
   help(`Trace the <b>whole visible tube of the centre grain</b>: click its exit from the grain first,
@@ -441,20 +446,26 @@ function renderTrace() {
     <button class="act ${S.contrast === "h" ? "on" : ""}" id="tC">C · high contrast</button>
     <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button>
     <p class="muted">Onset: ${on ? VERDICT_TEXT[on.verdict] : "—"} ${on && on.first_visible_frame != null ? "· first visible f" + on.first_visible_frame : ""}</p></div></div>`;
-  const cv = $("#tc"), ctx = cv.getContext("2d");
-  const img = new Image();
+  mountTraceCanvas(b);
+  $("#chips").onclick = (e) => { const s = e.target.closest("span"); if (s) { S.traceIdx = +s.dataset.i; loadTrace(); render(); } };
+  wireTraceControls(saveTrace);
+}
+function mountTraceCanvas(b) {  // bin b in the current view; clicks add points in movie coordinates
+  const V = S.st.layout.trace[S.traceView], [cx, cy] = viewCentre(V);
+  const cv = $("#tc"), img = new Image();
   img.onload = () => { S._img = img; drawTrace(); };
   img.src = `/api/img/frame/${S.gid}?bin=${b}&view=${S.traceView}&contrast=${S.contrast}&smooth=${S.smooth}&cx=${cx}&cy=${cy}`;
   cv.onclick = (e) => {
     const x = cx - V.half + e.offsetX / V.zoom, y = cy - V.half + e.offsetY / V.zoom;
     S.pts.push([x, y]); drawTrace(); updateCount();
   };
-  $("#chips").onclick = (e) => { const s = e.target.closest("span"); if (s) { S.traceIdx = +s.dataset.i; loadTrace(); render(); } };
-  $("#sF").onclick = () => saveTrace("full");
-  $("#sP").onclick = () => saveTrace("partial");
-  $("#s0").onclick = () => saveTrace("no_tube");
-  $("#sU").onclick = () => saveTrace("unsure");
-  if ($("#sB")) $("#sB").onclick = () => saveTrace("burst");
+}
+function wireTraceControls(save) {
+  $("#sF").onclick = () => save("full");
+  $("#sP").onclick = () => save("partial");
+  $("#s0").onclick = () => save("no_tube");
+  $("#sU").onclick = () => save("unsure");
+  if ($("#sB")) $("#sB").onclick = () => save("burst");
   $("#undo").onclick = () => { S.pts.pop(); drawTrace(); updateCount(); };
   $("#clr").onclick = () => { S.pts = []; drawTrace(); updateCount(); };
   $("#tT").onclick = () => { S.contact = !S.contact; render(); };
@@ -566,18 +577,81 @@ function openRetest() {
   render();
 }
 
+// ---------------------------------------------------------------- length retest (blind repeat of traces)
+async function renderLengthRetest() {
+  if (!S.lretest) {
+    S.lretest = (await (await fetch("/api/trace_retest")).json()).traces;
+    if (!S.lretest.length) {
+      help(`The length retest repeats full traces blind. Trace some tubes first.`); $("#content").innerHTML = ""; return;
+    }
+    const done = S.st.retest.trace_labels || {};
+    const first = S.lretest.findIndex((t) => !done[`${t.grain}:${t.bin}`]);
+    S.lretestIdx = first < 0 ? S.lretest.length : first;
+    return openLengthRetest();
+  }
+  if (S.lretestIdx >= S.lretest.length) {
+    help(`Length retest complete — thank you.`); $("#content").innerHTML = ""; return;
+  }
+  const item = S.lretest[S.lretestIdx];
+  if (S.lretestKey !== `${item.grain}:${item.bin}`) return openLengthRetest();
+  const V = S.st.layout.trace[S.traceView], size = Math.round(2 * V.half * V.zoom);
+  help(`Length retest: trace this tube again, from scratch, exactly as you would the first time: its exit from
+    the centre grain first, then along the centreline to the apex. Your earlier trace is hidden on purpose.
+    <kbd>F</kbd> full tube · <kbd>P</kbd> partial · <kbd>0</kbd> no tube · <kbd>U</kbd> unsure ·
+    <kbd>⌫</kbd> undo point · <kbd>T</kbd> touching · <kbd>W</kbd> wide/near ·
+    ${S.st.layout.trace.far ? "<kbd>X</kbd> extra wide · " : ""}<kbd>H</kbd> hide marks · <kbd>C</kbd> contrast ·
+    <kbd>A</kbd> smoother.`);
+  $("#content").innerHTML = `<div class="row"><div class="wrap"><canvas id="tc" width="${size}" height="${size}"></canvas></div>
+    <div class="side"><h3>Length retest ${S.lretestIdx + 1} of ${S.lretest.length} · frame ${item.bin * S.st.frames_per_bin + S.st.frames_per_bin / 2}</h3>
+    <p>${S.pts.length} point(s), ${traceLen().toFixed(1)} px </p>
+    <button class="act primary" id="sF">F · full tube</button><button class="act" id="sP">P · partial</button><br>
+    <button class="act" id="s0">0 · no tube</button><button class="act" id="sU">U · unsure</button><br>
+    <button class="act" id="undo">⌫ undo</button><button class="act" id="clr">clear</button><br>
+    <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
+    <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
+    ${S.st.layout.trace.far ? `<button class="act ${S.traceView === "far" ? "on" : ""}" id="tX">X · extra wide</button>` : ""}
+    <button class="act ${S.contrast === "h" ? "on" : ""}" id="tC">C · high contrast</button>
+    <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button></div></div>`;
+  S._img = null;
+  mountTraceCanvas(item.bin);
+  wireTraceControls(saveRetestTrace);
+}
+function openLengthRetest() {
+  S.view = "lretest";
+  if (S.lretestIdx < S.lretest.length) {
+    if (S.gid) S.timers[S.gid] = spent();
+    const item = S.lretest[S.lretestIdx];
+    S.gid = item.grain; S.openedAt = Date.now(); S.lretestKey = `${item.grain}:${item.bin}`;
+    S.pts = []; S.contact = false;  // blind: nothing of the earlier trace is loaded
+  }
+  render();
+}
+async function saveRetestTrace(state) {
+  if ((state === "full" || state === "partial") && S.pts.length < 2) {
+    alert("Click at least the exit point and the apex before saving a traced tube."); return;
+  }
+  const item = S.lretest[S.lretestIdx];
+  await post(`/api/trace_retest/${item.grain}`, { bin: item.bin, state, points: S.pts, contact: S.contact,
+                                                   view: S.traceView, time_spent_s: spent() });
+  await refresh();
+  S.lretestIdx += 1;
+  openLengthRetest();
+}
+
 // ---------------------------------------------------------------- keys
 document.addEventListener("keydown", (e) => {
   if (["INPUT", "TEXTAREA"].includes(e.target.tagName) || e.metaKey || e.ctrlKey) return;
   const k = e.key;
-  if (S.view === "trace" && plan().length) {
-    if (k === "ArrowLeft" && !e.shiftKey) { S.traceIdx = Math.max(0, S.traceIdx - 1); loadTrace(); return render(); }
-    if (k === "ArrowRight" && !e.shiftKey) { S.traceIdx = Math.min(plan().length - 1, S.traceIdx + 1); loadTrace(); return render(); }
+  const lr = S.view === "lretest" && S.lretest && S.lretestIdx < S.lretest.length;
+  if ((S.view === "trace" && plan().length) || lr) {
+    const save = lr ? saveRetestTrace : saveTrace;
+    if (!lr && k === "ArrowLeft" && !e.shiftKey) { S.traceIdx = Math.max(0, S.traceIdx - 1); loadTrace(); return render(); }
+    if (!lr && k === "ArrowRight" && !e.shiftKey) { S.traceIdx = Math.min(plan().length - 1, S.traceIdx + 1); loadTrace(); return render(); }
     const map = { f: "full", p: "partial", 0: "no_tube", u: "unsure" };
-    if (map[k.toLowerCase()]) return saveTrace(map[k.toLowerCase()]);
+    if (map[k.toLowerCase()]) return save(map[k.toLowerCase()]);
     if (k === "Backspace") { e.preventDefault(); S.pts.pop(); drawTrace(); return updateCount(); }
     if (k === "t") { S.contact = !S.contact; return render(); }
-    if (k === "b" && canBurst()) return saveTrace("burst");
+    if (!lr && k === "b" && canBurst()) return saveTrace("burst");
     if (k === "w") return toggleWide();
     if (k === "x") return toggleFar();
     if (k === "h") { S.overlay = !S.overlay; return drawTrace(); }
@@ -607,6 +681,7 @@ document.addEventListener("keydown", (e) => {
 document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   S.view = b.dataset.view;
   if (S.view === "trace" || S.view === "onset") resetGrainState();
+  if (S.view === "lretest") S.lretestKey = null;  // re-enter blind, with an empty trace
   render();
 });
 

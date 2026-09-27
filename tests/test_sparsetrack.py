@@ -551,3 +551,15 @@ def test_score_counts_a_right_length_on_the_wrong_tube_apart():
     assert score(labels, tip_right)["tips"]["length_and_tip"] == 1
     rep = score(labels, tip_wrong)
     assert rep["length_full"]["within_tolerance"] == 1 and rep["tips"]["length_and_tip"] == 0
+
+
+def test_bench_length_retest_is_kept_apart_from_the_first_answer(tiny_cache):
+    from sparsetrack.evaluate import retest_report
+    bench = Bench(tiny_cache, tiny_cache / "t.json")
+    bench.set_onset("g001", {"verdict": "emerged_at_start"})
+    bench.set_trace("g001", {"bin": 10, "state": "full", "points": [[40, 30], [44, 22]]})
+    assert bench.pick_trace_retest() == [{"grain": "g001", "bin": 10}]
+    bench.set_trace("g001", {"bin": 10, "state": "full", "points": [[40, 30], [45, 21]]}, retest=True)
+    assert bench.doc["labels"]["g001"]["traces"]["10"]["path_xy_view"][-1] == [44.0, 22.0]  # first answer untouched
+    rep = retest_report(bench.doc)["traces"]
+    assert rep["both_full"] == 1 and rep["length_within"] == 1 and rep["length_and_tip"] == 1

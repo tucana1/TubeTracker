@@ -109,6 +109,18 @@ def cmd_eval(args) -> None:
         Path(args.out).write_text(text)
 
 
+def cmd_retest(args) -> None:
+    from .evaluate import load, retest_report
+    r = retest_report(load(args.labels))
+    o, t = r["onset"], r["traces"]
+    print(f"onset retest: {o['within']}/{o['n']} first-visible bins within +/-600 frames of the first answer")
+    print(f"length retest: {t['n']} traces repeated, {t['both_full']} full both times; length within max(2 px, 10%): "
+          f"{t['length_within']}/{t['both_full']}; length and apex within max(5 px, 10%): {t['length_and_tip']}/"
+          f"{t['both_full']}; median |difference| {t['median_abs_diff'] if t['median_abs_diff'] is None else round(t['median_abs_diff'], 2)} px")
+    for row in t["rows"]:
+        print("  ", row)
+
+
 def cmd_compare(args) -> None:
     from .evaluate import load
     from .render import Renderer
@@ -178,6 +190,9 @@ def main(argv=None) -> None:
     m.add_argument("--pred", required=True)
     m.add_argument("--out", required=True)
     m.set_defaults(func=cmd_compare)
+    r = sub.add_parser("retest", help="the annotator's blind repeats against their first answers")
+    r.add_argument("labels")
+    r.set_defaults(func=cmd_retest)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")
     e.add_argument("--labels", required=True)
     e.add_argument("--pred", required=True, nargs="+")

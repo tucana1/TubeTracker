@@ -48,6 +48,7 @@ TRACE_VIEWS = {"near": {"half": 64, "zoom": 5.0}, "wide": {"half": 128, "zoom": 
                "far": {"half": 256, "zoom": 1.25, "fit": True}}
 ZOOM = {"half": 56, "zoom": 4.5}  # census close-up of the grain in focus
 RETEST_SIZE = 8
+TRACE_RETEST_SIZE = 15
 FOLLOW_HALF = 60        # crop used to measure a grain's own drift
 FOLLOW_MAX_STEP = 10.0  # a jump bigger than this between bins means the tracking is unreliable
 
@@ -226,7 +227,7 @@ class Bench:
             self.save("retest_onset" if retest else "onset", {"grain": gid, **record})
         return record
 
-    def set_trace(self, gid: str, body: dict) -> dict:
+    def set_trace(self, gid: str, body: dict, retest: bool = False) -> dict:
         state = body.get("state")
         if state not in TRACE_STATES:
             raise ValueError(f"bad trace state {state!r}")
@@ -257,6 +258,10 @@ class Bench:
         }
         with self.lock:
             self.grain(gid)
+            if retest:  # the blind length retest: kept apart from the answers it repeats
+                self.doc["retest"].setdefault("trace_labels", {})[f"{gid}:{b}"] = record
+                self.save("retest_trace", {"grain": gid, **record})
+                return record
             entry = self.doc["labels"].setdefault(gid, {})
             entry.setdefault("traces", {})[str(b)] = record
             if "time_spent_s" in body:
@@ -298,6 +303,25 @@ class Bench:
                 self.doc["retest"]["grains"] = done[:RETEST_SIZE]
                 self.save("retest_pick", {"grains": self.doc["retest"]["grains"]})
         return self.doc["retest"]["grains"]
+
+    def pick_trace_retest(self, n: int = TRACE_RETEST_SIZE) -> list[dict]:
+        """A fixed random set of FULL traces to repeat blind: one per grain, none touching anything."""
+        with self.lock:
+            if not self.doc["retest"].get("traces"):
+                rng = random.Random(20260927)
+                picks = []
+                for gid in sorted(self.doc["labels"]):
+                    g = self.doc["grains"].get(gid, {})
+                    if g.get("excluded") or not g.get("isolated", True):
+                        continue
+                    full = sorted(int(b) for b, t in (self.doc["labels"][gid].get("traces") or {}).items()
+                                  if t["state"] == "full" and not t.get("contact"))
+                    if full:
+                        picks.append({"grain": gid, "bin": rng.choice(full)})
+                rng.shuffle(picks)
+                self.doc["retest"]["traces"] = picks[:n]
+                self.save("trace_retest_pick", {"traces": self.doc["retest"]["traces"]})
+        return self.doc["retest"]["traces"]
 
     # ---- images ---------------------------------------------------------------------
     def follow(self, gid: str) -> np.ndarray:
@@ -393,6 +417,8 @@ def make_handler(bench: Bench):
                     return self._json(bench.state())
                 if parts == ["api", "retest"]:
                     return self._json({"grains": bench.pick_retest()})
+                if parts == ["api", "trace_retest"]:
+                    return self._json({"traces": bench.pick_trace_retest()})
                 if parts[:2] == ["api", "img"]:
                     kind, mode = parts[2], q.get("contrast", "n")
                     if kind == "field":
@@ -422,6 +448,8 @@ def make_handler(bench: Bench):
                     return self._json(bench.set_onset(parts[2], body))
                 if parts[:2] == ["api", "retest"]:
                     return self._json(bench.set_onset(parts[2], body, retest=True))
+                if parts[:2] == ["api", "trace_retest"]:
+                    return self._json(bench.set_trace(parts[2], body, retest=True))
                 if parts[:2] == ["api", "trace"]:
                     return self._json(bench.set_trace(parts[2], body))
                 if parts[:2] == ["api", "exclude"]:

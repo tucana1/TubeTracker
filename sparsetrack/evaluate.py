@@ -192,3 +192,34 @@ def markdown(report: dict) -> str:
                      f"{'' if not br else f'({br[0]}, {br[1]}]'} | {r.get('pred_onset', '')} | "
                      f"{'' if 'onset_error' not in r else int(r['onset_error'])} | {full} |")
     return "\n".join(lines) + "\n"
+
+
+def retest_report(labels: dict, onset_tol: float = 600.0, len_abs: float = 2.0, len_rel: float = 0.10,
+                  tip_abs: float = 5.0, tip_rel: float = 0.10) -> dict:
+    """The annotator against themselves: blind onset repeats and blind trace repeats, judged with
+    the tolerances the methods are scored with (the ceiling a method can be expected to reach)."""
+    rt = labels.get("retest") or {}
+    onsets = []
+    for gid, lab in (rt.get("labels") or {}).items():
+        a, b = (labels["labels"].get(gid) or {}).get("onset") or {}, lab.get("onset") or {}
+        if a.get("verdict") == b.get("verdict") == "emerged_within":
+            onsets.append((gid, b["first_visible_frame"] - a["first_visible_frame"]))
+    traces = []
+    for key, b in (rt.get("trace_labels") or {}).items():
+        gid, bin_ = key.split(":")
+        a = ((labels["labels"].get(gid) or {}).get("traces") or {}).get(bin_)
+        if not a or a["state"] != "full" or b["state"] != "full":
+            traces.append({"trace": key, "first": a and a["state"], "repeat": b["state"]})
+            continue
+        h = a["length_px"]
+        tip = float(np.hypot(*(np.asarray(b["path_xy_ref"][-1]) - np.asarray(a["path_xy_ref"][-1]))))
+        traces.append({"trace": key, "first": h, "repeat": b["length_px"], "diff": round(b["length_px"] - h, 2),
+                       "tip_px": round(tip, 2), "length_ok": abs(b["length_px"] - h) <= max(len_abs, len_rel * h),
+                       "tip_ok": tip <= max(tip_abs, tip_rel * h)})
+    both = [t for t in traces if "diff" in t]
+    return {"onset": {"n": len(onsets), "within": sum(abs(d) <= onset_tol for _, d in onsets), "pairs": onsets},
+            "traces": {"n": len(traces), "both_full": len(both),
+                       "length_within": sum(t["length_ok"] for t in both),
+                       "length_and_tip": sum(t["length_ok"] and t["tip_ok"] for t in both),
+                       "median_abs_diff": float(np.median([abs(t["diff"]) for t in both])) if both else None,
+                       "rows": traces}}
