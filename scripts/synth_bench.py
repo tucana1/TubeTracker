@@ -38,7 +38,10 @@ REAL = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
         "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json")}
 SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json"),
           "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json"),
-          "v5": ("v5s{}_cache", "synthv5_s{}_truth.json")}
+          "v5": ("v5s{}_cache", "synthv5_s{}_truth.json"),
+          # v5 on movie 2's field, sized like movie 2 (prototypes/learned_evidence/recipe.py); seeds 10-15
+          # trained the tube-probability model, seed 20 is held out for tuning its reader
+          "v5m2": ("v5m2s{}_cache", "synthv5m2_s{}_truth.json")}
 
 
 def ensure_cache(cache: Path, truth_path: Path) -> bool | None:
@@ -224,6 +227,9 @@ if __name__ == "__main__":
     ap.add_argument("--keep-caches", action="store_true", help="keep caches rebuilt from the movies (440 MB each)")
     ap.add_argument("--set", nargs="*", default=None, help="key=value overrides for one variant")
     args = ap.parse_args()
+    for kv in args.set or []:
+        if "=" not in kv or " " in kv or "=" in kv.split("=", 1)[1]:
+            raise SystemExit(f"--set takes separate key=value arguments, got {kv!r}")
     variants = ([("custom " + " ".join(args.set), Params(**{k: parse_value(v) for k, v in
                                                             (kv.split("=", 1) for kv in args.set)}))]
                 if args.set is not None else [("default", Params()),

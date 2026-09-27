@@ -79,9 +79,23 @@ using the flood only where a grain's change region touches a neighbour gives ld 
 0.5.0's default. Caveat: the flood's rules were settled while looking at movie-2 grains; an
 honest score needs a movie labelled after 0.5.0.
 
-Also tried in this round, not kept: a wider start band for the flood (ld +5, m2 -2); an
-arrival-order front along SparseTrack's path (robust monotone fit of per-point arrival bins:
-neutral on model paths, worse on human routes, where crossings are too dense to be outliers).
+Also tried in this round, not kept:
+- A wider start band for the flood: ld +5, m2 -2.
+- An arrival-order front along SparseTrack's path (a robust monotone fit of per-point
+  arrival bins): neutral on model paths, worse on human routes, where crossings are too
+  dense to be outliers.
+- More data: six more synthetic movies (dev-field seeds 5-7, movie-2-field seeds 13-15;
+  14,400 crops, 12,000 steps, validation Dice loss 0.157 vs 0.167). Traced-tube recall rose
+  (ld 96%, m2 78%), but so did marks beside tubes (ld 32%, m2 12%): the maps got fat. In the
+  hybrid, movie 2 fell from 23 to 14 of 54 (95% CI -16 to -2). More synthetic data is only
+  better if it keeps tube widths honest: the 1-1.6x wider tubes probably taught over-painting.
+- Onset look-back (after the flood, walk the onset back while P at the tube's exit stays
+  above a lower threshold): 0.25 gave ld +2 onsets and m2 -1; 0.35 gave m2 -1. Not adopted.
+
+SparseTrack 0.5.1 also sends grains whose background change lifts the map threshold above
+its floor to the flood, keeping their change-reader onset: m2 23/54 (+14 vs 0.4.3, 95% CI +5 to
++23). 0.5.2 fixed two flood bugs (a false start's lengths survived its reset; slow starts were
+given up while still growing): same scores, m2 length bias -6.2 -> -3.0 px.
 
 ## Conclusions (first round)
 

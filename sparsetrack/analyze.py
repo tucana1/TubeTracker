@@ -128,6 +128,7 @@ class Params:
     flood_bridge: int = 4        # px a new piece may be from them
     flood_start_band: float = 4.0  # px beyond the rim halo where a tube may start
     flood_tip_px: float = 0.0    # subtracted from the flood's reach
+    flood_lookback: float = 0.25  # walk the onset back while P at the tube's exit stays above this (0 = off)
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
     settle_bins: int = 24
     grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
@@ -1062,6 +1063,8 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             log(f"growth scale {scale:.2f} px/bin (90th pct, median of isolated grains): front speed cap "
                 f"{vmax:.1f} px/bin")
             p = replace(p, vmax_px=vmax)
+    if p.reader not in ("change", "flood", "hybrid"):
+        raise ValueError(f"unknown reader {p.reader!r}: change, flood or hybrid")
     prob = None
     if p.reader != "change":
         from dataclasses import replace

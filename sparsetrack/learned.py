@@ -259,7 +259,9 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     del crops
     warp = lambda c, s: cv2.warpAffine(np.nan_to_num(c).astype(np.float32), np.float32([[1, 0, -s[0]], [0, 1, -s[1]]]),
                                        (2 * half, 2 * half), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-    present = np.stack([warp(prob.crop(b, gx, gy, half), s) >= 0.5 * P_SCALE for b, s in zip(range(rs, rs + n_bins), ls)])
+    pstack = np.stack([np.clip(warp(prob.crop(b, gx, gy, half), s), 0, 255).astype(np.uint8)
+                       for b, s in zip(range(rs, rs + n_bins), ls)])
+    present = pstack >= 0.5 * P_SCALE
     yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float32)
     rg, ang = np.hypot(xx - centre, yy - centre), np.arctan2(yy - centre, xx - centre)
     blocked = rg < gr - 1.0
@@ -290,6 +292,19 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     ty, tx = np.unravel_index(int(np.argmax(np.where(tube & np.isfinite(dist), dist, -1.0))), dist.shape)
     order = sorted(zip(*np.nonzero(tube & np.isfinite(dist))), key=lambda q: dist[q])
     route = [q for q in order if math.hypot(q[0] - ty, q[1] - tx) <= dist[ty, tx] - dist[q] + 3.0][::3]
+    if p.flood_lookback > 0 and route:
+        # the flood starts once the map is sure; a young tube often shows at its own exit earlier,
+        # below that certainty: walk back while the exit sector stays above the lower threshold
+        a0 = math.atan2(route[0][0] - centre, route[0][1] - centre)
+        sector = (rg >= gr + 1.0) & (rg <= gr + 8.0) & (np.abs(np.angle(np.exp(1j * (ang - a0)))) <= np.deg2rad(25))
+        sig = pstack[:, sector].max(axis=1) / P_SCALE if sector.any() else np.zeros(n_bins)
+        t = b
+        while t > 0 and np.sum(sig[max(0, t - 3):t] >= p.flood_lookback) >= 2:
+            t -= 1
+        if t < b:  # lengths ramp from the earlier onset to the flood's first reading
+            length[t:b] = np.linspace(0.0, length[b], b - t, endpoint=False)
+            flags.append(f"onset_lookback:{b - t}")
+            b = t
     status = "emerged_at_start" if b == 0 else "emerged_within"
     res.update(status=status, onset_frame=frames[b], onset_interval=None if b == 0 else [frames[b - 1], frames[b]],
                length={"frames": frames, "px": [round(float(v), 2) for v in length]},
