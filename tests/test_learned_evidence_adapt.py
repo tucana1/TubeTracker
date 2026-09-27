@@ -1,5 +1,7 @@
 """The one-command adaptation: steps in order, finished steps skipped, and a summary of what is used now."""
 
+import json
+
 import pytest
 
 pytest.importorskip("torch")
@@ -18,16 +20,19 @@ def repo(tmp_path, monkeypatch):
 
 
 def _steps(calls, adopt_decoder=True, adopt_model=False):
-    def step(name, extra=None):
+    from prototypes.learned_evidence.fuse import DEFAULT
+
+    def step(name, extra=None, content="{}"):
         def run(argv):
             calls.append((name, argv))
             work = adapt.Path(argv[argv.index("--work") + 1])
             work.mkdir(parents=True, exist_ok=True)
             (work / "report.txt").write_text(f"{name} report")
             if extra:
-                (work / extra).write_text("{}")
+                (work / extra).write_text(content)
         return run
-    return {"dev": step("dev"), "calibrate": step("calibrate", "decoder.json" if adopt_decoder else None),
+    return {"dev": step("dev"), "calibrate": step("calibrate", "decoder.json" if adopt_decoder else None,
+                                                  json.dumps(DEFAULT)),
             "finetune": step("finetune", "unet_ft.pt" if adopt_model else None), "once": step("once")}
 
 
@@ -114,13 +119,40 @@ def test_a_failing_trace_once_step_does_not_keep_the_summary_from_being_written(
 
 
 def test_trace_once_runs_again_when_the_model_in_use_changes(repo):
-    import json
+    from prototypes.learned_evidence.fuse import DEFAULT
     calls = []
     adapt.main(["--skip-finetune"], steps=_steps(calls))
     model, decoder = adapt.in_use()
     (repo / "runs/learned_evidence/ld_once/used.json").write_text(
-        json.dumps({"in_use_model": str(model), "in_use_decoder": str(decoder)}))
+        json.dumps({"in_use_model": str(model), "in_use_decoder": str(decoder), "reading": DEFAULT}))
     calls.clear()
+    adapt.main(["--skip-finetune"], steps=_steps(calls))
+    assert calls == []  # the same model, decoder and reading: nothing to do
     adapt.main([], steps=_steps(calls, adopt_model=True))  # fine-tuning now runs and is adopted
     assert [c[0] for c in calls] == ["finetune", "once"]
     assert (repo / "runs/learned_evidence/ld_once/report_old.txt").exists()
+
+
+def test_steps_that_read_the_movie_as_before_fusion_are_said_so(repo, capsys):
+    from prototypes.learned_evidence.fuse import DEFAULT
+    adapt.main([], steps=_steps([]))
+    root = repo / "runs/learned_evidence"
+    model, decoder = adapt.in_use()
+    (root / "ld/perbin").mkdir(parents=True)
+    (root / "ld/perbin/predictions.json").write_text(json.dumps({"decoder": {"end_px": 1.0, "thick_model": None}}))
+    (root / "ld_cal/decoder.json").write_text(json.dumps({"end_px": -2.0}))  # written before 27 Sep 2026
+    (root / "ld_ft/scores.json").write_text(json.dumps({"settings": {"folds": 3}}))
+    (root / "ld_once/used.json").write_text(json.dumps({"in_use_model": str(model), "in_use_decoder": str(decoder)}))
+    calls = []
+    out = adapt.main([], steps=_steps(calls))
+    assert [c[0] for c in calls] == ["once"]  # step 4 runs again by itself; the others are said so
+    assert "dev and calibrate and finetune read the movie as the launcher did before 27 Sep 2026" in out.read_text()
+    assert "run again with --redo" in capsys.readouterr().out
+    (root / "ld/perbin/predictions.json").write_text(json.dumps({"decoder": {"end_px": 1.0, **DEFAULT}}))
+    (root / "ld_cal/decoder.json").write_text(json.dumps({"end_px": -2.0, **DEFAULT}))
+    (root / "ld_ft/scores.json").write_text(json.dumps({"settings": {"folds": 3, "reading": DEFAULT}}))
+    (root / "ld_once/used.json").write_text(json.dumps({"in_use_model": str(model), "in_use_decoder": str(decoder),
+                                                        "reading": DEFAULT}))  # as trace_once.py writes it now
+    calls.clear()
+    out = adapt.main([], steps=_steps(calls))
+    assert calls == [] and "27 Sep 2026" not in out.read_text()

@@ -25,7 +25,8 @@ import numpy as np
 
 from sparsetrack.evaluate import load, score
 
-from . import calibrate, evaluate, prefix, reach
+from . import calibrate, evaluate, fuse, prefix, reach
+from .evaluate import find_cache
 
 
 def leave_anchor_out(labels: dict, anchors: dict) -> dict:
@@ -36,22 +37,6 @@ def leave_anchor_out(labels: dict, anchors: dict) -> dict:
         lab = doc["labels"].get(gid) or {}
         lab["traces"] = {k: t for k, t in (lab.get("traces") or {}).items() if int(k) < int(anchors[gid]["bin"])}
     return doc
-
-
-def find_cache(net, candidates, field: Path | None = None) -> Path | None:
-    """A probability cache this network built already for this movie (the dev test's, calibration's or
-    fine-tuning's): the same model, and the same prepared movie as far as the field's own metadata tells."""
-    fp = evaluate.fingerprint(net)
-    want = json.loads((field / "meta.json").read_text()) if field is not None and (field / "meta.json").exists() else {}
-    for c in candidates:
-        meta = Path(c) / "meta.json"
-        if not meta.exists():
-            continue
-        m = json.loads(meta.read_text())
-        if m.get("model_sha1") == fp and all(m.get(k) == want[k] for k in ("n_bins", "frames_per_bin", "created", "movie")
-                                             if k in want):
-            return Path(c)
-    return None
 
 
 def out_of_sample(model: Path, labels_path: Path) -> tuple[Path, str | None]:
@@ -75,6 +60,13 @@ def main(argv=None):
     ap.add_argument("--work", default="runs/learned_evidence/ld_once")
     ap.add_argument("--model", default=None, help="default: the model the launcher uses (see adapt.py)")
     ap.add_argument("--decoder", default=None, help="per-bin decoder settings (default: the launcher's)")
+    ap.add_argument("--thick-model", default=str(fuse.THICK),
+                    help="the thick-tube network fused into the model's evidence, as pipeline.py does (default: the "
+                         "shipped one)")
+    ap.add_argument("--no-thick-model", dest="thick_model", action="store_const", const=None,
+                    help="read the model's own evidence")
+    ap.add_argument("--no-continuity", dest="continuity", action="store_false",
+                    help="per-bin decoder: without tip-growth continuity")
     args = ap.parse_args(argv)
     field, labels_path, work = Path(args.field), Path(args.labels), Path(args.work)
     if "m2" in labels_path.name:
@@ -92,20 +84,24 @@ def main(argv=None):
     if not anchors:
         raise SystemExit(f"{labels_path} has no FULL trace with a drawn path to anchor on")
     work.mkdir(parents=True, exist_ok=True)
-    # what this check was asked about, so adapt.py runs it again when the model or decoder in use changes
+    # what this check was asked about, so adapt.py runs it again when the model, decoder or reading changes
+    read = fuse.reading(args.thick_model, args.continuity)
     (work / "used.json").write_text(json.dumps({"in_use_model": str(use_model), "in_use_decoder": str(use_decoder),
-                                                "model": str(model), "decoder": str(decoder)}))
+                                                "model": str(model), "decoder": str(decoder), "reading": read}))
     started = time.time()
     net = load_model(str(model))
     pcache = (find_cache(net, [DEV / f"prob_{field.name}", CAL / "prob", *sorted(FT.glob("prob_*"))], field)
               or evaluate.prob_cache(field, net, work / f"prob_{field.name}"))
-    vmax = speed_cap(pcache, field, labels_path)
-    kw = dict(big=300, burst=True, vmax=vmax) | calibrate.decoder_settings(decoder, model)
+    vmax = speed_cap(pcache, field, labels_path)  # on the model's own evidence, as the pipeline sets it
+    ecache = fuse.evidence(pcache, field, work, args.thick_model, tag=f"_{field.name}",
+                           reuse=[DEV / f"prob_thick_{field.name}", CAL / "prob_thick", FT / "prob_thick"])
+    kw = dict(big=300, burst=True, vmax=vmax) | calibrate.decoder_settings(decoder, model, reading=read)
+    kw |= {"continuity": "path"} if args.continuity else {}
     pp = prefix.Params(vmax_px=vmax, onset_px=kw.get("onset_px", prefix.Params.onset_px))
     quiet = dict(grains_path=labels_path, log=lambda *a: None)
-    runs = {"per-bin": reach.analyze(pcache, field, **quiet, **kw),
-            "prefix": prefix.analyze(pcache, field, **quiet, params=pp),
-            "anchored": prefix.analyze(pcache, field, **quiet, params=pp, anchors=anchors)}
+    runs = {"per-bin": reach.analyze(ecache, field, **quiet, **kw),
+            "prefix": prefix.analyze(ecache, field, **quiet, params=pp),
+            "anchored": prefix.analyze(ecache, field, **quiet, params=pp, anchors=anchors)}
     for name, pred in runs.items():
         (work / f"{name}.json").write_text(json.dumps(pred))
     test = leave_anchor_out(labels, anchors)
@@ -131,7 +127,7 @@ def main(argv=None):
     lines = [f"{labels_path.name}: {n_scored} scored grains with a traced tube; anchored on each grain's latest FULL "
              f"trace (bins {min(bins)}-{max(bins)}, median {int(np.median(bins))}), scored on the {n_test} FULL traces "
              f"before it and the onset brackets ({time.time() - started:.0f} s; model {model}"
-             + (f", decoder {decoder}" if decoder else "") + ")",
+             + (f", decoder {decoder}" if decoder else "") + f"; {fuse.describe(read)})",
              *([note] if note else []),
              *[evaluate.e2e_summary(name, rep) for name, rep in reps.items()],
              *[text for text, _ in pairs.values()],

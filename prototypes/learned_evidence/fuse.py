@@ -15,6 +15,10 @@ writes a probability cache in the same format (``sparsetrack.stack``, P x ``eval
 decoder reads like any other. Its meta records both networks' fingerprints and the rule under "fusion" (and carries no
 "model_sha1" of its own: it is not one network's evidence); an existing fused cache is used again only for the same
 inputs and rule.
+
+``evidence(...)`` builds what the per-bin decoder reads as ``pipeline.py`` does (taking the dev test's thick-tube cache
+when it fits), so calibration, fine-tuning's check and trace-once judge the evidence the launcher uses; ``reading``
+is how each step records what it read, and ``adapt.py`` says when a step read otherwise.
 """
 
 from __future__ import annotations
@@ -90,3 +94,45 @@ def fused_cache(base_cache: str | Path, thick_cache: str | Path, out_cache: str 
     shutil.copy(base_cache / "grains.json", out_cache / "grains.json")
     log(f"fused cache {out_cache.name}: {pb.shape[0]} bins in {time.time() - started:.0f} s")
     return out_cache
+
+
+def thick_cache(field: str | Path, thick_model: str | Path, out_cache: str | Path, reuse=(), log=print) -> Path:
+    """``thick_model``'s probability cache of this movie: one in ``reuse`` that network built on this movie (the dev
+    test's, say), else built at ``out_cache``."""
+    from .evaluate import find_cache, prob_cache
+    from .model import load as load_model
+    net = load_model(str(thick_model))
+    return find_cache(net, [*reuse, out_cache], Path(field)) or prob_cache(field, net, out_cache, log=log)
+
+
+def evidence(pcache: str | Path, field: str | Path, work: str | Path, thick_model: str | Path | None = THICK,
+             tag: str = "", reuse=(), log=print) -> Path:
+    """The evidence the per-bin decoder reads, as ``pipeline.py`` builds it: the model's cache ``pcache`` fused with
+    ``thick_model``'s (``None``: ``pcache`` itself). The thick network's cache is ``work``/prob_thick unless one in
+    ``reuse`` fits; the fused one is ``work``/prob_fused``tag``. Deleting them is the caller's."""
+    if not thick_model:
+        return Path(pcache)
+    tcache = thick_cache(field, thick_model, Path(work) / "prob_thick", reuse, log)
+    return fused_cache(pcache, tcache, Path(work) / f"prob_fused{tag}", log=log)
+
+
+def reading(thick_model: str | Path | None = None, continuity: bool = False) -> dict:
+    """How the per-bin decoder read a movie, as the steps record it: the thick-tube network fused into the model's
+    evidence (``None``: the model's own) and tip-growth continuity ("path"; ``None``: without)."""
+    return {"thick_model": str(thick_model) if thick_model else None, "continuity": "path" if continuity else None}
+
+
+DEFAULT = reading(THICK, True)  # pipeline.py's, calibrate.py's, finetune.py's and trace_once.py's since 27 Sep 2026
+
+
+def same_reading(a: dict | None, b: dict | None) -> bool:
+    """Whether two records read alike: fused or not, with continuity or not. Records from before 27 Sep 2026 carry
+    neither key: the model's own evidence, without continuity."""
+    a, b = a or {}, b or {}
+    return all(bool(a.get(k)) == bool(b.get(k)) for k in ("thick_model", "continuity"))
+
+
+def describe(rec: dict | None) -> str:
+    rec = rec or {}
+    return (("fused evidence" if rec.get("thick_model") else "the model's own evidence")
+            + (" with continuity" if rec.get("continuity") else " without continuity"))

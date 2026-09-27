@@ -147,3 +147,26 @@ def test_germination_length_ignores_grains_without_a_timed_onset():
     labels["labels"]["g00"]["onset"] = {"verdict": "no_emergence_by_end"}
     labels["grains"]["g01"]["excluded"] = True
     assert set(C.onset_readings(labels, pred)) == {"g02"}
+
+
+def test_decoder_settings_say_when_they_were_fitted_on_other_evidence(tmp_path):
+    from prototypes.learned_evidence.fuse import DEFAULT, reading
+    f = tmp_path / "decoder.json"
+    f.write_text(json.dumps({"end_px": -2.0}))  # written before 27 Sep 2026: the model's own evidence, no continuity
+    notes = []
+    assert C.decoder_settings(f, reading=DEFAULT, log=notes.append) == {"end_px": -2.0}
+    assert len(notes) == 1 and "the model's own evidence without continuity" in notes[0] and "--redo" in notes[0]
+    notes.clear()
+    assert C.decoder_settings(f, reading=reading(), log=notes.append) == {"end_px": -2.0} and not notes
+    f.write_text(json.dumps({"end_px": -2.0, **DEFAULT}))
+    assert C.decoder_settings(f, reading=DEFAULT, log=notes.append) == {"end_px": -2.0} and not notes
+
+
+def test_readings_pass_the_decoders_other_keywords_on(tmp_path, monkeypatch):
+    from prototypes.learned_evidence import reach
+    seen = []
+    monkeypatch.setattr(reach, "analyze", lambda *a, **k: seen.append(k) or {"grains": []})
+    out = C.readings(tmp_path / "p", tmp_path / "f", tmp_path / "l.json", 4.0, ends=(-1.0, 2.0), workers=1,
+                     continuity="path")
+    assert sorted(out) == [-1.0, 2.0]
+    assert [(k["end_px"], k["continuity"], k["vmax"]) for k in seen] == [(-1.0, "path", 4.0), (2.0, "path", 4.0)]

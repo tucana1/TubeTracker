@@ -93,6 +93,22 @@ def prob_cache(image_cache: str | Path, net, out_cache: str | Path, log=print) -
     return out_cache
 
 
+def find_cache(net, candidates, field: Path | None = None) -> Path | None:
+    """A probability cache this network built already for this movie (the dev test's, calibration's or
+    fine-tuning's): the same model, and the same prepared movie as far as the field's own metadata tells."""
+    fp = fingerprint(net)
+    want = json.loads((field / "meta.json").read_text()) if field is not None and (field / "meta.json").exists() else {}
+    for c in candidates:
+        meta = Path(c) / "meta.json"
+        if not meta.exists():
+            continue
+        m = json.loads(meta.read_text())
+        if m.get("model_sha1") == fp and all(m.get(k) == want[k] for k in ("n_bins", "frames_per_bin", "created", "movie")
+                                             if k in want):
+            return Path(c)
+    return None
+
+
 def truth_prob_cache(image_cache: str | Path, field_cache: str | Path, preset_name: str, seed: int,
                      out_cache: str | Path, log=print) -> Path:
     """Upper bound: the exact built-tube mask of every bin (all tubes) as the "probability"."""

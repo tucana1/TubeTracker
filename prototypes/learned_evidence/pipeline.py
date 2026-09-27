@@ -198,7 +198,8 @@ def main(argv=None):
         vmax = float(learned.get("params", {}).get("vmax_px", 4.0))  # SparseTrack's speed cap
     # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
     kw = dict(big=None if args.fixed_crop else 300, burst=not args.no_burst, vmax=vmax)
-    kw.update(calibrate.decoder_settings(args.decoder, model_path))
+    kw.update(calibrate.decoder_settings(args.decoder, model_path, reading=fuse.reading(args.thick_model,
+                                                                                     args.continuity)))
     if args.continuity:
         kw["continuity"] = "path"
     perbin = reach.analyze(ecache, field, grains_path=labels_path, log=lambda *a: None, **kw)

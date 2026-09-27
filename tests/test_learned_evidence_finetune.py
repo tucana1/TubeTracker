@@ -231,7 +231,8 @@ def test_a_stopped_final_tuning_resumes_without_redoing_the_check(movie, tmp_pat
     monkeypatch.setattr(FT, "tune", tune)
     monkeypatch.setattr(FT, "save", save)
     monkeypatch.setattr(FT, "real_samples", lambda *a, **k: {"x": [0, 0]})
-    monkeypatch.setattr(FT, "read_perbin", lambda *a, **k: {"grains": []})
+    reads = []
+    monkeypatch.setattr(FT, "read_perbin", lambda *a, **k: reads.append(k) or {"grains": []})
     monkeypatch.setattr(M, "load", lambda path: "start net")
     monkeypatch.setattr(SE, "score", lambda labels, pred: {"grains_scored": 4, "onset": {"tolerance_frames": 600}})
     monkeypatch.setattr(EV, "e2e_summary", lambda name, rep: name)
@@ -243,6 +244,7 @@ def test_a_stopped_final_tuning_resumes_without_redoing_the_check(movie, tmp_pat
     with pytest.raises(KeyboardInterrupt):
         FT.main(argv)
     assert (work / "scores.json").exists() and not (work / "report.txt").exists() and len(tuned) == 4
+    assert len(reads) == 4 and all(k == {"thick_model": str(FT.THICK), "continuity": "path"} for k in reads)
     tuned.clear()
     stop_at[0] = 0
     FT.main(argv)
@@ -268,3 +270,27 @@ def test_a_tuned_model_is_adopted_only_on_a_gain_clear_of_noise():
     assert not adopted(pb(2, (-1, 5)))  # a gain within noise: not a reason to replace the model
     assert not adopted(pb(4, (1, 7), onset=-1, onset_ci=(-3, 0)))  # lengths better but onsets worse
     assert adopted(pb(0, (-2, 2), onset=3, onset_ci=(1, 5)))  # onsets clearly better, lengths no worse
+
+
+def test_the_checks_readings_are_of_the_fused_evidence_with_continuity(tmp_path, monkeypatch):
+    from prototypes.learned_evidence import evaluate as EV
+    from prototypes.learned_evidence import finetune as FT
+    from prototypes.learned_evidence import fuse, reach
+
+    calls = {}
+    monkeypatch.setattr(EV, "prob_cache", lambda field, net, out, log=print: out.mkdir(parents=True) or out)
+    monkeypatch.setattr(FT, "speed_cap", lambda *a: 5.0)
+
+    def evidence(pcache, field, work, thick_model, tag="", reuse=(), log=print):
+        calls["evidence"] = (pcache, thick_model, tag)
+        (work / f"prob_fused{tag}").mkdir()
+        return work / f"prob_fused{tag}"
+
+    monkeypatch.setattr(fuse, "evidence", evidence)
+    monkeypatch.setattr(reach, "analyze", lambda cache, field, **k: calls.update(read=(cache, k)) or {"grains": []})
+    FT.read_perbin("net", tmp_path / "ld", tmp_path / "l.json", tmp_path, "fold0", thick_model="thick.pt",
+                   continuity="path", end_px=-2.0)
+    cache, kw = calls["read"]
+    assert calls["evidence"] == (tmp_path / "prob_fold0", "thick.pt", "_fold0") and cache == tmp_path / "prob_fused_fold0"
+    assert kw["continuity"] == "path" and kw["end_px"] == -2.0 and kw["vmax"] == 5.0  # speed cap: the model's own
+    assert not (tmp_path / "prob_fold0").exists() and not (tmp_path / "prob_fused_fold0").exists()  # both removed

@@ -124,3 +124,39 @@ def test_the_per_bin_decoder_reads_a_wide_hollow_tube_from_the_fused_cache(tmp_p
     on_base, on_thick, on_fused = final(tmp_path / "base"), final(tmp_path / "thick"), final(fused)
     assert on_base["g001"] == 0.0 and on_thick["g001"] > 60 and abs(on_fused["g001"] - on_thick["g001"]) <= 2.0
     assert on_fused["g002"] == on_base["g002"] > 60 and on_thick["g002"] == 0.0
+
+
+def test_evidence_takes_the_dev_tests_thick_cache_when_that_network_built_it(tmp_path, monkeypatch):
+    from prototypes.learned_evidence import evaluate, model
+    base, thick = _maps()
+    b = _cache(tmp_path / "base", np.stack([base, base]), sha="thin")
+    assert fuse.evidence(b, tmp_path / "field", tmp_path / "work", None) == b  # no thick network: the model's own
+    dev = _cache(tmp_path / "dev_thick", np.stack([thick, thick]), sha="thick")
+    built = []
+
+    def prob_cache(field, net, out, log=print):
+        built.append(out)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        return _cache(out, np.stack([thick, thick]), sha="thick")
+
+    monkeypatch.setattr(model, "load", lambda path: "thick net")
+    monkeypatch.setattr(evaluate, "prob_cache", prob_cache)
+    monkeypatch.setattr(evaluate, "fingerprint", lambda net: "thick")
+    quiet = dict(log=lambda *a: None)
+    out = fuse.evidence(b, tmp_path / "field", tmp_path / "work", "thick.pt", tag="_x", reuse=[dev], **quiet)
+    assert out == tmp_path / "work" / "prob_fused_x" and not built  # the dev test's cache, not built again
+    assert json.loads((out / "meta.json").read_text())["fusion"]["thick"] == str(dev)
+    assert np.array_equal(np.load(out / "bins.npy")[0], fuse.fuse(base, thick))
+    monkeypatch.setattr(evaluate, "fingerprint", lambda net: "another")  # the dev test's was another network's
+    fuse.evidence(b, tmp_path / "field", tmp_path / "work", "thick.pt", tag="_x", reuse=[dev], **quiet)
+    assert built == [tmp_path / "work" / "prob_thick"]
+
+
+def test_readings_are_recorded_and_records_from_before_mean_the_models_own_evidence_without_continuity():
+    assert fuse.THICK.exists() and fuse.DEFAULT == {"thick_model": str(fuse.THICK), "continuity": "path"}
+    assert fuse.same_reading({}, fuse.reading()) and not fuse.same_reading({}, fuse.DEFAULT)
+    assert fuse.same_reading({"end_px": 1.0, "thick_model": "/elsewhere/unet_thick_b3.pt", "continuity": "path"},
+                             fuse.DEFAULT)  # where the network lies does not matter
+    assert not fuse.same_reading(fuse.reading(fuse.THICK, False), fuse.DEFAULT)
+    assert fuse.describe({}) == "the model's own evidence without continuity"
+    assert fuse.describe(fuse.DEFAULT) == "fused evidence with continuity"

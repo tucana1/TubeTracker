@@ -9,7 +9,8 @@
    your traces (the prefix decoder anchored on your latest trace), against the per-bin decoder.
 
 Each step is skipped when its report is already there, so the command can be stopped and started again;
-a step that ran on labels since changed is said so. ``--redo`` runs every step again on the current labels
+a step that ran on labels since changed, or read the movie as the launcher did before 27 Sep 2026 (the
+model's evidence alone, without continuity), is said so. ``--redo`` runs every step again on the current labels
 (calibration's and fine-tuning's earlier outputs are moved aside to ``*_old``); the dev test keeps the model
 it trained, the longest part, and is only scored again. ``SUMMARY.md`` then says what each step found, which
 model and decoder the launcher (``Analyze_Movie_Learned.command``) now uses, and the one command that
@@ -48,11 +49,40 @@ def in_use() -> tuple[Path, Path | None]:
     return _here(model), (decoder if decoder.exists() else None)
 
 
-def _stale_note(stale) -> str:
-    if not stale:
+def _stale_note(stale, other=()) -> str:
+    notes = ([f"The labels have changed since {' and '.join(stale)} ran"] if stale else []) + (
+        [f"{' and '.join(other)} read the movie as the launcher did before 27 Sep 2026 (the model's evidence alone, "
+         "without continuity)"] if other else [])
+    if not notes:
         return ""
-    return (f"\n**The labels have changed since {' and '.join(stale)} ran: run this again with `--redo` for results "
-            "on the current labels.**\n")
+    return f"\n**{'. '.join(notes)}: run this again with `--redo` for results on the current labels and decoder.**\n"
+
+
+def _read_before(name: str, work: Path) -> dict | None:
+    """How a finished step read the movie, as it recorded it (``fuse.reading``; records from before 27 Sep 2026
+    carry nothing: the model's evidence alone, without continuity). None where the step's result does not depend
+    on it or it left nothing to tell."""
+    import json
+    if name == "dev":
+        path = work / "perbin" / "predictions.json"
+        return (json.loads(path.read_text()).get("decoder") or {}) if path.exists() else None
+    if name == "calibrate":
+        path = next((p for p in (work / "decoder.json", work / "decoder_not_adopted.json") if p.exists()), None)
+        return json.loads(path.read_text()) if path else None
+    if name == "finetune":  # the check's verdict depends on it (no check: nothing to tell)
+        path = work / "scores.json"
+        return ((json.loads(path.read_text()).get("settings") or {}).get("reading") or {}) if path.exists() else None
+    if name == "once":
+        path = work / "used.json"
+        return (json.loads(path.read_text()).get("reading") or {}) if path.exists() else None
+    return None
+
+
+def _read_otherwise(name: str, work: Path) -> bool:
+    """Whether a finished step read the movie otherwise than the steps do now (fused evidence, continuity)."""
+    from .fuse import DEFAULT, same_reading
+    before = _read_before(name, work)
+    return before is not None and not same_reading(before, DEFAULT)
 
 
 def _report(path: Path) -> str:
@@ -60,17 +90,19 @@ def _report(path: Path) -> str:
 
 
 def _checked_other(work: Path) -> bool:
-    """Whether step 4 ran for another model or decoder than the ones in use now (``trace_once.py`` records them)."""
+    """Whether step 4 ran for another model or decoder than the ones in use now, or read the movie otherwise
+    (``trace_once.py`` records them)."""
     used = work / "used.json"
     if not used.exists():
         return False
     import json
     rec = json.loads(used.read_text())
     model, decoder = in_use()
-    return (rec.get("in_use_model"), rec.get("in_use_decoder")) != (str(model), str(decoder))
+    return ((rec.get("in_use_model"), rec.get("in_use_decoder")) != (str(model), str(decoder))
+            or _read_otherwise("once", work))
 
 
-def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None = None) -> str:
+def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None = None, other: tuple = ()) -> str:
     model, decoder = in_use()
     m2 = (f".venv/bin/python -m prototypes.learned_evidence.pipeline --field runs/sparsetrack/m2 \\\n"
           f"    --labels benchmark/labels/m2_v1.json --model {model} \\\n"
@@ -83,7 +115,7 @@ def summary(labels: Path, seconds: float, stale: tuple = (), failed: dict | None
     return f"""# Learned pipeline adapted to {labels.name}
 
 Written {time.strftime("%Y-%m-%d %H:%M")} ({seconds / 60:.0f} min this run).
-{_stale_note(stale)}
+{_stale_note(stale, other)}
 ## 1. Dev test: the runs scored on your labels
 
 ```
@@ -162,7 +194,7 @@ def main(argv=None, steps=None):
         if (DEV / "report.txt").exists():  # scored again; the model it trained stays and is not trained again
             os.replace(DEV / "report.txt", DEV / "report_old.txt")
     stamp = hashlib.sha1(labels.read_bytes()).hexdigest()
-    stale = []
+    stale, other = [], []
     plan = [("dev", DEV, ["--field", str(field), "--labels", str(labels), "--work", str(DEV)]
              + (["--model", str(SHIPPED)] if args.quick else [])),
             ("calibrate", CAL, ["--field", str(field), "--labels", str(labels), "--work", str(CAL)])]
@@ -174,13 +206,17 @@ def main(argv=None, steps=None):
     for name, work, cmd in plan:
         if name == "once" and (work / "report.txt").exists() and _checked_other(work):
             os.replace(work / "report.txt", work / "report_old.txt")
-            print("== once: the model or decoder in use has changed since it ran: running it again", flush=True)
+            print("== once: the model, decoder or reading in use has changed since it ran: running it again",
+                  flush=True)
         if (work / "report.txt").exists():
             seen = work / "labels.sha1"
             changed = seen.exists() and seen.read_text().strip() != stamp
+            otherwise = _read_otherwise(name, work)
             stale += [name] if changed else []
+            other += [name] if otherwise else []
             print(f"== {name}: done before ({work / 'report.txt'}), skipped"
-                  + ("; the labels have changed since" if changed else ""), flush=True)
+                  + ("; the labels have changed since" if changed else "")
+                  + ("; it read the movie as the launcher did before 27 Sep 2026" if otherwise else ""), flush=True)
             continue
         print(f"== {name}: {' '.join(cmd)}", flush=True)
         try:
@@ -195,9 +231,12 @@ def main(argv=None, steps=None):
         (work / "labels.sha1").write_text(stamp + "\n")  # the labels this step's results are on
     ROOT.mkdir(parents=True, exist_ok=True)
     out = ROOT / "SUMMARY.md"
-    out.write_text(summary(labels, time.time() - started, tuple(stale), failed))
+    out.write_text(summary(labels, time.time() - started, tuple(stale), failed, tuple(other)))
     if stale:
         print(f"== the labels have changed since {' and '.join(stale)} ran: run again with --redo", flush=True)
+    if other:
+        print(f"== {' and '.join(other)} read the movie as the launcher did before 27 Sep 2026: run again with --redo",
+              flush=True)
     print(f"== summary: {out}")
     return out
 

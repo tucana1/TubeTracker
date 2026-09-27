@@ -18,10 +18,13 @@ Scoring a tuned model on the traces it was tuned on is in-sample, and so is scor
 frames it was tuned on: tuned on traces from a few frames, a network reads other grains better in
 exactly those frames and worse elsewhere. So grains and traced bins are both split into folds; each
 fold's grains are read at that fold's bins by a model tuned without those grains and without any
-label within ``GUARD_BINS`` of those bins, and the starting model is scored on the same traces.
-Then a final model is tuned on every label. It is written as ``unet_ft.pt``, the name the launcher
-looks for, only if the tuned models read more lengths or onsets right and neither fewer. That is the
-model to freeze and score once on movie 2; it belongs to the imaging conditions it was tuned on.
+label within ``GUARD_BINS`` of those bins, and the starting model is scored on the same traces. Both
+are read as the launcher reads a movie: each network's evidence fused with the thick-tube network's
+(``fuse.py``, which fine-tuning leaves as it is), with tip-growth continuity (``--no-thick-model``,
+``--no-continuity`` as in ``pipeline.py``). Then a final model is tuned on every label. It is written
+as ``unet_ft.pt``, the name the launcher looks for, only if the tuned models read more lengths or
+onsets right and neither fewer. That is the model to freeze and score once on movie 2; it belongs to
+the imaging conditions it was tuned on.
 
     python -m prototypes.learned_evidence.finetune --field runs/sparsetrack/ld \
         --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft
@@ -43,6 +46,7 @@ import torch
 import torch.nn.functional as F
 
 from .data import TIP_SIGMA, CacheView, tip_heatmap
+from .fuse import THICK
 from .model import UNet, best_device
 from .train import augment, load_shards, losses
 
@@ -463,19 +467,24 @@ def speed_cap(pcache: Path, field: Path, grains_path: Path) -> float:
 
 
 def read_perbin(net, field: Path, labels_path: Path, work: Path, tag: str, keep_cache: bool = False,
-                log=print, **decoder) -> dict:
-    """The pipeline's per-bin run (learned evidence, grown crop, burst-aware fit) with this network;
-    ``decoder`` holds settings from ``calibrate.py``."""
-    from . import evaluate, reach
+                log=print, thick_model: str | Path | None = None, **decoder) -> dict:
+    """The pipeline's per-bin run (learned evidence, grown crop, burst-aware fit) with this network, its
+    evidence fused with ``thick_model``'s as the pipeline fuses it (``fuse.evidence``; ``None``: its own);
+    ``decoder`` holds settings from ``calibrate.py`` and ``continuity``."""
+    from . import evaluate, fuse, reach
+    from .adapt import DEV
 
     pcache = evaluate.prob_cache(field, net, work / f"prob_{tag}", log=log)
     try:
-        vmax = speed_cap(pcache, field, labels_path)
-        return reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, big=300, burst=True,
+        vmax = speed_cap(pcache, field, labels_path)  # on the network's own evidence, as the pipeline sets it
+        ecache = fuse.evidence(pcache, field, work, thick_model, tag=f"_{tag}",
+                               reuse=[DEV / f"prob_thick_{Path(field).name}"], log=log)
+        return reach.analyze(ecache, field, grains_path=labels_path, log=lambda *a: None, big=300, burst=True,
                              vmax=vmax, **decoder)
     finally:
         if not keep_cache:
             shutil.rmtree(pcache, ignore_errors=True)
+            shutil.rmtree(work / f"prob_fused_{tag}", ignore_errors=True)
 
 
 def main(argv=None):
@@ -500,6 +509,13 @@ def main(argv=None):
                          "the default offset)")
     ap.add_argument("--no-final", action="store_true", help="only the cross-validated score")
     ap.add_argument("--keep-caches", action="store_true")
+    ap.add_argument("--thick-model", default=str(THICK),
+                    help="the check's readings: the thick-tube network fused into the model's evidence, as pipeline.py "
+                         "does (default: the shipped one)")
+    ap.add_argument("--no-thick-model", dest="thick_model", action="store_const", const=None,
+                    help="the check reads the model's own evidence")
+    ap.add_argument("--no-continuity", dest="continuity", action="store_false",
+                    help="the check's readings: without tip-growth continuity")
     ap.add_argument("--device", default=None)
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args(argv)
@@ -524,9 +540,13 @@ def main(argv=None):
     if args.decoder is None and ADOPTED.exists():  # check the model with the decoder it will be used with
         args.decoder = str(ADOPTED)
     args.decoder = None if args.decoder == "none" else args.decoder
-    dec = decoder_settings(args.decoder, start, log=log)
+    from .fuse import describe, reading
+    read = reading(args.thick_model, args.continuity)
+    dec = decoder_settings(args.decoder, start, log=log, reading=read)
     if dec:
         log(f"per-bin decoder settings from {args.decoder}: {dec}")
+    log(f"the check reads {describe(read)}, as the launcher does")
+    dread = {**dec, **({"continuity": "path"} if args.continuity else {}), "thick_model": args.thick_model}
     syn = load_shards(args.synthetic) if args.synthetic else None
     log(f"{labels_path.name}: starting from {start}; synthetic samples {len(syn['x']) if syn else 0}")
     kw = dict(syn=syn, steps=args.steps, batch=args.batch, lr=args.lr, distill=args.distill, device=args.device,
@@ -535,8 +555,8 @@ def main(argv=None):
                 **{k: getattr(args, k) for k in ("steps", "batch", "lr", "distill", "seed", "synthetic", "decoder")})
     # what the check depends on: stopped while the final model was tuning, a run with the same settings,
     # traces and starting model takes the check's verdict from scores.json instead of redoing it
-    settings = {**info, "folds": args.folds, "decoder_settings": dec, "labels_sha1": _sha1(labels_path),
-                "start_sha1": _sha1(start)}
+    settings = {**info, "folds": args.folds, "decoder_settings": dec, "reading": read,
+                "labels_sha1": _sha1(labels_path), "start_sha1": _sha1(start)}
     earlier = json.loads((work / "scores.json").read_text()) if (work / "scores.json").exists() else {}
     if args.folds > 1 and earlier.get("settings") == settings and "report" in earlier:
         adopt, lines = earlier["adopted"], earlier["report"]
@@ -565,9 +585,11 @@ def main(argv=None):
             net = tune(start, train, val=val, **kw)
             save(net, work / f"fold{k}" / "unet.pt", **info, fold=k, folds=args.folds, held_out=sorted(held),
                  held_out_bins=sorted(held_bins))
-            pred = read_perbin(net, field, labels_path, work, f"fold{k}", args.keep_caches, log, **dec)
+            pred = read_perbin(net, field, labels_path, work, f"fold{k}", args.keep_caches, log, **dread)
             cv.update({r["id"]: r for r in pred["grains"] if r["id"] in held})
-        base = read_perbin(load_model(str(start)), field, labels_path, work, "start", args.keep_caches, log, **dec)
+        base = read_perbin(load_model(str(start)), field, labels_path, work, "start", args.keep_caches, log, **dread)
+        if not args.keep_caches:
+            shutil.rmtree(work / "prob_thick", ignore_errors=True)
         tuned = {**base, "grains": [cv.get(r["id"], r) for r in base["grains"]],
                  "method": f"per-bin decoder, fine-tuned ({args.folds}-fold cross-validated)"}
         (work / "perbin_start.json").write_text(json.dumps(base))
