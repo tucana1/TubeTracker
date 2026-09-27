@@ -16,10 +16,11 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 
 1. Double-click `Analyze_Movie_Learned.command` in the repository folder and choose the movie.
    - It prepares the movie the first time, which takes a few minutes. The cache is the same one SparseTrack uses.
-   - It then runs three analyses, taking 10–20 minutes on a laptop:
+   - It then runs three analyses, taking 15–25 minutes on a laptop:
      - SparseTrack as it is;
      - learned evidence through SparseTrack's decoder;
-     - learned evidence through the per-bin decoder.
+     - learned evidence through the per-bin decoder, with a thick-tube network's evidence added where it sees a
+       structure too wide to be thin, and tip-growth continuity (the default since 27 Sep).
 2. The review gallery opens by itself, one card per grain, with grains that need a second look first. Each card shows
    six moments from germination to the end, with the tube the per-bin decoder measured outlined in green and its
    centreline in yellow, then its length over time. Check that the outline follows the grain's own tube.
@@ -60,8 +61,8 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `model.py` | 0.49 M-parameter U-Net (BatchNorm, so tiled inference does not depend on tile size); tiled prediction |
 | `train.py` | Training: dihedral, gain, offset and noise augmentation; BCE + Dice for the body; weighted BCE for tips. CPU, MPS or CUDA |
 | `evaluate.py` | Probability caches; end-to-end SparseTrack runs (baseline, learned, and "perfect" = exact truth masks as evidence); the adaptive crop (below); oracle-path fronts; paired bootstrap over grains |
-| `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`) |
-| `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins. Real-footage fixes on by default: a frame-edge mask per bin, readings held while the grain has left its place, out-of-focus ghost discs dropped from the census (pre-fill excludes them for review, where they can be included again), and a fit that cannot fall below lengths the tube was steadily grown to. Option, off by default: `continuity="path"` uses tip growth to keep a foreign tube out of a grain's reading (a tie on the real movie with the shipped model; with evidence that sees thick tubes it removes most foreign over-reads) |
+| `pipeline.py` | One command for a real movie: synthetic movies on its field → shards → training → probability cache → three runs scored on its human labels (SparseTrack as it is; learned evidence through SparseTrack's decoder; learned evidence through `reach.py`, reading fused evidence with continuity), and `reach.py` once more on the model's evidence alone without continuity, for comparison |
+| `reach.py` | Decoder v2, the per-bin decoder: in every bin, the medial-axis length of the region with P > 0.5 attached to the grain, then a monotone fit over bins. Real-footage fixes on by default: a frame-edge mask per bin, readings held while the grain has left its place, out-of-focus ghost discs dropped from the census (pre-fill excludes them for review, where they can be included again), and a fit that cannot fall below lengths the tube was steadily grown to. `continuity="path"` uses tip growth to keep a foreign tube out of a grain's reading; `pipeline.py` and the steps after it turn it on by default since 27 Sep (`--no-continuity`), with the fused evidence below (a tie on the real movie with the shipped network alone) |
 | `prefix.py` | The prefix decoder: the whole movie as prefixes of the tube's end state (tip growth), with monotone growth and a smooth deformation found jointly by dynamic programming; optionally anchored on a trace (a human's, or a proposal accepted in review). `pipeline.py --prefix` runs it beside the per-bin decoder |
 | `track.py` | Grain tracking by the grain's own look (disc-and-rim template), for the prefix decoder |
 | `trace_once.py` | On a labelled movie: the prefix decoder anchored on each grain's latest trace, scored on the grain's earlier traces and onset against the per-bin decoder and the prefix decoder on its own (step 4 of `adapt.py`) |
@@ -69,9 +70,9 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 | `adapt.py` | One command for the dev movie: the dev test, then `calibrate.py`, then `finetune.py`, then `trace_once.py`, each skipped once done; writes `SUMMARY.md` with the verdicts, what the launcher uses and the movie-2 command |
 | `prefill.py` | Writes the per-bin decoder's answers as a labels file for the labelling tool (onset brackets; traced tubes at the bins the tool asks for), through the tool's own API, marked as the model's, for review |
 | `export_review.py` | Results from reviewed labels: per-grain and per-trace CSVs (checked, changed from the model's) and the germination curve |
-| `calibrate.py` | Fits the per-bin decoder's end offset on a movie's human traces, with a check over folds of grains; writes `decoder.json` only if the gain is clear of noise |
-| `finetune.py` | Fine-tuning on a movie's human traces, with a check that holds out grains and traced frames; writes the tuned model only if it reads more right |
-| `fuse.py` | Option, off by default (`pipeline.py --thick-model models/unet_thick_b3.pt --continuity`): the shipped network's evidence everywhere, and a thick-tube network's only where it marks a structure too wide to be a thin tube (about 7 px or more, hollow middles filled). Thin and faint tubes stay the shipped network's. `models/unet_thick_b3.pt` is that network: trained on synthetic thick, hollow tubes with rim crescents and uneven grain darkening as negatives (round 3), it sees the real sample movie's thick tubes |
+| `calibrate.py` | Fits the per-bin decoder's end offset on a movie's human traces, read as the launcher reads them (fused evidence, continuity), with a check over folds of grains; writes `decoder.json` only if the gain is clear of noise, recording how it read |
+| `finetune.py` | Fine-tuning on a movie's human traces, with a check that holds out grains and traced frames and reads as the launcher does; writes the tuned model only if it reads more right |
+| `fuse.py` | The default since 27 Sep (`--no-thick-model` turns it off): the model's evidence everywhere, and a thick-tube network's only where it marks a structure too wide to be a thin tube (about 7 px or more, hollow middles filled). Thin and faint tubes stay the model's. `models/unet_thick_b3.pt` is that network: trained on synthetic thick, hollow tubes with rim crescents and uneven grain darkening as negatives (round 3), it sees the real sample movie's thick tubes. With continuity, on the real sample movie mid-movie lengths went 17 → 23 and end lengths 15 → 20 of about 35 (in-sample); on held-out synthetic movies thin tubes were unhurt (+2 of 1014, 95% CI −12 to +18). `evidence()` builds it for calibration, fine-tuning's check and trace-once as the pipeline does |
 | `selftrain.py` | Experiment, off by default: label-free self-training on one movie. The per-bin decoder's readings that agree with its growth curve become pseudo-traces, and the network is tuned on them. Not a default step (26 Sep, development numbers): the synthetic movies' onsets gain but lengths do not, faint tubes do not gain, and on the real sample movie it learns the thick-tube look but moves some onsets early. `--labels` scores it once on a labelled movie such as your dev movie, which is clean because it uses no labels |
 | `show.py` | Side-by-side panels (registered bin, SparseTrack's evidence, learned probability) for real footage |
 | `models/unet_v2_sample_field.pt` | The trained v2 model (ten synthetic movies on the sample movie's field), for a quick first look |
@@ -85,12 +86,17 @@ right. Burst frames and growth-arrest frames are hints for review, not measureme
 ```
 
 About 1.5 hours on a laptop. That is ten synthetic movies at about 5 min each, training (about 30 min on 4 CPU
-cores, less on an Apple GPU) and a probability cache for the real movie. It prints both SparseTrack runs
-scored on `ld_v1` and a paired bootstrap of the difference.
+cores, less on an Apple GPU) and two probability caches for the real movie (the model's, and the thick-tube
+network's for the fused evidence). It prints the runs scored on `ld_v1` with paired bootstraps of the differences,
+including the per-bin decoder against itself on the model's evidence alone, without continuity: the reading before
+27 Sep, so your labels tell whether fusion holds on your footage (`--no-thick-model`, `--no-continuity` switch it
+off).
 
 `python -m prototypes.learned_evidence.adapt` runs this, then the calibration and fine-tuning below, in that order
 (each skipped once its report exists), and writes `runs/learned_evidence/SUMMARY.md`. It notes a step run on labels
-that have changed since; `--redo` runs them all again on the current labels, keeping the trained model.
+that have changed since, or run with the reading before 27 Sep; `--redo` runs them all again on the current labels,
+keeping the trained model. Calibration, fine-tuning's check and trace-once read the movie as the launcher does, and
+take the dev test's thick-tube cache instead of building their own.
 
 **Only the per-bin decoder.** `--only-perbin` skips the two comparison runs: the same per-bin results, review gallery
 and curves (identical on `sample_movie.avi`, 37 of 37 grains), in 160 s instead of 355 s once the probability cache
@@ -119,7 +125,7 @@ on the per-bin decoder's own trace it did worse than that decoder alone. The rea
 does better. On the real sample movie, whose thick tubes and moving grains are unlike yours, the prefix decoder is
 not yet reliable (assessment, section 7).
 
-**Quick first look (about 10 minutes).** Add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
+**Quick first look (about 15 minutes).** Add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
 to skip the synthetic movies and training. That model (2 MB) is v2 below: trained on ten synthetic movies built on
 the field of `sample_movie.avi`, the repository's only movie. The full run builds them on your own `ld` field, so it
 remains the proper test.

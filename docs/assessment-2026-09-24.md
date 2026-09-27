@@ -85,6 +85,14 @@ plus runs of the legacy engine and SparseTrack on `sample_movie.avi` and a new e
    - **Kept as an opt-in:** label-free self-training on each movie (`selftrain.py --labels`), because your dev movie
      tests it cleanly.
    - **The label-free options are close to used up.** The next gain needs your labels.
+9. **Rounds 3 and 4 made the per-bin decoder read fused evidence, with tip-growth continuity, by default (sections
+   7.7 and 7.8).**
+   - A network taught on thick, hollow tubes adds its evidence only where it sees a structure too wide to be thin.
+     Continuity keeps foreign tubes out of a grain's reading.
+   - Real movie: mid-movie lengths 17 → 23 and end lengths 15 → 20 of about 35, onsets unchanged. These gains are
+     in-sample.
+   - Held-out synthetic movies: thin tubes unhurt (+2 lengths, 95% CI −12 to +18, of 1014).
+   - Your dev test scores the old reading beside it, so `ld_v1` confirms or overturns it.
 
 **This week:**
 1. Finish the movie-2 labels (about an hour, section 3.5).
@@ -367,12 +375,15 @@ registered bins ──► [1] learned evidence ──► [2] physics decoder   �
      model is kept only if a check that holds out grains and traced frames says it reads more right. On synthetic
      tests the gains were small (up to 3.5 points), and a tuned model belongs to the imaging conditions it was tuned
      on (section 5).
+   - A second network, taught on thick, hollow tubes, adds its evidence only where it sees a structure too wide to
+     be thin (`fuse.py`; the default since 27 Sep, section 7.8).
 2. **A physics decoder.** Either of two decoders, both with growth only, onset and contact censoring. These carry
    the biology.
    - SparseTrack's decoder traces candidate paths on the end state, rotates and swings them, and runs the monotone DP
      front.
-   - The per-bin decoder (`reach.py`) measures the tube region's length in every bin, then makes it monotone. Its
-     end offset can be fitted on a movie's traces (`calibrate.py`).
+   - The per-bin decoder (`reach.py`) measures the tube region's length in every bin, then makes it monotone. It
+     keeps a reading on the path the tube grew along (tip-growth continuity, section 7.7), and its end offset can be
+     fitted on a movie's traces (`calibrate.py`).
    - On synthetic movies the per-bin decoder did better with learned evidence: +56 lengths on twelve held-out movies,
      and far better when tubes burst (section 5).
    - `pipeline.py` scores both on `ld_v1`, so real footage decides between them.
@@ -1291,9 +1302,69 @@ It generated movies with such negatives, labelled as background (for B3, also fa
   - continuity keeps foreign tubes out;
   - negatives stop the false onsets.
   - Neither yet sees thick tubes without costing the thin and faint ones.
-- **Round 4 (running):** a label-free fusion that keeps the shipped network's evidence for thin and faint tubes and
-  takes a thick-tube network's only where it sees a wide structure. By construction the thin and faint regime stays
-  the shipped network's, and continuity keeps foreign tubes out.
+- **Round 4 (section 7.8):** a label-free fusion that keeps the shipped network's evidence for thin and faint tubes
+  and takes a thick-tube network's only where it sees a wide structure. By construction the thin and faint regime
+  stays the shipped network's, and continuity keeps foreign tubes out.
+
+### 7.8 Round 4 (27 Sep): fused evidence, now the default
+
+Round 3 left two halves. Continuity keeps foreign tubes out; B3, the network taught on thick, hollow tubes, sees the
+real movie's thick tubes but loses thin and faint synthetic ones. Round 4 put them together without labels, under a
+rule written before any result (rule F).
+
+**How it works (`fuse.py`):**
+- The shipped network's tube probability everywhere, except where B3 marks a structure too wide to be thin:
+  - B3's mask (P > 0.5), with holes up to 4 px filled (the hollow middle of a double-walled tube);
+  - opened with a disc of radius 3 px, so that only structures about 7 px wide or wider survive;
+  - grown by 1 px. Inside it, the larger of the two probabilities.
+- Thin and faint lines stay the shipped network's, so on thin-tube movies the fused map barely differs from it.
+- The per-bin decoder reads the fused map with tip-growth continuity (section 7.7). SparseTrack's runs keep the
+  shipped network's evidence.
+
+**Results, against the previous default (the shipped network, without continuity):**
+- **Synthetic development movies** (lengths in tolerance, 95% CI):
+  - thin: −1 (−14 to +13) of 793, onsets unchanged;
+  - faint: +7 (−9 to +29) of 385;
+  - thick: −2 (−15 to +10) of 211, onsets +1; human-style +5 (−2 to +13) of 74;
+  - wide: −7 (−29 to +10) of 445; human-style +7 (0 to +15) of 159.
+- **Real movie, judged against the audit before the held-out look** (onsets within 6 bins, lengths within ±25%):
+  - onsets 29 → 29 of 35, mid-movie lengths 17 → 23, end lengths 15 → 20 of 34;
+  - 8 grains fixed, 4 broken (g001, g003, g015, g037), 2 mixed;
+  - judged strictly, with every foreign over-read counted as a break even where the reading was already wrong:
+    8 grains only fixed, 7 only broken, 2 both.
+- **One held-out look (synthetic seeds 7, 8, 13, 14, 15):**
+  - lengths +2 (−12 to +18) of 1014, onsets unchanged;
+  - human-style +2 (−6 to +10) of 360, onsets −1 (−3 to 0) of 114.
+- **Rule F** asked for all of these:
+  - thin lengths no more than 1 point down, with the interval's lower end above −3 points, in development and held
+    out;
+  - the same for faint lengths in development;
+  - thin onsets no more than 1 point down;
+  - more gross fixes than breaks on the real movie.
+  All held, so fused evidence with continuity has been the default since 27 September.
+
+**What it changes for you:**
+- `pipeline.py` and the launchers read fused evidence with continuity. `--no-thick-model` and `--no-continuity`
+  bring back the old reading.
+- A second network pass per movie: an analysis takes about 15–25 minutes on a laptop instead of 10–20.
+- On your labels the dev test also scores the per-bin decoder on the shipped network alone, without continuity,
+  with the paired difference. **Your footage decides:** if that difference is clearly negative on `ld_v1`, switch
+  fusion off.
+- Calibration, fine-tuning's check and trace-once read the same evidence the launcher uses. Each records how it read
+  the movie. `Adapt_Learned_To_Dev_Movie.command` says when a step ran with the old reading, and offers to run it
+  again.
+
+**Caveats:**
+- **The real-movie gains are in-sample.** The same movie and audit were used during development. The held-out look
+  only shows that thin tubes are not hurt, because nothing held out has thick tubes.
+- **Foreign over-reads remain on 8 grains** where B3's wide structures bridge a grain to a neighbour's tube: g001,
+  g003, g007, g011, g014, g015, g020 and g022 (on g011 and g020 beside a fix). Continuity stops some such jumps,
+  but not these.
+- **On synthetic thick and wide movies the original scoring is mixed** (−2 and −7). Only the human-style scoring
+  shows gains there.
+
+**What round 4 leaves:** the label-free search is used up. The next gain needs your labels: first the dev test on
+`ld_v1`, which tells whether fusion holds on your footage; then movie 2, once.
 
 ---
 
@@ -1334,8 +1405,8 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
 - **Or all of this appendix in one go:** double-click `Adapt_Learned_To_Dev_Movie.command` in the worktree (or run
   `python -m prototypes.learned_evidence.adapt --labels ../TubeTracker/benchmark/labels/ld_v1.json`). It runs this test, then the calibration and fine-tuning below, in
   that order. It reads your current labels from the checkout that holds `runs/`, and skips steps already done. If
-  your labels have changed since a step ran, it offers to run every step again on them (`--redo`; the trained model
-  is kept). It ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and
+  your labels have changed since a step ran, or a step read the movie as the launcher did before 27 Sep, it offers
+  to run every step again (`--redo`; the trained model is kept). It ends with `runs/learned_evidence/SUMMARY.md`: what each step found, what the launcher now uses, and
   the movie-2 command.
 - **Checked end to end (25 Sep)** in a scratch copy of the repository, with a synthetic movie as the dev movie. The
   one-command adaptation (`--quick`, 40 min) adopted a calibrated offset and kept the start model after
@@ -1344,7 +1415,11 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
 - **Output:** three runs, each scored on `ld_v1`, with paired bootstraps of the differences:
   - SparseTrack 0.4.2 as it is;
   - learned evidence through SparseTrack's decoder;
-  - learned evidence through the per-bin decoder (decoder v2), with its burst safeguard.
+  - learned evidence through the per-bin decoder (decoder v2), with its burst safeguard, reading fused evidence
+    with tip-growth continuity (section 7.8).
+
+  A fourth line scores the per-bin decoder on the model's evidence alone, without continuity (the reading before
+  27 Sep), with the paired difference. It tells whether fusion holds on your footage.
 - **One double-click, any movie:** `Analyze_Movie_Learned.command` prepares a chosen movie, runs all three without
   labels, and opens the review gallery. It uses the model trained on your dev movie once that exists.
 - **Any movie, no labels:** leave out `--labels`. The pipeline then writes all three runs' predictions and a
@@ -1359,7 +1434,7 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
 
   With `Review_Movie_Learned.command` (the labelling tool, pre-filled with the model's answers, then the reviewed
   results exported), that is prototype v1's loop.
-- **Quick first look (about 10 minutes):** add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
+- **Quick first look (about 15 minutes):** add `--model prototypes/learned_evidence/models/unet_v2_sample_field.pt`
   to skip the synthetic movies and training. That model is v2 from section 5, trained on synthetic movies built on
   `sample_movie.avi`'s field. The full run above, on your own field, is still the proper test.
 - **Long tubes:** every run reads a grain again at ±300 px when its tube reaches the ±150 px crop edge (section 3.3;
@@ -1371,7 +1446,8 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
       --labels ../TubeTracker/benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_cal
   ```
 
-  - It fits the per-bin decoder's end offset on the model trained above.
+  - It fits the per-bin decoder's end offset on the model trained above, reading the movie as the launcher does
+    (fused evidence, continuity).
   - It writes `decoder.json` only if a check over folds of grains shows a gain clear of noise. The launcher and the
     commands below then use it.
 - **Then, fine-tuning on your traces (about 45 minutes):**
@@ -1381,7 +1457,8 @@ ln -s ../TubeTracker/.venv .venv               # and your environment, for the d
       --labels ../TubeTracker/benchmark/labels/ld_v1.json --work runs/learned_evidence/ld_ft
   ```
 
-  - It starts from the model trained above, and reads an adopted calibration as the launcher does.
+  - It starts from the model trained above. Its check reads the movie as the launcher does: fused evidence,
+    continuity and an adopted calibration.
   - It tunes one model per fold of grains and traced frames, and scores each fold's grains at that fold's frames.
     No model has seen those grains, nor any label within 3 bins of those frames.
   - `report.txt` gives the paired difference against the starting model.
