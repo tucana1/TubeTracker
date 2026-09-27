@@ -104,7 +104,9 @@ def write_anchored(path: Path, doc: dict, field: Path, um: float | None, log=pri
     from . import prefix
 
     anchors = checked_anchors(doc)
-    pcache = path.parent / f"prob_{field.name}"
+    dec = (doc.get("prefill") or {}).get("decoder") or {}
+    fused = bool(dec.get("thick_model"))  # the analysis read fused evidence (pipeline --thick-model): so does this
+    pcache = path.parent / (f"prob_fused_{field.name}" if fused else f"prob_{field.name}")
     out = path.parent / "trace_once"
     if not anchors:
         if out.exists():  # results of an earlier review must not pass for this one's
@@ -116,7 +118,6 @@ def write_anchored(path: Path, doc: dict, field: Path, um: float | None, log=pri
         return None
     if not (pcache / "meta.json").exists():
         raise SystemExit(f"--anchored needs the probability cache {pcache}: analyse the movie again to rebuild it")
-    dec = (doc.get("prefill") or {}).get("decoder") or {}
     pp = prefix.Params(vmax_px=float(dec.get("vmax", prefix.Params.vmax_px)),
                        onset_px=float(dec.get("onset_px", prefix.Params.onset_px)))
     pred = prefix.analyze(pcache, field, grains_path=path, log=lambda *a: None, params=pp, anchors=anchors,

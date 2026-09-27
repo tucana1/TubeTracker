@@ -128,10 +128,11 @@ def main(argv=None):
     if out.exists():
         raise SystemExit(f"{out} exists and may hold your corrections: move it aside to pre-fill again")
     pred_path = work / "perbin" / "predictions.json"
-    pcache = work / f"prob_{field.name}"
+    pred = json.loads(pred_path.read_text()) if pred_path.exists() else {}
+    fused = bool((pred.get("decoder") or {}).get("thick_model"))  # read from the fused evidence (pipeline --thick-model)
+    pcache = work / (f"prob_fused_{field.name}" if fused else f"prob_{field.name}")
     if not pred_path.exists() or not (pcache / "meta.json").exists():
         raise SystemExit(f"run pipeline.py on {field} with --work {work} first (needs {pred_path} and {pcache})")
-    pred = json.loads(pred_path.read_text())
     dec = {k: v for k, v in (pred.get("decoder") or {}).items()
            if k in ("big", "burst", "vmax", "end_px", "onset_px", "continuity", "cont_kw")}
     if not dec:  # predictions from before the pipeline recorded its settings: its defaults then

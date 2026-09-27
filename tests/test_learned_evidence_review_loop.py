@@ -138,3 +138,21 @@ def test_a_disc_judged_not_a_grain_is_excluded_for_review_and_can_come_back(tmp_
     assert "g007" not in {r["grain"] for r in grains_csv} and len(grains_csv) == 6
     bench.set_exclusion("g007", {"excluded": False})  # the reviewer disagrees: it is a grain
     assert bench.state()["progress"]["grains"] == 7
+
+
+def test_prefill_reads_the_fused_evidence_when_the_analysis_did(analysed):
+    """With pipeline --thick-model the per-bin decoder read the fused cache: the pre-fill must read that one too."""
+    import shutil
+
+    from prototypes.learned_evidence import prefill
+
+    field, work = analysed
+    pred_path = work / "perbin" / "predictions.json"
+    pred = json.loads(pred_path.read_text())
+    pred["decoder"] = {**pred["decoder"], "thick_model": "unet_thick.pt"}
+    pred_path.write_text(json.dumps(pred))
+    with pytest.raises(SystemExit, match="prob_fused_cache"):  # not built: it does not fall back on the model's cache
+        prefill.main(["--field", str(field), "--work", str(work)])
+    shutil.copytree(work / "prob_cache", work / "prob_fused_cache")
+    out = prefill.main(["--field", str(field), "--work", str(work)])
+    assert json.loads(out.read_text())["labels"]["g001"]["onset"]["verdict"] == "emerged_within"

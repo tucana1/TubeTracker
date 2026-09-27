@@ -11,7 +11,10 @@ movie's field only: the held-out movie 2 must never supply training data, and it
 scored once per frozen model (``--heldout-once``). Both SparseTrack runs read a grain again at
 +/-300 px when its path reaches the edge of the +/-150 px crop (``evaluate.adaptive_crop``;
 ``--fixed-crop`` keeps SparseTrack as is). ``--prefix`` adds a run of the prefix decoder
-(``prefix.py``) on the same evidence, scored against the per-bin decoder.
+(``prefix.py``) on the same evidence, scored against the per-bin decoder. ``--thick-model`` fuses a
+thick-tube network's evidence into the model's where it marks tubes too wide to be thin (``fuse.py``):
+the per-bin decoder (and the prefix decoder) then read the fused map; the SparseTrack runs keep the
+model's own.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ from sparsetrack.cli import write_census
 from sparsetrack.evaluate import load, score
 from sparsetrack.synth import make_movie
 
-from . import calibrate, data, evaluate, prefix, reach, review, train
+from . import calibrate, data, evaluate, fuse, prefix, reach, review, train
 from .model import load as load_model
 
 # ten movies (model v2): on held-out synthetic seeds, +35 lengths in tolerance over five (95% CI +6 to +70)
@@ -146,6 +149,13 @@ def main(argv=None):
     ap.add_argument("--prefix", action="store_true",
                     help="also run the prefix decoder (prefix.py: the whole movie as prefixes of the tube's "
                          "end state) and score it against the per-bin decoder; about 1 s per grain")
+    ap.add_argument("--thick-model", default=None,
+                    help="a thick-tube network (e.g. trained on thick, hollow tubes): its tube probability is fused "
+                         "into the model's where it marks structures too wide to be thin (fuse.py), and the per-bin "
+                         "decoder reads the fused map; off by default")
+    ap.add_argument("--continuity", action="store_true",
+                    help="per-bin decoder: tip-growth continuity (reach_grain(continuity='path')): a reading that "
+                         "jumps off the tube's accepted path onto a foreign tube is read along the path; off by default")
     ap.add_argument("--fixed-crop", action="store_true",
                     help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
                          "(by default such grains are read again at +/-300 px, in both runs)")
@@ -164,6 +174,10 @@ def main(argv=None):
         train.main(["--shards", *shards, "--out", str(model_path), "--steps", str(args.steps)])
     net = load_model(str(model_path))
     pcache = evaluate.prob_cache(field, net, work / f"prob_{field.name}")
+    ecache = pcache  # the evidence the per-bin decoder reads
+    if args.thick_model:
+        tcache = evaluate.prob_cache(field, load_model(args.thick_model), work / f"prob_thick_{field.name}")
+        ecache = fuse.fused_cache(pcache, tcache, work / f"prob_fused_{field.name}")
     if args.only_perbin:  # SparseTrack's automatic speed cap, probed as its learned run would
         from .finetune import speed_cap
         base = learned = None
@@ -176,20 +190,23 @@ def main(argv=None):
     # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
     kw = dict(big=None if args.fixed_crop else 300, burst=not args.no_burst, vmax=vmax)
     kw.update(calibrate.decoder_settings(args.decoder, model_path))
-    perbin = reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, **kw)
-    perbin["decoder"] = {k: v for k, v in kw.items() if k != "vmax"} | {"vmax": kw["vmax"], "from": args.decoder}
+    if args.continuity:
+        kw["continuity"] = "path"
+    perbin = reach.analyze(ecache, field, grains_path=labels_path, log=lambda *a: None, **kw)
+    perbin["decoder"] = {k: v for k, v in kw.items() if k != "vmax"} | {"vmax": kw["vmax"], "from": args.decoder,
+                                                                        "thick_model": args.thick_model}
     (work / "perbin").mkdir(exist_ok=True)
     (work / "perbin" / "predictions.json").write_text(json.dumps(perbin))
     # what the lab reviews and reports: pictures on the movie itself, the population curve, growth curves
     from sparsetrack.report import write_growth_curves, write_population
-    review.write_review(pcache, field, perbin, work / "perbin", grains_path=labels_path, **kw)
+    review.write_review(ecache, field, perbin, work / "perbin", grains_path=labels_path, **kw)
     write_population(perbin, work / "perbin")
     write_growth_curves(perbin, work / "perbin", [g["id"] for g in perbin["grains"] if g.get("status") == "emerged_within"])
     runs = {"perbin": perbin} if args.only_perbin else {"sparsetrack": base, "learned": learned, "perbin": perbin}
     if args.prefix:  # the same evidence, speed cap and annotator's onset threshold; not the default yet
         pp = prefix.Params(vmax_px=vmax, big=prefix.Params.half if args.fixed_crop else 300,
                            onset_px=kw.get("onset_px", prefix.Params.onset_px))
-        runs["prefix"] = prefix.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, params=pp)
+        runs["prefix"] = prefix.analyze(ecache, field, grains_path=labels_path, log=lambda *a: None, params=pp)
         (work / "prefix").mkdir(exist_ok=True)
         (work / "prefix" / "predictions.json").write_text(json.dumps(runs["prefix"]))
     if labels_path is None:
