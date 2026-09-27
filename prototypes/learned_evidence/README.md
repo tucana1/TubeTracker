@@ -1,5 +1,8 @@
 # Learned evidence for SparseTrack (experiment)
 
+**Running it on the lab's own movies:** `HANDOVER.md` gives the steps in order (merge, adapt to the dev movie, freeze,
+score movie 2 once) and the rules that keep movie 2 a held-out test.
+
 **Question:** can a small network trained only on SparseTrack's codec-exact synthetic movies give
 the unchanged SparseTrack decoder better evidence than its hand-built change maps?
 

@@ -93,3 +93,9 @@ def test_the_whole_step_on_a_small_movie(tmp_path):
     assert model.exists() and len(traces) >= 3 and all(t["state"] == "full" for t in traces.values())
     last = traces[str(max(int(b) for b in traces))]
     assert np.abs(np.asarray(last["path_xy_ref"])[:, 0] - 100.5).max() <= 1.5  # along the drawn tube
+
+
+def test_movie_2_labels_are_refused():
+    with pytest.raises(SystemExit, match="held-out"):
+        ST.main(["--field", "runs/sparsetrack/m2", "--pcache", "p", "--work", "w", "--labels",
+                 "benchmark/labels/m2_v1.json"])

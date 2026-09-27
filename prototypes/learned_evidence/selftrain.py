@@ -358,6 +358,8 @@ def main(argv=None):
                     help="the movie's labels: score the start and the self-trained readings on them (not used to adapt)")
     args = ap.parse_args(argv)
     field, work = Path(args.field), Path(args.work)
+    if args.labels and "m2" in Path(args.labels).name:
+        raise SystemExit("movie 2 is the held-out benchmark: test self-training on the dev movie's labels")
     dec = dict(big=300, burst=True, vmax=args.vmax, **(FROZEN if args.frozen_decoder else {}))
     import glob
     shards = sorted({f for p in args.synthetic for f in glob.glob(p)})
