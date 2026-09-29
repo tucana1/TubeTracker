@@ -203,3 +203,15 @@ def test_a_prefilled_trace_keeps_the_models_whole_route_to_slide_along(reviewed)
     arc = float(np.sum(np.hypot(*np.diff(route, axis=0).T)))
     assert arc > first["length_px"] + 20  # the whole route (75 px + a little), not the trace cut at 2-40 px
     assert np.allclose(route[0], first["path_xy_view"][0])  # the same start as the trace
+
+
+def test_the_gallery_warns_when_many_grains_could_not_be_followed(tmp_path):
+    from sparsetrack.report import movie_warnings, write_gallery
+
+    frames = [b * FPB + FPB // 2 for b in range(N_BINS)]
+    grains = [{"id": f"g{k:03d}", "status": "no_emergence_by_end", "length": {"frames": frames, "px": [0.0] * N_BINS},
+               "flags": ["reader:flood", "drift_rejected"] if k < 4 else []} for k in range(10)]
+    assert movie_warnings({"grains": grains}) and "4 of 10 grains" in movie_warnings({"grains": grains})[0]
+    assert not movie_warnings({"grains": grains[2:]})  # 2 of 8: no warning
+    page = write_gallery({"grains": grains, "frames_per_bin": FPB}, tmp_path).read_text()
+    assert "class='warn'" in page and "could not be followed" in page

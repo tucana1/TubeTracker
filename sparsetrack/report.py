@@ -291,6 +291,19 @@ def grain_confidence(res: dict, fpb: int) -> float | None:
     return min(trace_confidence(px, b) for b in plan)
 
 
+def movie_warnings(pred: dict, isolated: set[str] | None = None, share: float = 0.25) -> list[str]:
+    """Movie-level problems a reader of the results must know about: many grains that could not be followed
+    as they moved (their drift track jumped or wandered, so they were read at their first place)."""
+    grains = [g for g in pred["grains"] if isolated is None or g["id"] in isolated]
+    lost = [g["id"] for g in grains if any(f in ("drift_rejected",) or f.startswith("grain_lost") for f in g.get("flags", []))]
+    out = []
+    if grains and len(lost) / len(grains) > share:
+        out.append(f"{len(lost)} of {len(grains)} grains could not be followed as they moved: they were read at their "
+                   f"first place, so their onsets and lengths are unreliable once they moved. The grains in this movie "
+                   f"drift or are still landing; check these grains (flag drift_rejected) before using their numbers.")
+    return out
+
+
 def summary_line(pred: dict, isolated: set[str] | None, population: dict | None,
                  units: tuple[float, float] | None) -> str:
     """The movie's result in one sentence: grains, germinated, T50, median growth rate (model output)."""
@@ -350,6 +363,7 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
     key = lambda r: (conf[r["id"]] is None, conf[r["id"]] if conf[r["id"]] is not None else 1.0, r["id"])
     n_check = sum(bool(review_reasons(r)) for r in iso)
     body = (f"<h1>SparseTrack review — {html.escape(str(pred.get('movie', {}).get('name', '')))}</h1>"
+            + "".join(f"<p class='warn'>{html.escape(w)}</p>" for w in movie_warnings(pred, isolated)) +
             f"<p class='sum'>{html.escape(summary_line(pred, isolated, population, units))}</p>"
             f"<p class='sub'>{html.escape(pred.get('method', ''))} · {len(iso)} isolated grains, least sure first; {n_check} marked "
             f"<b>check</b> (their flags ask for a second look) · {fpb} frames per bin · panels: end state with the "
@@ -361,6 +375,7 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
     css = ("body{font:14px/1.4 -apple-system,system-ui,sans-serif;color:#0b0b0b;background:#fcfcfb;margin:24px}"
            "h1{font-size:20px;margin:0 0 4px}.sub{color:#52514e;margin:0 0 16px;max-width:1100px}"
            ".sum{font-size:15px;margin:4px 0 8px;max-width:1100px}"
+           ".warn{font-size:15px;margin:6px 0;max-width:1100px;padding:8px 10px;border:2px solid #b3261e;border-radius:6px;color:#b3261e;background:#fff}"
            ".group{font-size:16px;margin:20px 0 8px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:12px}"
            ".card{border:1px solid #e1e0d9;border-radius:6px;padding:10px;background:#fff}.card.needs{border-color:#c3c2b7}"
            ".card h2{font-size:15px;margin:0 0 6px}.card img{width:100%;image-rendering:pixelated;border-radius:3px}"

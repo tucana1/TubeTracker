@@ -1231,6 +1231,8 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
     pop = report.write_population(pred, out_dir, set(isolated))
     report.write_growth_curves(pred, out_dir, isolated)
     report.write_gallery(pred, out_dir, set(isolated), population=pop, units=units)
+    for w in report.movie_warnings(pred, set(isolated)):
+        log(f"WARNING: {w}")
     if pop and pop.get("t50_interval"):
         log(f"population ({pop['n']} isolated grains): half germinated by frame {pop['t50_interval'][1]:.0f}")
     if video:
