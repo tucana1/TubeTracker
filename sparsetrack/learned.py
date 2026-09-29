@@ -432,8 +432,9 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
             return hold_after(res, frames, n_fol, flag)
         _drift = hold_nan(fd["drift"])
     if followed:
-        # the grain's whole-pixel place is cropped; the rest of its drift is registered by warping
-        off = np.round(_drift)
+        # a grain that has moved far is cropped at its whole-pixel place, the rest of its drift registered by warping
+        # (nearer, the whole drift is warped, as the phase track's is)
+        off = np.round(_drift) if np.abs(_drift).max() > p.track_recentre_px else np.zeros_like(_drift)
         off_abs = np.zeros((int(meta["n_bins"]), 2))
         off_abs[rs:rs + n_bins] = off
         ls, resid = _drift, _drift - off

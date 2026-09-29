@@ -136,6 +136,25 @@ def test_followed_drift_refines_to_the_phase_correlation():
     assert np.median(np.hypot(*(fd["drift"] - truth).T)) < 0.25
 
 
+def test_followed_drift_is_the_phase_track_where_it_stays_with_the_grain():
+    """Where the phase-correlation track (0.6.0) agrees with the grain's own track the drift is exactly the phase
+    track (so the readings do not change there); where it locks onto a passing blob, the grain's own track."""
+    from sparsetrack.analyze import local_shifts
+    path = lambda t: (130.0 + 0.3 * t, 120.0)
+    bins, meta = _movie(40, [path], size=320)
+    r, p, g = Renderer(bins, meta), Params(grain_track="follow"), {"id": "g", "x": 130.0, "y": 120.0, "r": 12.0}
+    crops = np.stack([r.crop(b, 130.0, 120.0, p.half) for b in range(40)])
+    phase = local_shifts(crops, p.half - 0.5, 12.0, p.reg_pad, p.ref_bins)
+    fd = followed_drift(r, meta, g, [], p)
+    assert np.array_equal(fd["drift"], phase)
+    # a big dark blob passes over the grain for 5 bins while it is pushed 12 px
+    path = lambda t: (130.0, 120.0) if t < 20 else (142.0, 120.0)
+    bins, meta = _movie(40, [path], size=320, blobs=[(18, 23, 134.0, 118.0, 30.0)])
+    fd = followed_drift(Renderer(bins, meta), meta, g, [], p)
+    assert fd["lost_from"] is None
+    assert np.max(np.hypot(*(fd["drift"][25:] - [12.0, 0.0]).T)) < 1.0
+
+
 def test_hold_after_pads_series_and_flags():
     frames = [150, 450, 750, 1050]
     res = {"flags": [], "length": {"frames": frames[:2], "px": [0.0, 5.0]},
