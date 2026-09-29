@@ -14,8 +14,8 @@ bracket (0 inside ``(last_absent_frame, first_visible_frame]``, negative = early
 Lengths are compared at every human trace: FULL traces by error, PARTIAL traces as
 lower bounds, "no tube" traces as absences. Where the prediction has tip positions, a FULL
 trace's tip error is the distance from the predicted tip to the human apex, both in the
-grain-following view the trace was clicked in: a right length on the wrong tube is not a
-hit for "length and tip".
+grain-following view the trace was clicked in (or, for a prediction that gives its grain's
+drift, both in the field): a right length on the wrong tube is not a hit for "length and tip".
 """
 
 from __future__ import annotations
@@ -76,12 +76,26 @@ def length_at(pred: dict, frame: int) -> float | None:
     return float(px[i])
 
 
-def tip_at(pred: dict, frame: int) -> np.ndarray | None:
-    series = pred.get("tip") or {}
+def tip_at(pred: dict, frame: int, key: str = "tip") -> np.ndarray | None:
+    series = pred.get(key) or {}
     frames, xy = series.get("frames") or [], series.get("xy") or []
     if not frames:
         return None
     return np.asarray(xy[int(np.argmin(np.abs(np.asarray(frames) - frame)))], float)
+
+
+def tip_error(pred: dict, frame: int, trace: dict) -> float | None:
+    """Distance from the predicted tip to the human apex of a trace. A prediction that says where its grain was
+    (``drift``, Params.grain_track "follow") is compared in the field (reference) frame, apex ``path_xy_ref``;
+    otherwise in the grain-following view the trace was clicked in (``path_xy_view``), as before."""
+    tip = tip_at(pred, frame)
+    if tip is None:
+        return None
+    drift = tip_at(pred, frame, "drift")
+    if drift is not None and trace.get("path_xy_ref"):
+        return float(np.hypot(*(tip + drift - np.asarray(trace["path_xy_ref"][-1], float))))
+    apex = (trace.get("path_xy_view") or trace.get("path_xy_ref") or [None])[-1]
+    return None if apex is None else float(np.hypot(*(tip - np.asarray(apex, float))))
 
 
 def germination_curves(labels: dict, pred_grains: dict[str, dict], ids: list[str], n_grid: int = 600) -> dict | None:
@@ -209,10 +223,9 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
                 h = tr["length_px"]
                 full_err.append((model - h, h))
                 entry = {"frame": frame, "human": h, "pred": round(model, 2), "error": round(model - h, 2)}
-                apex = (tr.get("path_xy_view") or tr.get("path_xy_ref") or [None])[-1]
-                tip = tip_at(p, frame)
-                if apex is not None and tip is not None and model > 0:
-                    entry["tip_error"] = round(float(np.hypot(*(tip - np.asarray(apex, float)))), 2)
+                te = tip_error(p, frame, tr)
+                if te is not None and model > 0:
+                    entry["tip_error"] = round(te, 2)
                     tips.append((entry["tip_error"], h, abs(model - h) <= max(len_abs, len_rel * h)))
                 row.setdefault("full", []).append(entry)
             else:

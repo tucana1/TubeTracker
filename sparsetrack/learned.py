@@ -402,25 +402,45 @@ def flood_compete(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.
             "length": np.maximum.accumulate(length)}
 
 
-def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, others: list[dict], p) -> dict:
+def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, others: list[dict], p,
+               _drift: np.ndarray | None = None) -> dict:
     """One grain read by the flood, as a result dict of the same shape as ``analyze_grain``'s."""
-    from .analyze import checked_drift, local_shifts
+    from .analyze import checked_drift, followed_drift, hold_nan, local_shifts, read_lost, reads_in_grain_frame
     fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
     n_bins = int(meta["n_bins"]) - rs
     gx, gy, gr = grain["x"], grain["y"], grain["r"]
     half = p.flood_half
     centre = half - 0.5
-    crops = np.stack([renderer.crop(b, gx, gy, half) for b in range(rs, rs + n_bins)])
-    ls = local_shifts(np.nan_to_num(crops, nan=float(np.nanmedian(crops))), centre, gr, p.reg_pad, p.ref_bins)
     flags = ["reader:flood"]
-    ls, drift_flag = checked_drift(ls, p)
-    flags += [drift_flag] if drift_flag else []
-    late = np.nan_to_num(crops[-4:-1].mean(axis=0), nan=0.0)
-    del crops
+    if getattr(p, "grain_track", "phase") in ("follow", "auto") and _drift is None:
+        fd = followed_drift(renderer, meta, grain, others, p)
+        if fd["lost_from"] is not None and p.lost_policy == "hold":
+            return read_lost(renderer, meta, grain, p, fd, half=half, flags=tuple(flags), read=lambda m, d: read_grain(
+                renderer, prob, m, grain, others, p, _drift=d))
+        _drift = hold_nan(fd["drift"])
+    followed = reads_in_grain_frame(_drift, gr, p)
+    if followed:
+        # a grain that has moved far is cropped at its whole-pixel place, the rest of its drift registered by warping
+        # (nearer, the whole drift is warped, as the phase track's is)
+        off = np.round(_drift) if np.abs(_drift).max() > p.track_recentre_px else np.zeros_like(_drift)
+        off_abs = np.zeros((int(meta["n_bins"]), 2))
+        off_abs[rs:rs + n_bins] = off
+        ls, resid = _drift, _drift - off
+        late = np.nan_to_num(np.mean([renderer.crop(b, gx, gy, half, off_abs) for b in range(rs + n_bins - 4,
+                                                                                         rs + n_bins - 1)], axis=0))
+    else:
+        off_abs = None
+        crops = np.stack([renderer.crop(b, gx, gy, half) for b in range(rs, rs + n_bins)])
+        ls = local_shifts(np.nan_to_num(crops, nan=float(np.nanmedian(crops))), centre, gr, p.reg_pad, p.ref_bins)
+        ls, drift_flag = checked_drift(ls, p)
+        flags += [drift_flag] if drift_flag else []
+        late = np.nan_to_num(crops[-4:-1].mean(axis=0), nan=0.0)
+        del crops
+        resid = ls
     warp = lambda c, s: cv2.warpAffine(np.nan_to_num(c).astype(np.float32), np.float32([[1, 0, -s[0]], [0, 1, -s[1]]]),
                                        (2 * half, 2 * half), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT)
-    pstack = np.stack([np.clip(warp(prob.crop(b, gx, gy, half), s), 0, 255).astype(np.uint8)
-                       for b, s in zip(range(rs, rs + n_bins), ls)])
+    pstack = np.stack([np.clip(warp(prob.crop(b, gx, gy, half, off_abs), s), 0, 255).astype(np.uint8)
+                       for b, s in zip(range(rs, rs + n_bins), resid)])
     present = pstack >= 0.5 * P_SCALE
     yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float32)
     rg, ang = np.hypot(xx - centre, yy - centre), np.arctan2(yy - centre, xx - centre)
@@ -441,6 +461,8 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     to_ref = lambda y, x: [round(float(x - centre + gx), 2), round(float(y - centre + gy), 2)]
     res = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": flags, "map_threshold": 1.0,
            "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
+    if followed:  # paths and tips are in the grain's frame: its place in the field is census + drift
+        res["drift"] = {"frames": frames, "xy": np.round(ls, 2).tolist()}
     b = fl["emerge"]
     if b is None or length[-1] < p.min_tube_px:
         res.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,

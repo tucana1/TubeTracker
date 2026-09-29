@@ -29,12 +29,13 @@ from pathlib import Path
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
-BENCH_DIR = os.environ.get("TT_BENCH_DIR", "/tmp/tt_bench")  # separate folders let benches run side by side
 sys.path.insert(0, str(REPO))
 from sparsetrack.analyze import Params, analyze  # noqa: E402
 from sparsetrack.evaluate import load, score  # noqa: E402
 
 SYN = REPO / "runs/sparsetrack/synth"
+WORK = Path(os.environ.get("TT_BENCH_DIR", "/tmp/tt_bench"))  # predictions go here (--work or TT_BENCH_DIR: another
+# folder, for runs side by side)
 LEGACY_IDS = ["g025", "g014", "g037", "g034", "g013", "g030", "g029"]
 REAL = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
         "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json")}
@@ -81,10 +82,10 @@ def _within(err: float, truth_len: float) -> bool:
     return abs(err) <= max(2.0, 0.1 * truth_len)
 
 
-def score_real(name: str, params: Params, tag: str) -> dict:
+def score_real(name: str, params: Params, tag: str, work: Path = WORK) -> dict:
     """One human benchmark: totals, per-grain hits (for paired comparisons) and every FULL error."""
     cache, labels = (REPO / p for p in REAL[name])
-    pred = analyze(cache, f"{BENCH_DIR}/{name}_real_{tag}", grains_path=labels, params=params, log=lambda *a: None)
+    pred = analyze(cache, Path(work) / f"{name}_real_{tag}", grains_path=labels, params=params, log=lambda *a: None)
     rep = score(load(labels), pred)
     grains = {}
     for r in rep["rows"]:
@@ -98,7 +99,7 @@ def score_real(name: str, params: Params, tag: str) -> dict:
             "len_med": rep["length_full"]["median_abs_error"], "len_bias": rep["length_full"]["bias"],
             "both": rep["tips"]["length_and_tip"],
             "errs": [(f["error"], f["human"], r["grain"], f["frame"]) for r in rep["rows"] for f in r.get("full", [])],
-            "grains": grains, "pred": f"{BENCH_DIR}/{name}_real_{tag}/predictions.json"}
+            "grains": grains, "pred": str(Path(work) / f"{name}_real_{tag}" / "predictions.json")}
 
 
 def paired(base: dict, new: dict, n_boot: int = 4000, seed: int = 0) -> str:
@@ -126,7 +127,7 @@ def paired(base: dict, new: dict, n_boot: int = 4000, seed: int = 0) -> str:
 
 
 def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True, keep_caches: bool = False,
-        real: tuple = (), tag: str = "default") -> dict:
+        real: tuple = (), tag: str = "default", work: Path = WORK) -> dict:
     agg = {"on_hit": 0, "on_n": 0, "on_truth": 0, "early": 0, "late": 0, "len_hit": 0, "len_n": 0,
            "abs_ok": 0, "abs_n": 0, "ctrl_fp": 0, "ctrl_n": 0, "missed": 0, "errs": [], "rows": []}
     cache_fmt, truth_fmt = SUITES[suite]
@@ -136,7 +137,7 @@ def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True
         if built is None:
             print(f"  (no movie for {suite} seed {s}: skipped)", flush=True)
             continue
-        pred = analyze(cache, f"{BENCH_DIR}/{suite}_s{s}", params=params, log=lambda *a: None)
+        pred = analyze(cache, Path(work) / f"{suite}_s{s}", params=params, log=lambda *a: None)
         if built and not keep_caches:
             import shutil
             shutil.rmtree(cache)
@@ -159,10 +160,10 @@ def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True
     if real:
         from concurrent.futures import ProcessPoolExecutor
         with ProcessPoolExecutor(max_workers=len(real)) as ex:  # one movie per process
-            jobs = {name: ex.submit(score_real, name, params, tag) for name in real}
+            jobs = {name: ex.submit(score_real, name, params, tag, work) for name in real}
             out["real"] = {name: job.result() for name, job in jobs.items()}
     if legacy:
-        pred = analyze(REPO / "runs/sparsetrack/ld", f"{BENCH_DIR}/ld", params=params, only=LEGACY_IDS,
+        pred = analyze(REPO / "runs/sparsetrack/ld", Path(work) / "ld", params=params, only=LEGACY_IDS,
                        log=lambda *a: None)
         rep = score(load(REPO / "benchmark/labels/legacy_v0.json"), pred)
         out["legacy"] = {"on_hit": rep["onset"]["hits"], "on_n": rep["onset"]["n_timed"],
@@ -236,6 +237,7 @@ if __name__ == "__main__":
     ap.add_argument("--dump", help="write per-grain rows (JSON) here")
     ap.add_argument("--keep-caches", action="store_true", help="keep caches rebuilt from the movies (440 MB each)")
     ap.add_argument("--set", nargs="*", default=None, help="key=value overrides for one variant")
+    ap.add_argument("--work", default=str(WORK), help="where predictions are written (default /tmp/tt_bench)")
     args = ap.parse_args()
     for kv in args.set or []:
         if "=" not in kv or " " in kv or "=" in kv.split("=", 1)[1]:
@@ -247,7 +249,7 @@ if __name__ == "__main__":
     real = () if args.real is None else tuple(args.real or REAL)
     for i, (name, prm) in enumerate(variants):
         res = run(prm, [] if args.no_synth else args.seeds, args.suite, legacy=not args.no_legacy,
-                  keep_caches=args.keep_caches, real=real, tag=str(i))
+                  keep_caches=args.keep_caches, real=real, tag=str(i), work=Path(args.work))
         print(line(name, res), flush=True)
         for movie, g in res.get("real", {}).items():
             worst = sorted(g["errs"], key=lambda e: -abs(e[0]))[:8]
