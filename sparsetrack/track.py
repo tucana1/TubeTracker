@@ -39,8 +39,9 @@ class FollowConfig:
     hp_sigma: float = 3.0        # high-pass before matching (px)
     step_px: int = 8             # search radius per bin (px; m2's g048 is swept off at ~8 px per bin); grows with
                                  # missed bins...
-    max_search_px: int = 30      # ...up to this
+    max_search_px: int = 40      # ...up to this (a push of 33 px over 2 bins is found again)
     min_score: float = 0.5       # NCC below this: the bin is missed
+    reacquire_score: float = 0.6  # after two or more missed bins in a row a match must score this much
     learn_below: float = 0.85    # an accepted match scoring below this teaches the bank the grain's new look
     learn_min: float = 0.6       # ...if it scores at least this
     learn_every: int = 4         # bins between two lessons
@@ -80,14 +81,33 @@ def follow(renderer, gx: float, gy: float, gr: float, first: int, last: int, oth
     yy, xx = np.mgrid[-w:w + 1, -w:w + 1]
     mask = (np.hypot(xx, yy) <= gr + cfg.pad_px).astype(np.float32)
     margin = int(math.ceil(3 * cfg.hp_sigma))
-    # other grains' discs, relative to the census position: (dx, dy, exclusion radius); a clump partner closer
-    # than the exclusion distance keeps a smaller disc, so that the grain's own place is never excluded
+    # other grains' discs, relative to the census position: [dx, dy, exclusion radius, radius, template]; a clump
+    # partner closer than the exclusion distance keeps a smaller disc, so that the grain's own place is never excluded
     near = []
     for ox, oy, orr in others:
         d = math.hypot(ox - gx, oy - gy)
         if 0 < d < gr + orr + 2 * cfg.max_search_px + 10:
-            near.append((float(ox) - gx, float(oy) - gy, min(cfg.exclusion * (gr + orr), 0.9 * d)))
+            near.append([float(ox) - gx, float(oy) - gy, min(cfg.exclusion * (gr + orr), 0.9 * d), float(orr), None])
     H, W = renderer.height, renderer.width
+
+    def still_there(b, nb_) -> bool:
+        """Is a neighbour still at its census place (its reference look within 3 px of it)? One that has moved off
+        or burst no longer keeps the grain out of its place."""
+        dx_, dy_, _, orr, tmpl = nb_
+        wn = int(math.ceil(orr + cfg.pad_px))
+        yy_, xx_ = np.mgrid[-wn:wn + 1, -wn:wn + 1]
+        mk = (np.hypot(xx_, yy_) <= orr + cfg.pad_px).astype(np.float32)
+
+        def around(bb, R):
+            half = wn + R + margin + 1
+            c = renderer.crop(bb, gx + dx_ + 0.5, gy + dy_ + 0.5, half)
+            sl = slice(margin, margin + 2 * (wn + R) + 1)
+            return _hp(c, cfg.hp_sigma)[sl, sl]
+
+        if tmpl is None:
+            nb_[4] = tmpl = np.mean([around(bb, 0) for bb in range(first, min(first + 3, last))], axis=0)
+        res = cv2.matchTemplate(around(b, 3), tmpl, cv2.TM_CCORR_NORMED, mask=mk)
+        return float(np.nan_to_num(res, nan=-1.0).max()) >= cfg.min_score
 
     def patch(b, px, py, R):
         """High-passed neighbourhood of (gx + px, gy + py) at bin b: a (2 (w + R) + 1) square whose centre pixel is
@@ -124,12 +144,15 @@ def follow(renderer, gx: float, gy: float, gr: float, first: int, last: int, oth
         # offsets of the map cells from the census position
         off = np.arange(-R, R + 1)
         ox, oy = base[0] + off[None, :], base[1] + off[:, None]
-        for ax_, ay_, ex in near:
-            res[np.hypot(ox - ax_, oy - ay_) < ex] = -1.0
+        for nb_ in near:
+            ax_, ay_, ex = nb_[:3]
+            inside = np.hypot(ox - ax_, oy - ay_) < ex
+            if inside.any() and still_there(b, nb_):
+                res[inside] = -1.0
         res[np.hypot(off[None, :], off[:, None]) > R + 0.5] = -1.0
         i, j = np.unravel_index(int(np.argmax(res)), res.shape)
         s = float(res[i, j])
-        if s >= cfg.min_score and out_frac < 0.5:
+        if s >= (cfg.min_score if misses < 2 else cfg.reacquire_score) and out_frac < 0.5:
             dx, dy = _subpix(res, i, j)
             pos = np.array([base[0] + off[j] + dx, base[1] + off[i] + dy])
             xy[t], score[t], accepted[t] = pos, s, True
