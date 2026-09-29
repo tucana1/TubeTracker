@@ -133,7 +133,11 @@ def write_population(pred: dict, out_dir: str | Path, ids: set[str] | None = Non
     return {"n": n, "counts": counts, "t50_interval": t50}
 
 
-def write_growth_curves(pred: dict, out_dir: str | Path, ids: list[str], cols: int = 7):
+GROWTH_TITLE = ("Tube length (exit to apex, px) against source frame, per isolated grain; line = onset. "
+                "Model output, not human-verified.")
+
+
+def write_growth_curves(pred: dict, out_dir: str | Path, ids: list[str], cols: int = 7, title: str = GROWTH_TITLE):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -156,6 +160,8 @@ def write_growth_curves(pred: dict, out_dir: str | Path, ids: list[str], cols: i
         g = grains[ids[k]]
         _axes_style(ax)
         ax.plot(g["length"]["frames"], g["length"]["px"], color=SERIES, linewidth=1.6)
+        for f, L in g.get("anchors") or ():  # lengths a person checked, where the curve was pinned
+            ax.plot([f], [L], "o", color=INK, markersize=2.2)
         if g.get("onset_frame") is not None and g.get("status") == "emerged_within":
             ax.axvline(g["onset_frame"], color=INK2, linewidth=0.7)
         note = " · contact" if "contact_censored" in g.get("flags", []) else ""
@@ -165,8 +171,7 @@ def write_growth_curves(pred: dict, out_dir: str | Path, ids: list[str], cols: i
         ax.set_xlim(0, xmax)
         ax.set_ylim(0, ymax * 1.05)
         ax.tick_params(labelsize=6)
-    fig.suptitle("Tube length (exit to apex, px) against source frame, per isolated grain; line = onset. "
-                 "Model output, not human-verified.", fontsize=8.5, color=INK, x=0.01, ha="left")
+    fig.suptitle(title, fontsize=8.5, color=INK, x=0.01, ha="left")
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     fig.savefig(Path(out_dir) / "growth_curves.png", facecolor=SURFACE)
     plt.close(fig)

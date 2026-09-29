@@ -178,6 +178,70 @@ def population_input(doc: dict, checked_only: bool = False) -> dict:
     return {"grains": grains}
 
 
+def reviewed_curve(model_px, fv: int | None, anchors: list[tuple[int, float]]) -> np.ndarray:
+    """A grain's length at every bin after review: zero before the first visible bin ``fv`` (None: never
+    germinated), through the lengths a person checked (``anchors``: (bin, px)), and between them shaped
+    like the model's own curve (its growth rescaled to reach each checked length; straight where the model
+    did not grow). After the last checked length it grows as the model's did. Never shrinks."""
+    m = np.maximum.accumulate(np.nan_to_num(np.asarray(model_px, float)))
+    n = len(m)
+    out = np.zeros(n)
+    if fv is None or fv >= n:
+        return out
+    pts = sorted((b, float(L)) for b, L in anchors if fv <= b < n)
+    if fv > 0:
+        pts = [(fv - 1, 0.0)] + pts
+    elif pts:  # there from the start: the model's shape up to the first checked length
+        b1, L1 = pts[0]
+        pts = [(0, m[0] * L1 / m[b1] if m[b1] > 0 else L1)] + pts
+    else:
+        pts = [(0, m[0])]
+    for (a, La), (b, Lb) in zip(pts, pts[1:]):
+        seg = np.arange(a, b + 1)
+        dm = m[b] - m[a]
+        frac = (m[seg] - m[a]) / dm if dm > 1e-6 else (seg - a) / max(b - a, 1)
+        out[seg] = La + frac * (Lb - La)
+    b_last, L_last = pts[-1]
+    out[b_last:] = L_last + (m[b_last:] - m[b_last])
+    out[:fv] = 0.0
+    return np.maximum.accumulate(np.maximum(out, 0.0))
+
+
+def write_reviewed_growth(doc: dict, pred: dict, out: Path, um: float | None, spf: float | None) -> int:
+    """``reviewed_growth.csv`` and ``growth_curves.png``: every germinated grain's reviewed curve."""
+    from .report import write_growth_curves
+
+    fpb, nb = int(doc["frames_per_bin"]), int(doc["n_bins"])
+    model = {g["id"]: g for g in pred.get("grains", [])}
+    curves, rows = [], []
+    for gid, lab in sorted(doc.get("labels", {}).items()):
+        on = lab.get("onset") or {}
+        if doc["grains"].get(gid, {}).get("excluded") or on.get("verdict") not in ("emerged_within", "emerged_at_start"):
+            continue
+        saved = lab.get("traces") or {}
+        plan = asked_bins(on, saved, nb)
+        checked = [saved[str(b)] for b in plan if str(b) in saved and saved[str(b)].get("review_origin") == "human"]
+        anchors = [(t["bin"], float(t.get("length_px") or 0.0) if t["state"] in ("full", "partial") else 0.0)
+                   for t in checked if t["state"] in ("full", "partial", "no_tube")]
+        burst = next((t["bin"] for t in checked if t["state"] == "burst"), None)
+        px = (model.get(gid) or {}).get("length", {}).get("px") or [0.0] * nb
+        L = reviewed_curve(px, on.get("first_visible_bin") or 0, anchors)[:burst]  # nothing is measured after a burst
+        frames = [b * fpb + fpb // 2 for b in range(len(L))]
+        curves.append({"id": gid, "status": on["verdict"], "onset_frame": on.get("first_visible_frame"),
+                       "length": {"frames": frames, "px": L.round(2).tolist()}, "flags": [],
+                       "anchors": [(b * fpb + fpb // 2, v) for b, v in anchors]})
+        rows += [[gid, b, f, round(f * spf / 60.0, 2) if spf else "", round(float(v), 2),
+                  round(float(v) * um, 2) if um else "", len(anchors)] for b, (f, v) in enumerate(zip(frames, L))]
+    with open(out / "reviewed_growth.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["grain", "bin", "frame", "minutes", "length_px", "length_um", "checked_lengths"])
+        w.writerows(rows)
+    write_growth_curves({"grains": curves}, out, [c["id"] for c in curves],
+                        title="Tube length (px) against source frame after review: the model's curve through the "
+                              "lengths you checked (dots); line = onset.")
+    return len(curves)
+
+
 def export(labels_path: str | Path, um_per_px: float | None = None, s_per_frame: float | None = None,
            log=print) -> Path:
     """Results from a reviewed labels file, written next to it; returns that folder."""
@@ -268,6 +332,11 @@ def export(labels_path: str | Path, um_per_px: float | None = None, s_per_frame:
         lines.append("answers not yet checked are the model's: carry on reviewing, then export again")
     if 0 < n_on_checked < n_on:
         lines.append(f"the germination curve of the checked onsets alone: {out / 'checked_only' / 'population.png'}")
-    lines.append(f"wrote {out / 'reviewed_grains.csv'}, {out / 'reviewed_traces.csv'}, {out / 'population.png'}")
+    written = [out / "reviewed_grains.csv", out / "reviewed_traces.csv", out / "population.png"]
+    source = (doc.get("prefill") or {}).get("source")
+    if source and Path(source).exists():
+        write_reviewed_growth(doc, json.loads(Path(source).read_text()), out, um, spf)
+        written += [out / "reviewed_growth.csv", out / "growth_curves.png"]
+    lines.append("wrote " + ", ".join(str(f) for f in written))
     log("\n".join(lines))
     return out

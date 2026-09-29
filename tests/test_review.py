@@ -111,3 +111,32 @@ def test_an_ordinary_labels_file_is_not_a_review(tmp_path):
     bench.set_onset("g001", {"verdict": "no_emergence_by_end"})
     st = bench.state()
     assert st["review"] is None and st["progress"]["onset_checked"] == 1  # a person's own answers count as checked
+
+
+def test_reviewed_curve_goes_through_checked_lengths_shaped_like_the_model():
+    from sparsetrack.review import reviewed_curve
+
+    model = np.r_[np.zeros(5), np.linspace(2, 40, 20), np.full(5, 40.0)]  # grows from bin 5, stops at bin 24
+    same = reviewed_curve(model, 5, [])
+    assert np.allclose(same, np.maximum.accumulate(model))  # nothing checked: the model's curve
+    L = reviewed_curve(model, 5, [(14, 30.0), (29, 60.0)])  # the person read longer tubes
+    assert L[14] == pytest.approx(30.0) and L[29] == pytest.approx(60.0) and L[4] == 0.0
+    assert np.all(np.diff(L) >= 0) and L[26] == pytest.approx(60.0)  # the model stopped at 24: so does the curve
+    later = reviewed_curve(model, 12, [(20, 10.0)])  # onset moved later: nothing before it
+    assert later[:12].max() == 0.0 and later[20] == pytest.approx(10.0)
+    assert np.all(reviewed_curve(model, None, [(20, 10.0)]) == 0.0)  # no germination
+
+
+def test_export_writes_the_reviewed_growth_curves(reviewed):
+    cache, pred, out = reviewed
+    prefill(cache, pred, out, log=lambda *a: None)
+    bench = Bench(cache, out, annotator="reviewer")
+    plan = bench.state()["trace_plan"]["g001"]
+    pts = bench.state()["labels"]["g001"]["traces"][str(plan[-1])]["path_xy_view"]
+    bench.set_trace("g001", {"bin": plan[-1], "state": "full", "points": pts[:-1] + [[pts[-1][0], pts[-1][1] + 20]]})
+    fixed = bench.state()["labels"]["g001"]["traces"][str(plan[-1])]["length_px"]
+    export(out, log=lambda *a: None)
+    rows = [r for r in csv.DictReader(open(out.parent / "reviewed_growth.csv")) if r["grain"] == "g001"]
+    L = {int(r["bin"]): float(r["length_px"]) for r in rows}
+    assert L[plan[-1]] == pytest.approx(fixed, abs=0.01) and L[9] == 0.0  # through the fix; nothing before onset
+    assert rows[0]["checked_lengths"] == "1" and (out.parent / "growth_curves.png").exists()
