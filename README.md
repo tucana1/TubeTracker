@@ -46,25 +46,29 @@ python3 -m venv .venv
    `growth_curves.png`: every grain's length at every time, the model's curve pinned to the
    lengths you checked, in um and minutes too with `calibration.json`. Run it again to carry on.
 
-**If the gallery opens with a red warning** that many grains could not be followed, the grains in
-that movie drift or are still landing after the first minutes: SparseTrack reads each grain at its first
-place, so a grain's results after it moved are wrong. Check those grains (flag `drift_rejected`) in the
-review, or use a movie whose grains have settled. Following moving grains is being worked on.
+**Grains that move** are followed (SparseTrack 0.7.0): each grain is tracked by its own look from bin
+to bin, and one that moves further than its own diameter is read where it is. A grain that can no longer be
+found (it burst, drifted out of view or was swept off) is read until then and its numbers are held from
+there, flagged `grain_lost_after`. **If the gallery opens with a red warning** that many grains were lost
+partway, their final lengths and growth are only known up to that time; check them in the review. Tubes that
+swing or turn on their own while their grain stays put are still read in a fixed place.
 
-**How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.6.0, against one
+**How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.7.0, against one
 annotator's traces; length within max(2 px, 10%), onset within 2 bins; both movies were
 used in development, so a third, blind-labelled movie is the honest test):
-- sparse movie: lengths 69/104 (66%), onsets 15/26 (58%). The same annotator
-  repeating 15 traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
-- crowded movie 2: lengths 25/54 (46%), onsets 5/19 (26%). Tubes that touch or cross
+- sparse movie: lengths 72/104 (69%), onsets 15/25 (60%); growth rate per grain within
+  max(0.1 px/bin, 20%) of the annotator's for 24 of 27 grains (correlation 0.83). The same
+  annotator repeating 15 traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
+- crowded movie 2: lengths 23/54 (43%), onsets 4/18 (22%), growth rates 6 of 18 (correlation
+  0.19): long tubes that cross others or move are read short. Tubes that touch or cross
   other tubes, and very young tubes, are the hard cases; check those first (the gallery
   and the review open with the model's least sure grains).
 - the germination curve holds up better than single onsets, whose errors partly cancel:
-  T50 within about one bin of the annotator's on the sparse movie (7735 vs 7383 frames;
-  96% vs 100% germinated by the end) and 2.3 bins on movie 2 (24752 vs 24049 frames; 95%
-  both); the curves differ by at most 0.14 and 0.19. `sparsetrack eval` reports this.
+  T50 within about one bin of the annotator's on the sparse movie (7735 vs 7383 frames)
+  and 2.3 bins on movie 2 (24752 vs 24049 frames); the curves differ by at most 0.14 and
+  0.19. `sparsetrack eval` reports this and the growth-rate agreement.
 
-**Status (29 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack (below) is the
+**Status (29 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.7.0 (below) is the
 tracker. The cloud session's learned-evidence pipeline (`prototypes/learned_evidence/`, merged
 29 Sep) was tested on the lab's movies and read fewer lengths than SparseTrack (ld 40/100 vs
 69/104); it is kept as a research record. Work concentrated on isolated grains before crossings and
@@ -107,7 +111,8 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
   a track that jumps or wanders (it has locked onto a neighbour) falls back to the
   field registration. Grains still landing in the census bins are read from when they
   settle, and detections with no grain rim are reported unobservable.
-  `--set grain_track=auto` (or `follow`) follows each grain by its own look instead
+  With `grain_track=auto` (the default from 0.7.0; `phase` is the old behaviour, `follow`
+  reads every grain in its own frame) each grain is followed by its own look instead
   (`sparsetrack/track.py`: a bank of templates of the grain, matched within 8 px of its last
   place each bin, through passing blobs, crossings, pushes and changes of look, never onto a
   neighbour that is still at its place). A grain it can no longer find (burst, swept off,
@@ -123,6 +128,10 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 - **Length.** Growth is read backwards along that path with a non-decreasing
   dynamic-programming front. The grain and tube may rotate rigidly. The evidence is
   |change| combined with the change projected on the tube's own end-state cross-section.
+  Where the front reached the path's end well before the movie ends and new material keeps
+  arriving beyond it in order outwards (a tube turning back along its grain, which no path
+  from the rim reaches the long way), a second front reads that continuation (`tip_continue`,
+  0.7.0: ld 69 -> 73/104, synthetic movies +10/647).
 - **Onset.** Onset is called by a matched stub filter at the exit (end-state exit and
   rotation track), with hysteresis.
 - **Crowded or noisy grains** (reader `hybrid`, the default). Where a grain's change

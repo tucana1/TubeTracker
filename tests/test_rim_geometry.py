@@ -68,7 +68,7 @@ def test_a_tube_turning_back_along_its_grain_is_read_the_long_way():
     bins, true = _render(line, arc)
     meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
     grain = {"id": "g001", "x": GX, "y": GY, "r": R}
-    p = Params(half=100, exit_edge=False, rotate=False)
+    p = Params(half=100, exit_edge=False, rotate=False, tip_continue=False)
     off = analyze_grain(Renderer(bins, meta), meta, grain, [], p)
     on = analyze_grain(Renderer(bins, meta), meta, grain, [], replace(p, tip_continue=True))
     L_off, L_on = np.array(off["length"]["px"]), np.array(on["length"]["px"])
@@ -87,7 +87,7 @@ def test_a_tube_that_stopped_is_not_continued():
     bins, true = _render(line, arc, rate=1.5, n_bins=50)  # 30 px by bin 25, then no more growth
     meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
     grain = {"id": "g001", "x": GX, "y": GY, "r": R}
-    p = Params(half=100, exit_edge=False, rotate=False)
+    p = Params(half=100, exit_edge=False, rotate=False, tip_continue=False)
     off = analyze_grain(Renderer(bins, meta), meta, grain, [], p)
     on = analyze_grain(Renderer(bins, meta), meta, grain, [], replace(p, tip_continue=True))
     assert not any(f.startswith("tip_continued") for f in on["flags"])

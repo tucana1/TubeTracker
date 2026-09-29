@@ -297,15 +297,20 @@ def grain_confidence(res: dict, fpb: int) -> float | None:
 
 
 def movie_warnings(pred: dict, isolated: set[str] | None = None, share: float = 0.25) -> list[str]:
-    """Movie-level problems a reader of the results must know about: many grains that could not be followed
-    as they moved (their drift track jumped or wandered, so they were read at their first place)."""
+    """Movie-level problems a reader of the results must know about: many grains that could not be followed as they
+    moved (read at their first place), or that were lost partway (gone, burst or swept off: read until then)."""
     grains = [g for g in pred["grains"] if isolated is None or g["id"] in isolated]
-    lost = [g["id"] for g in grains if any(f in ("drift_rejected",) or f.startswith("grain_lost") for f in g.get("flags", []))]
+    unfollowed = [g["id"] for g in grains if "drift_rejected" in g.get("flags", [])]
+    lost = [g["id"] for g in grains if any(f.startswith("grain_lost") for f in g.get("flags", []))]
     out = []
+    if grains and len(unfollowed) / len(grains) > share:
+        out.append(f"{len(unfollowed)} of {len(grains)} grains could not be followed as they moved: they were read at "
+                   f"their first place, so their onsets and lengths are unreliable once they moved. Check these grains "
+                   f"(flag drift_rejected) before using their numbers.")
     if grains and len(lost) / len(grains) > share:
-        out.append(f"{len(lost)} of {len(grains)} grains could not be followed as they moved: they were read at their "
-                   f"first place, so their onsets and lengths are unreliable once they moved. The grains in this movie "
-                   f"drift or are still landing; check these grains (flag drift_rejected) before using their numbers.")
+        out.append(f"{len(lost)} of {len(grains)} grains were lost partway through the movie (they burst, drifted out of "
+                   f"view or were swept off): each is read until it was lost and its numbers are held from there (flag "
+                   f"grain_lost_after). Their final lengths and growth are only known up to that time.")
     return out
 
 

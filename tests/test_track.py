@@ -162,7 +162,7 @@ def test_auto_reads_a_grain_in_its_own_frame_only_once_it_moves_off_its_place():
     far = np.array([[0.0, 0.0], [20.0, 20.0], [np.nan, np.nan]])
     assert not reads_in_grain_frame(near, 12.0, p) and reads_in_grain_frame(far, 12.0, p)
     assert reads_in_grain_frame(near, 12.0, Params(grain_track="follow"))
-    assert not reads_in_grain_frame(far, 12.0, Params())
+    assert not reads_in_grain_frame(far, 12.0, Params(grain_track="phase"))
     # end to end: a grain pushed 40 px with its tube is read in its own frame (its drift in the result)
     n_bins, onset, rate = 60, 12, 1.2
     path = lambda t: (140.0 + min(max(t - 30, 0), 10) * 4.0, 160.0)

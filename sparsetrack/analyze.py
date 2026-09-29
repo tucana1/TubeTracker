@@ -141,8 +141,8 @@ class Params:
     # it the long way. A second front reads it from that bin on; the first reading is kept as it was.
     # ld 69 -> 73/104 lengths (95% CI +0 to +9; g022, g031, g002 gain, g031 loses one), m2 unchanged (flood-read);
     # synthetic v5 seeds 0-2, change reader: 331 -> 341/647 (+0 to +21). cont_back_px 3/6/10: ld -2/+4/+0,
-    # synthetic +0/+10/+17. Off until it holds on labels it was not developed on.
-    tip_continue: bool = False
+    # synthetic +0/+10/+17.
+    tip_continue: bool = True    # 0.7.0 (was off: the gain held on synthetic movies, where nothing was tuned)
     cont_min_px: float = 6.0       # ...when the second front gets at least this far
     cont_after_bins: int = 10      # ...and the first reached its tip at least this many bins before the end
     cont_margin_bins: int = 3      # material that changed from this many bins before then on counts
@@ -161,7 +161,7 @@ class Params:
     #   longer find is lost from that bin (lost_policy); every grain is read in its own frame;
     # - "auto": as "follow", but a grain is read in its own frame only once it has moved off its place (further than
     #   track_far_r radii), by the phase track as before nearer.
-    grain_track: str = "phase"
+    grain_track: str = "auto"    # 0.7.0: followed, read in its own frame once off its place, held once lost
     track_far_r: float = 2.0     # auto: "off its place" = further than this many grain radii
     track_step_px: int = 8       # follow/auto: the tracker's search radius per bin (px)
     track_min_score: float = 0.5  # follow/auto: a match scoring below this is a missed bin...
@@ -263,8 +263,9 @@ def followed_drift(renderer: Renderer, meta: dict, grain: dict, others: list[dic
     cfg = track.FollowConfig(step_px=p.track_step_px, min_score=p.track_min_score, max_gap=p.track_max_gap)
     key = (id(renderer.bins), round(gx, 2), round(gy, 2), round(gr, 2), rs, nb, near, astuple(cfg), p.reg_pad,
            p.ref_bins, p.track_tol_px)
-    if key in _FOLLOWED:
-        return _FOLLOWED[key]
+    hit = _FOLLOWED.get(key)
+    if hit is not None and hit[0] is renderer.bins:  # the same movie: an id alone can be reused once freed
+        return hit[1]
     tr = track.follow(renderer, gx, gy, gr, rs, nb, near, cfg)
     guide = tr["xy"]
     n_fol = len(guide) if tr["lost_from"] is None else tr["lost_from"] - rs
@@ -304,7 +305,7 @@ def followed_drift(renderer: Renderer, meta: dict, grain: dict, others: list[dic
     out = {"drift": drift, "lost_from": tr["lost_from"], "lost_reason": tr["lost_reason"], "score": tr["score"]}
     if len(_FOLLOWED) > 512:
         _FOLLOWED.clear()
-    _FOLLOWED[key] = out
+    _FOLLOWED[key] = (renderer.bins, out)  # keeps the (memory-mapped) movie alive, so its id is not reused
     return out
 
 
