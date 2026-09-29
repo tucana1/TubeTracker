@@ -68,7 +68,7 @@ def adapt(field: str | Path, work: str | Path, seeds: tuple[int, ...] = (101, 10
         shard = work / "shards" / f"synth_s{seed}.npz"
         if not shard.exists():
             movie = work / "synth" / f"synth_s{seed}.mp4"
-            if not movie.exists():
+            if not (work / "synth" / f"{movie.stem}_truth.json").exists():  # written last: the movie is complete
                 log(f"synthetic movie {i + 1} of {len(seeds)} on this movie's field (seed {seed}) ...")
                 make_movie(field, work / "synth", preset("v5", seed=seed, **over), name=movie.stem, log=lambda *a: None)
             cache = work / "synth" / f"synth_s{seed}_cache"
