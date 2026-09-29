@@ -218,14 +218,16 @@ def centreline(tube: np.ndarray, dist: np.ndarray, tip: tuple[int, int], centre:
 
 
 def from_exit(line: list[tuple[float, float]], centre: float, gr: float, zone: float) -> tuple[list, float]:
-    """A flood centreline (rim point first, as ``centreline`` returns it) cut at the tube's exit: the last point,
-    walking out from the rim, still within ``zone`` px of the grain centre. The flood may start beside the exit
-    and hug the rim before the tube turns out; an annotator measures from where the tube leaves the grain, so
-    that detour must not count. Returns the cut line (a rim point on the exit's ray first) and its length."""
+    """A flood centreline (rim point first, as ``centreline`` returns it) cut at the tube's exit: its last point,
+    walking out from the rim, before it first leaves ``zone`` px of the grain centre (a tube still wholly within
+    the zone: its tip). The flood may start beside the exit and hug the rim before the tube turns out; an
+    annotator measures from where the tube leaves the grain, so that detour must not count (a tube curling back
+    to its grain later is still measured from where it first left). Returns the cut line (a rim point on the
+    exit's ray first) and its length."""
     pts = np.asarray(line[1:], float)
     rad = np.hypot(pts[:, 0] - centre, pts[:, 1] - centre)
-    inside = np.nonzero(rad <= zone)[0]
-    k = int(inside[-1]) if len(inside) else 0
+    out = rad > zone
+    k = len(pts) - 1 if not out.any() else max(int(np.argmax(out)) - 1, 0)
     a = math.atan2(pts[k][0] - centre, pts[k][1] - centre)
     cut = [(centre + gr * math.sin(a), centre + gr * math.cos(a))] + [tuple(q) for q in pts[k:]]
     arr = np.asarray(cut)

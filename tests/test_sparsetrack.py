@@ -641,6 +641,18 @@ def test_flood_length_counts_from_where_the_tube_leaves_the_grain():
     assert abs(L - radial) <= 2.0                  # from the exit: the radial tube
     assert abs(np.hypot(line[0][0] - c, line[0][1] - c) - gr) < 0.01
 
+
+def test_flood_length_of_a_tube_curling_back_to_its_grain_counts_from_where_it_first_left():
+    from sparsetrack.learned import from_exit
+    c, gr, zone = 65.0, 10.0, 17.0
+    out = [(c, c + gr + 3 + k) for k in range(0, 25)]                    # straight out along +x to 38 px...
+    back = [(c + k, c + gr + 27 - 0.8 * k) for k in range(1, 26)]        # ...then curling back down towards the rim
+    line = [(c, c + gr)] + out + back
+    cut, L = from_exit(line, c, gr, zone)
+    full = float(np.sum(np.hypot(*np.diff(np.asarray(line), axis=0).T)))
+    assert abs(L - full) < 1.0                                            # measured from where it first left the rim
+    assert np.allclose(cut[0], (c, c + gr))                              # on the exit's ray, not near the curl's end
+
 def test_flood_centreline_follows_a_wide_bent_tube():
     """The flood's reported path (drawn in the gallery, pre-filled for review): a polyline from the rim to the tip
     along the tube, as long as the length read, not the tube's pixels sorted by rim distance (a zig-zag)."""
