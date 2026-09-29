@@ -78,19 +78,41 @@ def run_folder(movie: str | Path, out: str | Path | None = None) -> Path:
     return Path("runs/sparsetrack") / re.sub(r"[^A-Za-z0-9_.-]+", "_", movie.stem).strip("_.")
 
 
+def prepared(movie: Path, out: Path, frames_per_bin: int | None = None, flatfield: bool = False) -> Path:
+    """The movie's cache in its run folder, built the first time."""
+    cache = out / "cache"
+    if not ((cache / "meta.json").exists() and (cache / "grains.json").exists()):
+        fpb = frames_per_bin or auto_frames_per_bin(movie)
+        print(f"preparing {movie.name}: {fpb} frames per bin")
+        stack.prepare(movie, cache, frames_per_bin=fpb, ref_bins=3, ref_start="auto")
+        write_census(cache, 3, flatfield)
+    return cache
+
+
+def cmd_adapt(args) -> None:
+    """Fit the tube network to a movie's own field (no labels), for its later analyses."""
+    from .adapt import adapt
+    movie = Path(args.movie).expanduser()
+    out = run_folder(movie, args.out)
+    cache = Path(args.cache) if args.cache else prepared(movie, out, args.frames_per_bin, args.flatfield)
+    model = adapt(cache, out / "adapt", seeds=tuple(args.seeds), steps=args.steps,
+                  init=args.init)
+    print(f"done: `sparsetrack run {args.movie}` now reads the movie with {model}")
+
+
 def cmd_run(args) -> None:
     """One step for a new movie: cache (first time only), analysis, review gallery."""
     import webbrowser
     from .analyze import analyze
     movie = Path(args.movie).expanduser()
     out = run_folder(movie, args.out)
-    cache = out / "cache"
-    if not ((cache / "meta.json").exists() and (cache / "grains.json").exists()):
-        fpb = args.frames_per_bin or auto_frames_per_bin(movie)
-        print(f"preparing {movie.name}: {fpb} frames per bin")
-        stack.prepare(movie, cache, frames_per_bin=fpb, ref_bins=3, ref_start="auto")
-        write_census(cache, 3, args.flatfield)
-    analyze(cache, out / "analysis", video=args.video)
+    cache = prepared(movie, out, args.frames_per_bin, args.flatfield)
+    from .adapt import adapted_model
+    from .analyze import Params
+    model = adapted_model(out)
+    if model:
+        print(f"reading crowded and noisy grains with the network adapted to this movie ({model})")
+    analyze(cache, out / "analysis", params=Params(model=str(model) if model else None), video=args.video)
     page = (out / "analysis" / "index.html").resolve()
     print(f"review gallery: {page}")
     if not args.no_browser:
@@ -240,6 +262,17 @@ def main(argv=None) -> None:
     v.add_argument("--annotator", default="reviewer")
     v.add_argument("--no-browser", action="store_true")
     v.set_defaults(func=cmd_review)
+    d = sub.add_parser("adapt", help="fit the tube network to a new movie's own field, without labels (30-60 min; "
+                                     "later runs of the movie use it)")
+    d.add_argument("movie", help="the movie, as given to run (or its output folder)")
+    d.add_argument("--out", help="output folder, as given to run (default runs/sparsetrack/<movie name>)")
+    d.add_argument("--cache", help="prepared cache (default OUT/cache, built the first time)")
+    d.add_argument("--seeds", type=int, nargs="+", default=[101, 102], help="one synthetic movie per seed")
+    d.add_argument("--steps", type=int, default=3000)
+    d.add_argument("--init", help="network to start from (default: the shipped one)")
+    d.add_argument("--frames-per-bin", type=int)
+    d.add_argument("--flatfield", action="store_true")
+    d.set_defaults(func=cmd_adapt)
     m = sub.add_parser("compare", help="page of every human trace next to the model's path and tip")
     m.add_argument("cache")
     m.add_argument("--labels", required=True)

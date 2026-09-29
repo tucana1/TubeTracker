@@ -113,10 +113,16 @@ def _registered(bins: np.ndarray, shifts: np.ndarray, b: int) -> np.ndarray:
 def prob_cache(cache_dir: str | Path, model: str | Path = MODEL, log=print) -> Path:
     """The movie's tube-probability cache (built once, next to the image cache): a SparseTrack
     cache in reference coordinates whose bins are uint8 P(tube) x P_SCALE."""
+    import hashlib
     cache_dir = Path(cache_dir)
     out = cache_dir / f"prob_{Path(model).stem}"
+    sha1 = hashlib.sha1(Path(model).read_bytes()).hexdigest()
     if (out / "meta.json").exists():
-        return out
+        built_by = json.loads((out / "meta.json").read_text()).get("model_sha1")
+        if built_by in (None, sha1):  # None: built before fingerprints were kept (the shipped model's)
+            return out
+        log(f"{out.name} was built by another version of {Path(model).name} (adapted again?): building it again")
+        (out / "meta.json").unlink()  # a stopped rebuild must not look finished
     net = load_model(model)
     bins, meta = stack.load(cache_dir)
     shifts = np.asarray(meta["shifts"], np.float64)
@@ -131,9 +137,9 @@ def prob_cache(cache_dir: str | Path, model: str | Path = MODEL, log=print) -> P
     arr.flush()
     del arr
     m = {**meta, "shifts": [[0.0, 0.0]] * nb, "raw_shifts": [[0.0, 0.0]] * nb,
-         "evidence": f"P(tube) x {P_SCALE} from {Path(model).name}"}
-    (out / "meta.json").write_text(json.dumps(m, indent=1))
+         "evidence": f"P(tube) x {P_SCALE} from {Path(model).name}", "model_sha1": sha1}
     shutil.copy(cache_dir / "grains.json", out / "grains.json")
+    (out / "meta.json").write_text(json.dumps(m, indent=1))  # last: a stopped build does not look finished
     log(f"tube probabilities ({Path(model).name}): {nb} bins in {time.time() - started:.0f} s -> {out}")
     return out
 
