@@ -22,7 +22,9 @@ per grain, detect when a tube emerges and measure the tube's length over time.
    "next unfinished" goes to the next answer still the model's. Answers are saved as you
    go; press Ctrl-C in the window when you stop. `runs/sparsetrack/<movie name>/review/`
    then holds `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`, saying
-   which answers you checked and which you changed. Run it again to carry on.
+   which answers you checked and which you changed, and `reviewed_growth.csv` /
+   `growth_curves.png`: every grain's length at every time, the model's curve pinned to the
+   lengths you checked. Run it again to carry on.
    `--um-per-px` and `--s-per-frame` add lengths in um and times in minutes.
 
 **How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.5.3, against one
