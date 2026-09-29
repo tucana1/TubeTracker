@@ -1,4 +1,4 @@
-"""Adapting the tube network to a movie: sizing, finding the adapted network, and fresh probability movies."""
+"""The probability movie next to a cache is rebuilt when the network file changes."""
 
 import json
 
@@ -6,24 +6,9 @@ import numpy as np
 import pytest
 
 from sparsetrack import stack
-from sparsetrack.adapt import MODEL_NAME, adapted_model, sized_like
 
 
-def test_synthetic_movies_are_sized_like_the_movie():
-    ld, m2 = sized_like({"n_bins": 176}), sized_like({"n_bins": 351})
-    assert ld["n_frames"] == 176 * 25 and m2["n_frames"] == 351 * 25
-    assert ld["onset_bins"][1] == pytest.approx(123.2) and m2["onset_bins"][1] == pytest.approx(245.7)
-    assert 120.0 <= ld["max_length"] <= 160.0 and m2["max_length"] == pytest.approx(280.8)
-
-
-def test_the_adapted_network_is_found_in_the_run_folder(tmp_path):
-    assert adapted_model(tmp_path) is None
-    (tmp_path / "adapt").mkdir()
-    (tmp_path / "adapt" / MODEL_NAME).write_bytes(b"x")
-    assert adapted_model(tmp_path) == tmp_path / "adapt" / MODEL_NAME
-
-
-def test_a_network_adapted_again_gets_a_fresh_probability_movie(tmp_path):
+def test_a_changed_network_gets_a_fresh_probability_movie(tmp_path):
     torch = pytest.importorskip("torch")
     from sparsetrack import learned
 
@@ -35,7 +20,7 @@ def test_a_network_adapted_again_gets_a_fresh_probability_movie(tmp_path):
         "schema": stack.SCHEMA, "frames_per_bin": 300, "n_bins": 8, "shifts": [[0.0, 0.0]] * 8,
         "movie": {"name": "t.mp4", "size_bytes": 1, "n_frames": 2400, "width": 32, "height": 32}}))
     (cache / "grains.json").write_text(json.dumps({"grains": []}))
-    model = tmp_path / MODEL_NAME
+    model = tmp_path / "tubes.pt"
 
     def save(seed):
         torch.manual_seed(seed)
@@ -46,7 +31,7 @@ def test_a_network_adapted_again_gets_a_fresh_probability_movie(tmp_path):
     out = learned.prob_cache(cache, model, log=lambda *a: None)
     first = np.load(out / "bins.npy").copy()
     assert learned.prob_cache(cache, model, log=lambda *a: None) == out  # the same network: used again
-    save(1)  # adapted again, same file name
+    save(1)  # retrained, same file name
     notes = []
     learned.prob_cache(cache, model, log=notes.append)
     assert any("building it again" in n for n in notes) and not np.array_equal(np.load(out / "bins.npy"), first)

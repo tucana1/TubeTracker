@@ -121,7 +121,7 @@ def prob_cache(cache_dir: str | Path, model: str | Path = MODEL, log=print) -> P
         built_by = json.loads((out / "meta.json").read_text()).get("model_sha1")
         if built_by in (None, sha1):  # None: built before fingerprints were kept (the shipped model's)
             return out
-        log(f"{out.name} was built by another version of {Path(model).name} (adapted again?): building it again")
+        log(f"{out.name} was built by another version of {Path(model).name}: building it again")
         (out / "meta.json").unlink()  # a stopped rebuild must not look finished
     net = load_model(model)
     bins, meta = stack.load(cache_dir)
