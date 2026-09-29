@@ -166,16 +166,20 @@ class Bench:
         grains = self.doc["grains"]
         todo = [gid for gid in self.order() if not grains[gid].get("excluded")]
         onset_done = sum(1 for gid in todo if labels.get(gid, {}).get("onset"))
-        traces_needed = traces_done = 0
+        human = lambda rec: (rec or {}).get("review_origin", "human") == "human"  # answered here, not pre-filled
+        onset_checked = sum(1 for gid in todo if labels.get(gid, {}).get("onset") and human(labels[gid]["onset"]))
+        traces_needed = traces_done = traces_checked = 0
         plan = {}
         for gid in todo:
             onset = labels.get(gid, {}).get("onset") or {}
             if onset.get("verdict") in ("emerged_within", "emerged_at_start"):
                 fv = onset.get("first_visible_bin")
                 fv = 0 if fv is None else fv
-                plan[gid] = grain_trace_plan(fv, self.n_bins, labels[gid].get("traces", {}))
+                saved = labels[gid].get("traces", {})
+                plan[gid] = grain_trace_plan(fv, self.n_bins, saved)
                 traces_needed += len(plan[gid])
-                traces_done += sum(1 for b in plan[gid] if str(b) in labels[gid].get("traces", {}))
+                traces_done += sum(1 for b in plan[gid] if str(b) in saved)
+                traces_checked += sum(1 for b in plan[gid] if str(b) in saved and human(saved[str(b)]))
         return {
             "movie": self.doc["movie"], "n_bins": self.n_bins, "frames_per_bin": self.fpb,
             "shifts": self.meta["shifts"], "order": self.order(), "grains": grains,
@@ -183,8 +187,11 @@ class Bench:
             "layout": {"coarse": COARSE, "fine": FINE, "trace": TRACE_VIEWS, "zoom": ZOOM},
             "verdicts": VERDICTS, "trace_states": TRACE_STATES, "exclude_reasons": EXCLUDE_REASONS,
             "progress": {"grains": len(todo), "onset_done": onset_done,
-                         "traces_needed": traces_needed, "traces_done": traces_done},
+                         "traces_needed": traces_needed, "traces_done": traces_done,
+                         "onset_checked": onset_checked, "traces_checked": traces_checked},
             "labels_path": str(self.labels_path),
+            # a file pre-filled with a model's answers (sparsetrack review): the tool asks until each is checked
+            "review": self.doc.get("prefill"),
         }
 
     # ---- updates --------------------------------------------------------------------

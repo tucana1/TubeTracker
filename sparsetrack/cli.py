@@ -67,13 +67,23 @@ def auto_frames_per_bin(movie: str | Path, target_bins: int = 175) -> int:
     return int(max(step, round(info.n_frames / target_bins / step) * step))
 
 
+def run_folder(movie: str | Path, out: str | Path | None = None) -> Path:
+    """Where ``run`` keeps a movie's cache (``cache/``), analysis (``analysis/``) and review (``review/``)."""
+    import re
+    movie = Path(movie).expanduser()
+    if out:
+        return Path(out)
+    if movie.is_dir() and (movie / "cache").is_dir():  # the folder itself
+        return movie
+    return Path("runs/sparsetrack") / re.sub(r"[^A-Za-z0-9_.-]+", "_", movie.stem).strip("_.")
+
+
 def cmd_run(args) -> None:
     """One step for a new movie: cache (first time only), analysis, review gallery."""
-    import re
     import webbrowser
     from .analyze import analyze
     movie = Path(args.movie).expanduser()
-    out = Path(args.out) if args.out else Path("runs/sparsetrack") / re.sub(r"[^A-Za-z0-9_.-]+", "_", movie.stem).strip("_.")
+    out = run_folder(movie, args.out)
     cache = out / "cache"
     if not ((cache / "meta.json").exists() and (cache / "grains.json").exists()):
         fpb = args.frames_per_bin or auto_frames_per_bin(movie)
@@ -85,6 +95,37 @@ def cmd_run(args) -> None:
     print(f"review gallery: {page}")
     if not args.no_browser:
         webbrowser.open(page.as_uri())
+
+
+def cmd_review(args) -> None:
+    """Check and correct an analysis in the labelling tool, then export the reviewed results."""
+    import shutil
+    import time
+    from .bench.server import serve
+    from .review import export, prefill
+    out = run_folder(args.movie, args.out)
+    cache = Path(args.cache) if args.cache else out / "cache"
+    pred = Path(args.pred) if args.pred else out / "analysis" / "predictions.json"
+    if not pred.exists() or not (cache / "meta.json").exists():
+        raise SystemExit(f"analyse the movie first (sparsetrack run {args.movie}): needs {pred} and {cache}")
+    folder = out / "review"
+    labels = folder / "review_labels.json"
+    model = labels.with_suffix(".model.json")
+    if labels.exists() and model.exists() and pred.stat().st_mtime > model.stat().st_mtime:
+        if args.new:
+            keep = out / f"review_{time.strftime('%Y%m%d-%H%M%S')}"
+            shutil.move(str(folder), str(keep))
+            print(f"the earlier review is kept, whole, in {keep}")
+        else:
+            print("this movie was analysed again after its review was pre-filled: carrying on with the earlier "
+                  "review (--new starts one on the new analysis and keeps the earlier one beside it)")
+    if not labels.exists():
+        prefill(cache, pred, labels)
+    if not args.export_only:
+        print("Confirm or fix each answer (Enter confirms the model's). Press Ctrl-C here when you stop; "
+              "answers are saved as you go.")
+        serve(cache, labels, port=args.port, open_browser=not args.no_browser, annotator=args.annotator)
+    export(labels, args.um_per_px, args.s_per_frame)
 
 
 def cmd_bench(args) -> None:
@@ -184,6 +225,21 @@ def main(argv=None) -> None:
     r.add_argument("--video", action="store_true", help="also render field_overlay.mp4")
     r.add_argument("--no-browser", action="store_true")
     r.set_defaults(func=cmd_run)
+    v = sub.add_parser("review", help="check and correct an analysis in the labelling tool, pre-filled with the "
+                                      "model's answers; exports the reviewed results when you stop")
+    v.add_argument("movie", help="the movie, as given to run (or its output folder)")
+    v.add_argument("--out", help="output folder, as given to run (default runs/sparsetrack/<movie name>)")
+    v.add_argument("--cache", help="prepared cache (default OUT/cache)")
+    v.add_argument("--pred", help="predictions to review (default OUT/analysis/predictions.json)")
+    v.add_argument("--new", action="store_true",
+                   help="start a new review of a newer analysis; the earlier review is kept beside it")
+    v.add_argument("--export-only", action="store_true", help="write the results of the review so far, no tool")
+    v.add_argument("--um-per-px", type=float, help="pixel size, for lengths in um")
+    v.add_argument("--s-per-frame", type=float, help="frame interval, for times in minutes")
+    v.add_argument("--port", type=int, default=0, help="default: any free port")
+    v.add_argument("--annotator", default="reviewer")
+    v.add_argument("--no-browser", action="store_true")
+    v.set_defaults(func=cmd_review)
     m = sub.add_parser("compare", help="page of every human trace next to the model's path and tip")
     m.add_argument("cache")
     m.add_argument("--labels", required=True)

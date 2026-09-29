@@ -34,8 +34,10 @@ const grain = (gid = S.gid) => S.st.grains[gid];
 const label = (gid = S.gid) => S.st.labels[gid] || {};
 const plan = (gid = S.gid) => S.st.trace_plan[gid] || [];
 const included = () => S.st.order.filter((g) => !S.st.grains[g].excluded);
-const needsOnset = (g) => !label(g).onset;
-const needsTrace = (g) => plan(g).some((b) => !((label(g).traces || {})[String(b)]));
+// review (a file pre-filled with a model's answers): its answers are asked for until a person checks each
+const isModel = (rec) => !!(S.st.review && rec && rec.review_origin === "model");
+const needsOnset = (g) => !label(g).onset || isModel(label(g).onset);
+const needsTrace = (g) => plan(g).some((b) => { const t = (label(g).traces || {})[String(b)]; return !t || isModel(t); });
 // time on a grain accumulates across sessions: start from what was saved for it
 function spent() { return (S.timers[S.gid] ?? label().time_spent_s ?? 0) + (Date.now() - S.openedAt) / 1000; }
 
@@ -43,8 +45,13 @@ function resetGrainState() {
   S.step = "coarse"; S.fv = null; S.la = null; S.coarseTile = null; S.consulted = new Set();
   const p = plan();
   const tr = label().traces || {};
-  const firstOpen = p.findIndex((b) => !tr[String(b)]);
+  const firstOpen = p.findIndex((b) => !tr[String(b)] || isModel(tr[String(b)]));
   S.traceIdx = firstOpen >= 0 ? firstOpen : 0;
+  const on = label().onset;
+  if (isModel(on) && on.verdict === "emerged_within") {  // review: open on the model's bracket; Enter confirms it
+    S.step = "fine"; S.fv = on.first_visible_bin; S.la = on.last_absent_bin ?? null;
+    S.fineStart = Math.max(0, Math.min(on.first_visible_bin - 8, S.st.n_bins - S.st.layout.fine.n_tiles));
+  }
   loadTrace();
 }
 function loadTrace() {
@@ -79,8 +86,9 @@ function nextPending() {
 function renderChrome() {
   const p = S.st.progress;
   $("#movie").textContent = S.st.movie.name;
-  $("#progress").textContent =
-    `onset ${p.onset_done}/${p.grains} grains · traces ${p.traces_done}/${p.traces_needed}`;
+  $("#progress").textContent = S.st.review
+    ? `review of ${S.st.review.model || "the model"}: onsets checked ${p.onset_checked}/${p.grains} · traces checked ${p.traces_checked}/${p.traces_needed}`
+    : `onset ${p.onset_done}/${p.grains} grains · traces ${p.traces_done}/${p.traces_needed}`;
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("active", b.dataset.view === S.view));
   const bar = $("#grainbar");
   if (!S.gid || S.view === "review") { bar.innerHTML = ""; return; }
@@ -337,7 +345,7 @@ function renderOnset(retest) {
       <div style="margin-top:8px">
       <button class="act" id="vN">N · no emergence by end</button><button class="act" id="vS">S · emerged at start</button>
       <button class="act" id="vU">U · can't tell</button><button class="act" id="vX">X · exclude…</button>
-      ${prior ? `<span class="muted">saved: ${VERDICT_TEXT[prior.verdict]} — dashed blue = previous first-visible tile</span>` : ""}</div>`;
+      ${prior ? `<span class="muted">${isModel(prior) ? "the model's call" : "saved"}: ${VERDICT_TEXT[prior.verdict]}${isModel(prior) ? " — <kbd>Enter</kbd> confirms it" : ""} — dashed blue = previous first-visible tile</span>` : ""}</div>`;
     $("#coarse").onclick = (e) => {
       const idx = tileAt(e, L.coarse, nTiles); if (idx < 0) return;
       S.coarseTile = idx;
@@ -364,6 +372,9 @@ function renderOnset(retest) {
     else if (b === S.la) boxes += boxAt(i, L.fine, "absent");
     else if (S.fv !== null && S.la !== null && b > S.la && b < S.fv) boxes += boxAt(i, L.fine, "between");
   }
+  if (!retest && isModel(prior) && prior.first_visible_bin === S.fv)
+    $("#help").insertAdjacentHTML("afterbegin", `<b>Review:</b> the model's bracket is marked. <kbd>Enter</kbd>
+      confirms it; or click the bins you see and save.<br>`);
   const fvText = S.fv === null ? "—" : `bin ${S.fv}`;
   const laText = S.la === null ? (S.fv === null ? "—" : `bin ${S.fv - 1} (default)`) : `bin ${S.la}`;
   c.innerHTML = `<div class="wrap"><img id="fine" src="/api/img/fine/${gid}?start=${S.fineStart}&contrast=${S.contrast}">${boxes}</div>
@@ -431,8 +442,12 @@ function renderTrace() {
     <kbd>W</kbd> wide/near · ${S.st.layout.trace.far ? "<kbd>X</kbd> extra wide · " : ""}<kbd>H</kbd> hide marks ·
     <kbd>C</kbd> contrast · <kbd>A</kbd> smoother ·
     <kbd>←</kbd>/<kbd>→</kbd> trace time.`);
-  const chips = p.map((bb, i) => `<span data-i="${i}" class="${tr[String(bb)] ? "done" : ""} ${i === S.traceIdx ? "cur" : ""}">f${bb * S.st.frames_per_bin + S.st.frames_per_bin / 2}${tr[String(bb)] ? (tr[String(bb)].state === "burst" ? " ✓ burst" : " ✓") : ""}</span>`).join("");
+  const mark = (t) => !t ? "" : isModel(t) ? " ? model" : t.state === "burst" ? " ✓ burst" : " ✓";
+  const chips = p.map((bb, i) => `<span data-i="${i}" class="${tr[String(bb)] && !isModel(tr[String(bb)]) ? "done" : ""} ${i === S.traceIdx ? "cur" : ""}">f${bb * S.st.frames_per_bin + S.st.frames_per_bin / 2}${mark(tr[String(bb)])}</span>`).join("");
   const saved = tr[String(b)];
+  if (isModel(saved)) $("#help").insertAdjacentHTML("afterbegin", `<b>Review:</b> this is the model's answer
+    (${saved.state === "full" ? `a ${saved.length_px} px tube` : saved.state.replace("_", " ")}). <kbd>Enter</kbd> confirms it as it
+    stands; or fix it and save as usual.<br>`);
   c.innerHTML = `<div class="row"><div class="wrap"><canvas id="tc" width="${size}" height="${size}"></canvas></div>
     <div class="side"><h3>Trace ${S.traceIdx + 1} of ${p.length} · frame ${b * S.st.frames_per_bin + S.st.frames_per_bin / 2} (bin ${b})</h3>
     <div class="chips" id="chips">${chips}</div>
@@ -527,7 +542,7 @@ async function saveTrace(state) {
                                       view: S.traceView, time_spent_s: spent() });
   await refresh();
   const tr = label().traces || {};
-  const nextIdx = plan().findIndex((bb) => !tr[String(bb)]);
+  const nextIdx = plan().findIndex((bb) => !tr[String(bb)] || isModel(tr[String(bb)]));
   if (nextIdx >= 0) { S.traceIdx = nextIdx; loadTrace(); render(); } else nextPending();
 }
 
@@ -671,6 +686,8 @@ document.addEventListener("keydown", (e) => {
     if (k === "Backspace") { e.preventDefault(); S.pts.pop(); drawTrace(); return updateCount(); }
     if (k === "t") { S.contact = !S.contact; return render(); }
     if (!lr && k === "b" && canBurst()) return saveTrace("burst");
+    const cur = lr ? null : (label().traces || {})[String(plan()[S.traceIdx])];
+    if (!lr && k === "Enter" && isModel(cur)) return saveTrace(cur.state);  // review: confirm the model's answer
     if (lr && k === "[") return peek(-10);
     if (lr && k === "]") return peek(+10);
     if (k === "w") return toggleWide();
@@ -688,6 +705,7 @@ document.addEventListener("keydown", (e) => {
       if (k === "s") return saveOnset("emerged_at_start", retest);
       if (k === "u") return saveOnset("unobservable", retest);
       if (k === "x" && !retest) return grainMenu(200, 160, S.gid);
+      if (k === "Enter" && !retest && isModel(label().onset)) return saveOnset(label().onset.verdict, false);
     } else {
       if (k === "Enter" && S.fv !== null) return saveOnset("emerged_within", retest);
       if (k === "[") return shiftFine(-12);
