@@ -140,18 +140,22 @@ class Params:
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
     settle_bins: int = 24
     grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
-    # how each grain is followed through the movie (both readers and the labelling tool): "phase" (to 0.6.0: phase
-    # correlation bin to bin, the whole track dropped by checked_drift when implausible) or "follow" (sparsetrack/
-    # track.py: the grain's own look bin by bin, through occlusions and changes of look, refined to the phase
-    # correlation's precision; a grain it can no longer find is lost from that bin)
-    grain_track: str = "phase"   # ...or "auto": followed for losses, read in its own frame once it moves off its place
+    # how each grain is followed through the movie (both readers and the labelling tool's views):
+    # - "phase" (to 0.6.0): phase correlation bin to bin; the whole track is dropped (zero drift) by checked_drift
+    #   when it jumps or wanders;
+    # - "follow": sparsetrack/track.py follows the grain's own look bin by bin (through blobs, crossings, pushes and
+    #   changes of look), refined by the phase correlation where the two agree (followed_drift); a grain it can no
+    #   longer find is lost from that bin (lost_policy); every grain is read in its own frame;
+    # - "auto": as "follow", but a grain is read in its own frame only once it has moved off its place (further than
+    #   track_far_r radii), by the phase track as before nearer.
+    grain_track: str = "phase"
     track_far_r: float = 2.0     # auto: "off its place" = further than this many grain radii
-    track_step_px: int = 8       # follow: search radius per bin (px)
-    track_min_score: float = 0.5  # follow: a match scoring below this is a missed bin...
+    track_step_px: int = 8       # follow/auto: the tracker's search radius per bin (px)
+    track_min_score: float = 0.5  # follow/auto: a match scoring below this is a missed bin...
     track_max_gap: int = 8       # ...and more missed bins in a row than this lose the grain
-    track_tol_px: float = 4.0    # follow: the phase correlation refines the track where it agrees within this
-    track_recentre_px: float = 25.0  # follow: a grain that moves further than this is re-cropped where it is (the
-                                     # warp of a fixed crop would bring in that much replicated border)
+    track_tol_px: float = 4.0    # follow/auto: the phase track is kept where it is within this of the grain's track
+    track_recentre_px: float = 25.0  # a grain read in its own frame that moves further than this is cropped where it
+                                     # is (a fixed crop warped that far brings in that much replicated border)
     lost_policy: str = "hold"    # a lost grain: "hold" its readings from the loss on (flag grain_lost_after:<frame>),
                                  # or "read" on at its last place
     lost_min_bins: int = 15      # a grain followed for fewer bins than this is unobservable
@@ -891,8 +895,10 @@ def _pad_front(res: dict, frames: list, b0: int) -> dict:
 def reads_in_grain_frame(drift: np.ndarray | None, gr: float, p: "Params") -> bool:
     """Whether a grain is read in its own frame (the crops registered by its followed drift) rather than by the
     phase track as before: always with grain_track "follow"; with "auto" once it has moved off its own place (further
-    than ``track_far_r`` radii). Nearer, a tube stuck to the substrate stays sharp in the field frame (movie 2: read
-    in their own frames, the grains that move 6-20 px lost 3 length hits)."""
+    than ``track_far_r`` radii), where reading it at its old place is surely wrong. Nearer, a tube stuck to the
+    substrate stays sharp in the field frame while its grain is pushed a few px (movie 2: g054 and g038, pushed 7 and
+    20 px, each lost a length hit when read in their own frames; on synthetic movies, whose grains carry their tubes
+    rigidly, following gains)."""
     if drift is None or p.grain_track == "phase":
         return False
     if p.grain_track == "follow":
@@ -934,24 +940,25 @@ def hold_after(res: dict, frames: list, n_fol: int, flag: str) -> dict:
     return res
 
 
-def _lost_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: "Params", fd: dict,
-                route: list | None) -> dict:
-    """A followed grain lost from bin ``fd["lost_from"]``: read over the bins it was followed, its readings held from
-    there (``hold_after``); followed for fewer than ``p.lost_min_bins`` bins, it is unobservable."""
+def read_lost(renderer: Renderer, meta: dict, grain: dict, p: "Params", fd: dict, read, half: int,
+              flags: tuple = ()) -> dict:
+    """A followed grain lost from bin ``fd["lost_from"]``: ``read(truncated meta, drift)`` reads it over the bins it
+    was followed and its readings are held from there (``hold_after``); followed for fewer than
+    ``p.lost_min_bins`` bins, it is unobservable."""
     fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
     n_bins = int(meta["n_bins"]) - rs
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
     n_fol = int(fd["lost_from"]) - rs
-    flag = f"grain_lost_after:{frames[max(n_fol - 1, 0)]}"
+    last = frames[max(n_fol - 1, 0)]
+    flag = f"grain_lost_after:{last}"
     if n_fol < p.lost_min_bins:
-        c = np.nan_to_num(renderer.crop(rs, grain["x"], grain["y"], p.half))
-        return {"id": grain["id"], "x": grain["x"], "y": grain["y"], "r": grain["r"], "flags": [flag],
+        c = np.nan_to_num(renderer.crop(rs, grain["x"], grain["y"], half))
+        return {"id": grain["id"], "x": grain["x"], "y": grain["y"], "r": grain["r"], "flags": list(flags) + [flag],
                 "map_threshold": 1.0, "status": "unobservable", "onset_frame": None, "onset_interval": None,
                 "length": {"frames": frames, "px": [0.0] * n_bins}, "path": [],
-                "observed_until_frame": frames[max(n_fol - 1, 0)], "lost_reason": fd["lost_reason"],
-                "_diag": (c, np.zeros_like(c), np.zeros(c.shape, bool), None, None, None, p.half - 0.5)}
-    res = analyze_grain(renderer, {**meta, "n_bins": int(fd["lost_from"])}, grain, others, p, _settled=True,
-                        route=route, _drift=fd["drift"][:n_fol])
+                "observed_until_frame": last, "lost_reason": fd["lost_reason"],
+                "_diag": (c, np.zeros_like(c), np.zeros(c.shape, bool), None, None, None, half - 0.5)}
+    res = read({**meta, "n_bins": int(fd["lost_from"])}, fd["drift"][:n_fol])
     res["lost_reason"] = fd["lost_reason"]
     return hold_after(res, frames, n_fol, flag)
 
@@ -990,9 +997,11 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
             res["flags"].append(f"settled_from_bin:{b0}")
             return _pad_front(res, frames, b0)
     if p.grain_track in ("follow", "auto") and _drift is None:
-        fd = followed_drift(renderer, meta, {**grain, "x": gx, "y": gy}, others, p)
+        here = {**grain, "x": gx, "y": gy}
+        fd = followed_drift(renderer, meta, here, others, p)
         if fd["lost_from"] is not None and p.lost_policy == "hold":
-            return _lost_grain(renderer, meta, {**grain, "x": gx, "y": gy}, others, p, fd, route)
+            return read_lost(renderer, meta, here, p, fd, half=half, read=lambda m, d: analyze_grain(
+                renderer, m, here, others, p, _settled=True, route=route, _drift=d))
         _drift = hold_nan(fd["drift"])  # "read" on: at its last place
     followed = reads_in_grain_frame(_drift, gr, p)
     if followed:

@@ -102,6 +102,15 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
   a track that jumps or wanders (it has locked onto a neighbour) falls back to the
   field registration. Grains still landing in the census bins are read from when they
   settle, and detections with no grain rim are reported unobservable.
+  `--set grain_track=auto` (or `follow`) follows each grain by its own look instead
+  (`sparsetrack/track.py`: a bank of templates of the grain, matched within 8 px of its last
+  place each bin, through passing blobs, crossings, pushes and changes of look, never onto a
+  neighbour that is still at its place). A grain it can no longer find (burst, swept off,
+  out of the frame) is lost from that bin: its readings are held from there, flagged
+  `grain_lost_after:<frame>` (marked in the gallery), and an ungerminated lost grain is
+  censored at that frame in the population. `follow` reads every grain in its own frame;
+  `auto` only once it has moved further than its diameter, and by the phase track nearer
+  (a tube stuck to the substrate stays sharp in the field while its grain is pushed a few px).
 - **Path.** Candidate centrelines are traced on the end-of-movie change map, one per
   branch end and rim contact. The one kept is the candidate whose monotone growth from
   the exit explains the most evidence, weighted by how ridge-like its end-state

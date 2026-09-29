@@ -174,6 +174,32 @@ def test_auto_reads_a_grain_in_its_own_frame_only_once_it_moves_off_its_place():
     assert np.median(np.abs(np.array(res["length"]["px"])[25:] - true[25:])) < 2.5
 
 
+def test_the_flood_reader_follows_and_holds_too():
+    """The flood reader (learned.read_grain) reads a followed grain's tube probabilities in the grain's frame and
+    holds a lost grain's readings, like the change reader."""
+    from sparsetrack.learned import P_SCALE, read_grain
+    n_bins, onset, rate, size, r = 60, 10, 1.5, 320, 13.0
+    path = lambda t: (150.0 + min(max(t - 30, 0), 10) * 4.0, 160.0) if t < 50 else None  # pushed 40 px, gone at 50
+    bins, meta = _movie(n_bins, [path], size=size, r=r, tubes={0: (200.0, onset, rate)})
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    u = np.array([math.cos(math.radians(200.0)), math.sin(math.radians(200.0))])
+    prob = np.zeros((n_bins, size, size), np.uint8)
+    for t in range(n_bins):
+        p = path(t) or path(49)
+        L = max(0.0, (t - onset + 1) * rate)
+        along = (xx - p[0]) * u[0] + (yy - p[1]) * u[1] - r
+        across = -(xx - p[0]) * u[1] + (yy - p[1]) * u[0]
+        prob[t][(along > 0) & (along < L) & (np.abs(across) < 1.5)] = int(P_SCALE)
+    grain = {"id": "g001", "x": 150.0, "y": 160.0, "r": r}
+    res = read_grain(Renderer(bins, meta), Renderer(prob, meta), meta, grain, [],
+                     Params(grain_track="follow", flood_half=100))
+    assert "grain_lost_after:14850" in res["flags"]  # bin 49 is the last followed
+    px = np.array(res["length"]["px"])
+    true = np.array([max(0.0, (t - onset + 1) * rate) for t in range(n_bins)])
+    assert np.median(np.abs(px[20:50] - true[20:50])) < 3.0 and np.all(px[50:] == px[49])
+    assert abs(res["drift"]["xy"][45][0] - 40.0) < 1.0
+
+
 def test_hold_after_pads_series_and_flags():
     frames = [150, 450, 750, 1050]
     res = {"flags": [], "length": {"frames": frames[:2], "px": [0.0, 5.0]},

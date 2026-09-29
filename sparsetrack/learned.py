@@ -405,7 +405,7 @@ def flood_compete(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.
 def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, others: list[dict], p,
                _drift: np.ndarray | None = None) -> dict:
     """One grain read by the flood, as a result dict of the same shape as ``analyze_grain``'s."""
-    from .analyze import checked_drift, followed_drift, hold_after, hold_nan, local_shifts, reads_in_grain_frame
+    from .analyze import checked_drift, followed_drift, hold_nan, local_shifts, read_lost, reads_in_grain_frame
     fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
     n_bins = int(meta["n_bins"]) - rs
     gx, gy, gr = grain["x"], grain["y"], grain["r"]
@@ -415,20 +415,8 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     if getattr(p, "grain_track", "phase") in ("follow", "auto") and _drift is None:
         fd = followed_drift(renderer, meta, grain, others, p)
         if fd["lost_from"] is not None and p.lost_policy == "hold":
-            frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
-            n_fol = int(fd["lost_from"]) - rs
-            flag = f"grain_lost_after:{frames[max(n_fol - 1, 0)]}"
-            if n_fol < p.lost_min_bins:
-                c = np.nan_to_num(renderer.crop(rs, gx, gy, half))
-                return {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": flags + [flag], "map_threshold": 1.0,
-                        "status": "unobservable", "onset_frame": None, "onset_interval": None,
-                        "length": {"frames": frames, "px": [0.0] * n_bins}, "path": [],
-                        "observed_until_frame": frames[max(n_fol - 1, 0)], "lost_reason": fd["lost_reason"],
-                        "_diag": (c, np.zeros_like(c), np.zeros(c.shape, bool), None, None, None, centre)}
-            res = read_grain(renderer, prob, {**meta, "n_bins": int(fd["lost_from"])}, grain, others, p,
-                             _drift=fd["drift"][:n_fol])
-            res["lost_reason"] = fd["lost_reason"]
-            return hold_after(res, frames, n_fol, flag)
+            return read_lost(renderer, meta, grain, p, fd, half=half, flags=tuple(flags), read=lambda m, d: read_grain(
+                renderer, prob, m, grain, others, p, _drift=d))
         _drift = hold_nan(fd["drift"])
     followed = reads_in_grain_frame(_drift, gr, p)
     if followed:
