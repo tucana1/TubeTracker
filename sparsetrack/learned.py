@@ -405,15 +405,14 @@ def flood_compete(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.
 def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, others: list[dict], p,
                _drift: np.ndarray | None = None) -> dict:
     """One grain read by the flood, as a result dict of the same shape as ``analyze_grain``'s."""
-    from .analyze import checked_drift, followed_drift, hold_after, hold_nan, local_shifts
+    from .analyze import checked_drift, followed_drift, hold_after, hold_nan, local_shifts, reads_in_grain_frame
     fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
     n_bins = int(meta["n_bins"]) - rs
     gx, gy, gr = grain["x"], grain["y"], grain["r"]
     half = p.flood_half
     centre = half - 0.5
     flags = ["reader:flood"]
-    followed = getattr(p, "grain_track", "phase") == "follow"
-    if followed and _drift is None:
+    if getattr(p, "grain_track", "phase") in ("follow", "auto") and _drift is None:
         fd = followed_drift(renderer, meta, grain, others, p)
         if fd["lost_from"] is not None and p.lost_policy == "hold":
             frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
@@ -431,6 +430,7 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
             res["lost_reason"] = fd["lost_reason"]
             return hold_after(res, frames, n_fol, flag)
         _drift = hold_nan(fd["drift"])
+    followed = reads_in_grain_frame(_drift, gr, p)
     if followed:
         # a grain that has moved far is cropped at its whole-pixel place, the rest of its drift registered by warping
         # (nearer, the whole drift is warped, as the phase track's is)

@@ -155,6 +155,25 @@ def test_followed_drift_is_the_phase_track_where_it_stays_with_the_grain():
     assert np.max(np.hypot(*(fd["drift"][25:] - [12.0, 0.0]).T)) < 1.0
 
 
+def test_auto_reads_a_grain_in_its_own_frame_only_once_it_moves_off_its_place():
+    from sparsetrack.analyze import reads_in_grain_frame
+    p = Params(grain_track="auto")  # track_far_r 2: off its place = further than its diameter
+    near = np.array([[0.0, 0.0], [10.0, 5.0], [np.nan, np.nan]])
+    far = np.array([[0.0, 0.0], [20.0, 20.0], [np.nan, np.nan]])
+    assert not reads_in_grain_frame(near, 12.0, p) and reads_in_grain_frame(far, 12.0, p)
+    assert reads_in_grain_frame(near, 12.0, Params(grain_track="follow"))
+    assert not reads_in_grain_frame(far, 12.0, Params())
+    # end to end: a grain pushed 40 px with its tube is read in its own frame (its drift in the result)
+    n_bins, onset, rate = 60, 12, 1.2
+    path = lambda t: (140.0 + min(max(t - 30, 0), 10) * 4.0, 160.0)
+    bins, meta = _movie(n_bins, [path], size=320, r=13.0, tubes={0: (200.0, onset, rate)})
+    res = analyze_grain(Renderer(bins, meta), meta, {"id": "g001", "x": 140.0, "y": 160.0, "r": 13.0}, [],
+                        Params(half=100, grain_track="auto", exit_edge=False))
+    assert abs(res["drift"]["xy"][-1][0] - 40.0) < 1.0
+    true = np.array([max(0.0, (t - onset + 1) * rate) for t in range(n_bins)])
+    assert np.median(np.abs(np.array(res["length"]["px"])[25:] - true[25:])) < 2.5
+
+
 def test_hold_after_pads_series_and_flags():
     frames = [150, 450, 750, 1050]
     res = {"flags": [], "length": {"frames": frames[:2], "px": [0.0, 5.0]},

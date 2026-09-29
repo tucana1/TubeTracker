@@ -338,19 +338,22 @@ class Bench:
     # ---- images ---------------------------------------------------------------------
     def follow(self, gid: str) -> np.ndarray:
         """(n_bins, 2) offsets that keep a drifting grain centred in its views (grain registration
-        on top of the field registration; zero before the reference bins). With the analysis' default
-        ``Params.grain_track`` "follow" these are the analysis' own (``analyze.followed_drift``; after a loss the
-        view stays where the grain was last seen); with "phase", zero if the phase-correlation track is erratic."""
+        on top of the field registration; zero before the reference bins). Where the analysis' default
+        ``Params.grain_track`` reads the grain in its own frame ("follow"; "auto" once it moves off its place) these
+        are the analysis' own drift (``analyze.followed_drift``; after a loss the view stays where the grain was last
+        seen); otherwise the phase-correlation track, zero if it is erratic."""
         if gid not in self._follow:
-            from ..analyze import Params, followed_drift, hold_nan, local_shifts, plausible_drift
+            from ..analyze import Params, followed_drift, hold_nan, local_shifts, plausible_drift, reads_in_grain_frame
             g = self.grain(gid)
             rs, half = self.renderer.ref_start, FOLLOW_HALF
             p = Params()
-            if p.grain_track == "follow":
+            ls = None
+            if p.grain_track in ("follow", "auto"):
                 others = [o for oid, o in self.doc["grains"].items()
                           if oid != gid and o.get("exclude_reason") != "not_a_grain"]
                 ls = hold_nan(followed_drift(self.renderer, self.meta, g, others, p)["drift"])
-            else:
+                ls = ls if reads_in_grain_frame(ls, g["r"], p) else None  # auto: as the analysis reads it
+            if ls is None:
                 crops = np.stack([self.renderer.crop(b, g["x"], g["y"], half) for b in range(rs, self.n_bins)])
                 if np.isnan(crops).any():
                     crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)))

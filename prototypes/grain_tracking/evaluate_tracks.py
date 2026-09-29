@@ -138,11 +138,29 @@ def real(cache: Path, only: list[str] | None = None) -> dict:
                      "followed_bins": int(fin.sum()), "n_bins": nb - rs,
                      "reach_px": round(float(np.nanmax(np.hypot(*fd["drift"].T))) if fin.any() else 0.0, 1),
                      "phase_flag": flag,
-                     "drift": np.round(np.nan_to_num(fd["drift"], nan=np.nan), 2).tolist()})
+                     "drift": [[None if not np.isfinite(v) else round(float(v), 2) for v in row]
+                               for row in fd["drift"]]})
         x = rows[-1]
         print(f"{x['grain']} lost_from {x['lost_from']} ({x['lost_reason']}) followed {x['followed_bins']}/"
               f"{x['n_bins']} reach {x['reach_px']} phase {flag}", flush=True)
     return {"cache": str(cache), "rows": rows}
+
+
+def summary_real(rows: list[dict]) -> str:
+    n = len(rows)
+    lost = [x for x in rows if x["lost_from"] is not None]
+    full = n - len(lost)
+    frac = np.array([x["followed_bins"] / x["n_bins"] for x in rows])
+    reach = np.array([x["reach_px"] for x in rows])
+    out = [f"{n} census grains: followed to the end {full} ({100 * full / n:.0f}%), lost {len(lost)} "
+           f"(reasons: {dict((r, sum(x['lost_reason'] == r for x in lost)) for r in ('gap', 'frame'))})",
+           f"share of the movie followed: median {100 * np.median(frac):.0f}%, >= 50% for {int((frac >= 0.5).sum())} "
+           f"grains, >= 90% for {int((frac >= 0.9).sum())}",
+           f"loss bins: {sorted(x['lost_from'] for x in lost)}",
+           f"how far grains move (px, while followed): median {np.median(reach):.1f}, > 10 px {int((reach > 10).sum())}, "
+           f"> 30 px {int((reach > 30).sum())}, > 60 px {int((reach > 60).sum())}, max {reach.max():.0f}",
+           f"0.6.0 phase track: drift_rejected for {sum(x['phase_flag'] == 'drift_rejected' for x in rows)}/{n}"]
+    return "\n".join(out)
 
 
 if __name__ == "__main__":
@@ -157,5 +175,6 @@ if __name__ == "__main__":
         print(summary(res["rows"]))
     else:
         res = real(Path(args.cache))
+        print(summary_real(res["rows"]))
     if args.out:
         Path(args.out).write_text(json.dumps(res))
