@@ -1,0 +1,2 @@
+v2 marks 74982 px (P > 0.5) of 23592960; unet_fd_scratch.pt marks 78401; threshold logit +0.696 (P 0.667) -> body-logit shift -0.696
+check: shifted model marks 74982 px on the same samples; saved models/unet_fd_scratch_cal.pt

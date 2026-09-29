@@ -1,0 +1,37 @@
+{
+ "id": {
+  "tube_px": 12135,
+  "tube_on": 9349,
+  "far_on": 3048,
+  "gain": 0,
+  "loss": 0
+ },
+ "t2p": {
+  "tube_px": 12135,
+  "tube_on": 9275,
+  "far_on": 2594,
+  "gain": 116,
+  "loss": 190
+ },
+ "t4p": {
+  "tube_px": 12135,
+  "tube_on": 9417,
+  "far_on": 2588,
+  "gain": 206,
+  "loss": 138
+ },
+ "t4l": {
+  "tube_px": 12135,
+  "tube_on": 9408,
+  "far_on": 2571,
+  "gain": 197,
+  "loss": 138
+ },
+ "t4m": {
+  "tube_px": 12135,
+  "tube_on": 9872,
+  "far_on": 5180,
+  "gain": 523,
+  "loss": 0
+ }
+}

@@ -1,0 +1,16 @@
+{
+ "id": {
+  "tube_px": 55933,
+  "tube_on": 37985,
+  "far_on": 1540,
+  "gain": 0,
+  "loss": 0
+ },
+ "t4m": {
+  "tube_px": 55933,
+  "tube_on": 41018,
+  "far_on": 2909,
+  "gain": 3033,
+  "loss": 0
+ }
+}

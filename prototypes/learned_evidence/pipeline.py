@@ -1,0 +1,273 @@
+"""One command: train learned evidence on synthetic movies built from a real field, then score
+SparseTrack with and without it on that real movie's human benchmark, and the learned evidence
+read by the per-bin decoder (``reach.py``) as well.
+
+    .venv/bin/python -m prototypes.learned_evidence.pipeline \
+        --field runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json --work runs/learned_evidence/ld
+
+Every step is cached in ``--work`` (re-running skips what exists). Synthetic caches (440 MB each)
+are deleted once their training shard is written, unless ``--keep-caches``. Train on the dev
+movie's field only: the held-out movie 2 must never supply training data, and its labels are
+scored once per frozen model (``--heldout-once``). Both SparseTrack runs read a grain again at
++/-300 px when its path reaches the edge of the +/-150 px crop (``evaluate.adaptive_crop``;
+``--fixed-crop`` keeps SparseTrack as is). ``--prefix`` adds a run of the prefix decoder
+(``prefix.py``) on the same evidence, scored against the per-bin decoder.
+
+The per-bin decoder (and the prefix decoder) read the model's evidence fused with a thick-tube
+network's where that marks tubes too wide to be thin (``fuse.py``; the shipped network by default,
+``--thick-model`` another, ``--no-thick-model`` none), and keep a tube's reading on its accepted path
+(tip-growth continuity; ``--no-continuity`` drops it). Both became the default on 27 Sep 2026, after
+the held-out synthetic look; with labels, the same decoder is also scored as it read movies before (the
+model's own evidence, without continuity), so the dev movie's traces can overturn that (not with
+``--heldout-once``: the held-out movie scores the frozen reading alone). The SparseTrack runs keep the model's own.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import io
+import json
+import os
+import shutil
+import time
+from pathlib import Path
+
+import numpy as np
+
+from sparsetrack import stack
+from sparsetrack.cli import write_census
+from sparsetrack.evaluate import load, score
+from sparsetrack.synth import make_movie
+
+from . import calibrate, data, evaluate, fuse, prefix, reach, review, train
+from .model import load as load_model
+
+# ten movies (model v2): on held-out synthetic seeds, +35 lengths in tolerance over five (95% CI +6 to +70)
+DEFAULT_MOVIES = ("v5:0", "v5:1", "v5:2", "v5:9", "v5:10", "v5:11", "v2:0", "v2:1", "v3:0", "v3:2")
+
+
+def ensure_synthetic(field: Path, work: Path, spec: str, keep_caches: bool, log=print) -> Path:
+    """Movie -> cache -> training shard for one synthetic movie; returns the shard path."""
+    pr, seed = spec.split(":")
+    seed = int(seed)
+    name = f"synth_{pr}_s{seed}"
+    shard = work / "shards" / f"train_{pr}_s{seed}.npz"
+    if shard.exists():
+        return shard
+    movie = work / "synth" / f"{name}.mp4"
+    if not movie.exists():
+        make_movie(field, work / "synth", data.synth_config(pr, seed), name=name, log=log)
+    cache = work / "synth" / f"{pr}s{seed}_cache"
+    if not (cache / "grains.json").exists():
+        with contextlib.redirect_stdout(io.StringIO()):
+            stack.prepare(movie, cache, frames_per_bin=25, ref_bins=3, ref_start=0, log=lambda *a: None)
+            write_census(cache, 3, False)
+    data.build(field, cache, pr, seed, shard, log=log)
+    if not keep_caches:
+        shutil.rmtree(cache)
+    return shard
+
+
+def _shard(job) -> str:
+    field, work, spec, keep_caches = job
+    return str(ensure_synthetic(Path(field), Path(work), spec, keep_caches))
+
+
+def build_shards(field: Path, work: Path, specs, keep_caches: bool = False, workers: int = 1) -> list[str]:
+    """``ensure_synthetic`` for every movie, several at a time: the movies are independent, and building
+    them one after another took most of an hour."""
+    jobs = [(str(field), str(work), spec, keep_caches) for spec in specs]
+    if workers <= 1 or len(jobs) <= 1:
+        return [_shard(j) for j in jobs]
+    import multiprocessing as mp
+    with mp.get_context("spawn").Pool(min(workers, len(jobs))) as pool:  # forked workers hang once torch has threads
+        return pool.map(_shard, jobs)
+
+
+def write_per_grain(work: Path, runs: dict, seconds: float, um_per_px: float | None = None,
+                    s_per_frame: float | None = None) -> None:
+    """Without labels: one row per grain with each run's status, onset interval and final length
+    (also in um and minutes when the pixel size and frame interval are given)."""
+    import csv
+    first = next(iter(runs))
+    ids = [g["id"] for g in runs[first]["grains"]]
+    by_run = {name: {g["id"]: g for g in pred["grains"]} for name, pred in runs.items()}
+    with open(work / "per_grain.csv", "w", newline="") as fh:
+        w = csv.writer(fh)
+        cols = ["status", "onset_after", "onset_by", "final_length_px"]
+        cols += ["onset_by_min"] if s_per_frame else []
+        cols += ["final_length_um"] if um_per_px else []
+        w.writerow(["grain", "x", "y"] + [f"{name}_{col}" for name in runs for col in cols]
+                   + ["perbin_burst_frame", "perbin_flags"])
+        for gid in ids:
+            g0 = by_run[first][gid]
+            row = [gid, g0.get("x"), g0.get("y")]
+            for name in runs:
+                g = by_run[name].get(gid, {})
+                iv = g.get("onset_interval") or [None, None]
+                row += [g.get("status"), iv[0], iv[1], g.get("final_length_px")]
+                if s_per_frame:
+                    row.append(round(iv[1] * s_per_frame / 60.0, 2) if iv[1] is not None else None)
+                if um_per_px:
+                    row.append(round(float(g.get("final_length_px") or 0.0) * um_per_px, 2))
+            pb = by_run["perbin"].get(gid, {})
+            w.writerow(row + [pb.get("burst_frame"), " ".join(pb.get("flags", []))])
+    lines = [f"{len(ids)} grains ({seconds:.0f} s); per-grain results in {work / 'per_grain.csv'}"]
+    for name, pred in runs.items():
+        st = [g.get("status") for g in pred["grains"]]
+        grew = [g.get("final_length_px") or 0.0 for g in pred["grains"] if g.get("status") == "emerged_within"]
+        lines.append(f"{name:12s} emerged within the movie {st.count('emerged_within'):3d}, at start "
+                     f"{st.count('emerged_at_start'):3d}, none by the end {st.count('no_emergence_by_end'):3d}; "
+                     f"median final length {float(np.median(grew)) if grew else 0.0:.1f} px")
+    print("\n".join(lines))
+    (work / "report.txt").write_text("\n".join(lines) + "\n")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--field", required=True, help="prepared cache of the real movie (e.g. runs/sparsetrack/ld)")
+    ap.add_argument("--labels", default=None,
+                    help="human benchmark labels for that movie; without them the three runs are written "
+                         "(predictions and per_grain.csv) but not scored")
+    ap.add_argument("--work", required=True)
+    ap.add_argument("--synthetic", nargs="+", default=list(DEFAULT_MOVIES), help="PRESET:SEED synthetic movies")
+    ap.add_argument("--train-field", default=None,
+                    help="cache whose field the synthetic movies are built on (default --field; use the dev "
+                         "movie's cache when scoring a held-out movie)")
+    ap.add_argument("--model", default=None, help="use this trained model instead of training one")
+    ap.add_argument("--steps", type=int, default=6000)
+    ap.add_argument("--workers", type=int, default=max(1, min(4, (os.cpu_count() or 2) // 2)),
+                    help="synthetic movies built at a time (default: half the processor cores, at most 4)")
+    ap.add_argument("--keep-caches", action="store_true")
+    ap.add_argument("--heldout-once", action="store_true", help="required to score labels whose name contains m2")
+    ap.add_argument("--um-per-px", type=float, default=None, help="pixel size, for lengths in um in per_grain.csv")
+    ap.add_argument("--s-per-frame", type=float, default=None, help="frame interval, for onsets in minutes")
+    ap.add_argument("--no-burst", action="store_true",
+                    help="per-bin decoder: fit growth over the whole movie even where a tube's reading collapses "
+                         "for good (by default that is read as a burst: growth is fitted up to it)")
+    ap.add_argument("--decoder", default=None,
+                    help="per-bin decoder settings fitted on the dev movie's traces by calibrate.py (decoder.json)")
+    ap.add_argument("--only-perbin", action="store_true",
+                    help="run only the per-bin decoder on the learned evidence (about twice as fast), once the dev "
+                         "test has shown it is the one to use; without the two comparison runs")
+    ap.add_argument("--prefix", action="store_true",
+                    help="also run the prefix decoder (prefix.py: the whole movie as prefixes of the tube's "
+                         "end state) and score it against the per-bin decoder; about 1 s per grain")
+    ap.add_argument("--thick-model", default=str(fuse.THICK),
+                    help="a thick-tube network: its tube probability is fused into the model's where it marks "
+                         "structures too wide to be thin (fuse.py), and the per-bin decoder reads the fused map "
+                         "(default: the shipped one, models/unet_thick_b3.pt)")
+    ap.add_argument("--no-thick-model", dest="thick_model", action="store_const", const=None,
+                    help="the per-bin decoder reads the model's own evidence (as before 27 Sep 2026)")
+    ap.add_argument("--continuity", action="store_true",
+                    help="per-bin decoder: tip-growth continuity (reach_grain(continuity='path')): a reading that "
+                         "jumps off the tube's accepted path onto a foreign tube is read along the path (default)")
+    ap.add_argument("--no-continuity", dest="continuity", action="store_false",
+                    help="per-bin decoder: without tip-growth continuity (as before 27 Sep 2026)")
+    ap.set_defaults(continuity=True)
+    ap.add_argument("--fixed-crop", action="store_true",
+                    help="keep SparseTrack's fixed +/-150 px grain crop even where a path runs into its edge "
+                         "(by default such grains are read again at +/-300 px, in both runs)")
+    args = ap.parse_args(argv)
+    field, work = Path(args.field), Path(args.work)
+    labels_path = Path(args.labels) if args.labels else None
+    if labels_path is not None and "m2" in labels_path.name and not args.heldout_once:
+        raise SystemExit("movie 2 is the held-out benchmark: score it once per frozen model (--heldout-once), "
+                         "with --model trained on the dev field (--train-field runs/sparsetrack/ld)")
+    work.mkdir(parents=True, exist_ok=True)
+    started = time.time()
+    model_path = Path(args.model) if args.model else work / "unet.pt"
+    if not model_path.exists():
+        train_field = Path(args.train_field) if args.train_field else field
+        shards = build_shards(train_field, work, args.synthetic, args.keep_caches, args.workers)
+        train.main(["--shards", *shards, "--out", str(model_path), "--steps", str(args.steps)])
+    net = load_model(str(model_path))
+    pcache = evaluate.prob_cache(field, net, work / f"prob_{field.name}")
+    ecache = pcache  # the evidence the per-bin decoder reads
+    if args.thick_model:
+        tcache = evaluate.prob_cache(field, load_model(args.thick_model), work / f"prob_thick_{field.name}")
+        ecache = fuse.fused_cache(pcache, tcache, work / f"prob_fused_{field.name}")
+    if args.only_perbin:  # SparseTrack's automatic speed cap, probed as its learned run would
+        from .finetune import speed_cap
+        base = learned = None
+        vmax = speed_cap(pcache, field, labels_path or field / "grains.json")
+    else:
+        with contextlib.nullcontext() if args.fixed_crop else evaluate.adaptive_crop():
+            base = evaluate.run_baseline(field, work, grains_path=labels_path)
+            learned = evaluate.run_on_prob_cache(pcache, field, work, "learned", grains_path=labels_path)
+        vmax = float(learned.get("params", {}).get("vmax_px", 4.0))  # SparseTrack's speed cap
+    # the same learned evidence read by the per-bin decoder (reach.py) instead of SparseTrack's
+    kw = dict(big=None if args.fixed_crop else 300, burst=not args.no_burst, vmax=vmax)
+    kw.update(calibrate.decoder_settings(args.decoder, model_path, reading=fuse.reading(args.thick_model,
+                                                                                     args.continuity)))
+    if args.continuity:
+        kw["continuity"] = "path"
+    perbin = reach.analyze(ecache, field, grains_path=labels_path, log=lambda *a: None, **kw)
+    perbin["decoder"] = {k: v for k, v in kw.items() if k != "vmax"} | {"vmax": kw["vmax"], "from": args.decoder,
+                                                                        "thick_model": args.thick_model}
+    (work / "perbin").mkdir(exist_ok=True)
+    (work / "perbin" / "predictions.json").write_text(json.dumps(perbin))
+    # what the lab reviews and reports: pictures on the movie itself, the population curve, growth curves
+    from sparsetrack.report import write_growth_curves, write_population
+    review.write_review(ecache, field, perbin, work / "perbin", grains_path=labels_path, **kw)
+    write_population(perbin, work / "perbin")
+    write_growth_curves(perbin, work / "perbin", [g["id"] for g in perbin["grains"] if g.get("status") == "emerged_within"])
+    runs = {"perbin": perbin} if args.only_perbin else {"sparsetrack": base, "learned": learned, "perbin": perbin}
+    if args.prefix:  # the same evidence, speed cap and annotator's onset threshold; not the default yet
+        pp = prefix.Params(vmax_px=vmax, big=prefix.Params.half if args.fixed_crop else 300,
+                           onset_px=kw.get("onset_px", prefix.Params.onset_px))
+        runs["prefix"] = prefix.analyze(ecache, field, grains_path=labels_path, log=lambda *a: None, params=pp)
+        (work / "prefix").mkdir(exist_ok=True)
+        (work / "prefix" / "predictions.json").write_text(json.dumps(runs["prefix"]))
+    if labels_path is None:
+        write_per_grain(work, runs, time.time() - started, um_per_px=args.um_per_px, s_per_frame=args.s_per_frame)
+        return
+    labels = load(labels_path)
+    rp = score(labels, perbin)
+    tol = rp["onset"]["tolerance_frames"]
+    # on labels, the same decoder as it read movies before 27 Sep (the model's own evidence, no continuity), so the
+    # dev movie's traces can overturn the default; not on the held-out movie, which scores the frozen reading alone
+    plain, what = None, " and ".join(w for w, on in (("fusion", args.thick_model), ("continuity", args.continuity)) if on)
+    if what and not args.heldout_once:
+        pkw = {k: v for k, v in kw.items() if k != "continuity"}
+        plain = score(labels, reach.analyze(pcache, field, grains_path=labels_path, log=lambda *a: None, **pkw))
+
+    def diff(name, p):
+        return (f"{name} over {p['grains']} grains: onset {p['onset_diff']:+.0f} "
+                f"[{p['onset_ci'][0]:+.0f}, {p['onset_ci'][1]:+.0f}], lengths {p['length_diff']:+.0f} "
+                f"[{p['length_ci'][0]:+.0f}, {p['length_ci'][1]:+.0f}] (95% paired bootstrap over grains)")
+
+    extra, scores = [], {"perbin": rp}
+    if plain is not None:
+        po = evaluate.paired_bootstrap(rp, plain, tol)
+        extra = [evaluate.e2e_summary("per-bin, as before 27 Sep", plain),
+                 diff(f"per-bin - per-bin as before 27 Sep (without {what})", po)]
+        scores.update(perbin_plain=plain, paired_perbin_plain=po)
+    if "prefix" in runs:
+        rq = score(labels, runs["prefix"])
+        pq = evaluate.paired_bootstrap(rq, rp, tol)
+        extra += [evaluate.e2e_summary("prefix", rq), diff("prefix - per-bin", pq)]
+        scores.update(prefix=rq, paired_prefix_perbin=pq)
+    if args.only_perbin:
+        lines = [f"{labels_path.name}: {time.time() - started:.0f} s", evaluate.e2e_summary("per-bin", rp), *extra]
+        print("\n".join(lines))
+        (work / "report.txt").write_text("\n".join(lines) + "\n")
+        if extra:
+            (work / "scores.json").write_text(json.dumps(scores, default=str, indent=1))
+        return
+    rb, rl = score(labels, base), score(labels, learned)
+    pb = evaluate.paired_bootstrap(rl, rb, tol)
+    pp = evaluate.paired_bootstrap(rp, rl, tol)
+    lines = [f"{labels_path.name}: {rb['grains_scored']} grains scored ({time.time() - started:.0f} s)",
+             evaluate.e2e_summary("baseline", rb), evaluate.e2e_summary("learned", rl),
+             evaluate.e2e_summary("per-bin", rp),
+             diff("learned - baseline", pb), diff("per-bin - learned", pp), *extra]
+    print("\n".join(lines))
+    (work / "report.txt").write_text("\n".join(lines) + "\n")
+    (work / "scores.json").write_text(json.dumps({"baseline": rb, "learned": rl, **scores, "paired": pb,
+                                                  "paired_perbin_learned": pp}, default=str, indent=1))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,424 @@
+{
+ "orig|thin (v5 s3-8, s13-15)": {
+  "base": [
+   1310,
+   1807,
+   150,
+   203
+  ],
+  "new": [
+   1308,
+   1807,
+   150,
+   203
+  ],
+  "paired": {
+   "grains": 243,
+   "onset_diff": 0.0,
+   "onset_ci": [
+    -7.0,
+    7.0
+   ],
+   "length_diff": -1.0,
+   "length_ci": [
+    -25.0,
+    23.0
+   ],
+   "p_onset_not_better": 0.5505,
+   "p_length_not_better": 0.5435
+  },
+  "points": {
+   "len_pt": -0.05534034311012728,
+   "len_lo_pt": -1.3835085777531821,
+   "len_hi_pt": 1.2728278915329274,
+   "on_pt": 0.0
+  },
+  "movies": [
+   "v5s3",
+   "v5s4",
+   "v5s5",
+   "v5s6",
+   "v5s7",
+   "v5s8",
+   "v5s13",
+   "v5s14",
+   "v5s15"
+  ]
+ },
+ "orig|faint s30+s31": {
+  "base": [
+   209,
+   385,
+   16,
+   44
+  ],
+  "new": [
+   208,
+   385,
+   17,
+   44
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": 1.0,
+   "onset_ci": [
+    -2.0,
+    5.0
+   ],
+   "length_diff": -1.0,
+   "length_ci": [
+    -30.0,
+    19.0
+   ],
+   "p_onset_not_better": 0.3915,
+   "p_length_not_better": 0.5048
+  },
+  "points": {
+   "len_pt": -0.2597402597402597,
+   "len_lo_pt": -7.792207792207792,
+   "len_hi_pt": 4.935064935064935,
+   "on_pt": 2.272727272727273
+  },
+  "movies": [
+   "v5faints30",
+   "v5faints31"
+  ]
+ },
+ "orig|thin+faint pooled": {
+  "base": [
+   1519,
+   2192,
+   166,
+   247
+  ],
+  "new": [
+   1516,
+   2192,
+   167,
+   247
+  ],
+  "paired": {
+   "grains": 297,
+   "onset_diff": 1.0,
+   "onset_ci": [
+    -7.0,
+    9.0
+   ],
+   "length_diff": -2.0,
+   "length_ci": [
+    -40.0,
+    31.0
+   ],
+   "p_onset_not_better": 0.4526,
+   "p_length_not_better": 0.5356
+  },
+  "points": {
+   "len_pt": -0.09124087591240876,
+   "len_lo_pt": -1.8248175182481752,
+   "len_hi_pt": 1.4142335766423357,
+   "on_pt": 0.4048582995951417
+  },
+  "movies": [
+   "v5s3",
+   "v5s4",
+   "v5s5",
+   "v5s6",
+   "v5s7",
+   "v5s8",
+   "v5s13",
+   "v5s14",
+   "v5s15",
+   "v5faints30",
+   "v5faints31"
+  ]
+ },
+ "orig|thick s30+s31": {
+  "base": [
+   88,
+   419,
+   41,
+   46
+  ],
+  "new": [
+   82,
+   419,
+   41,
+   46
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": 0.0,
+   "onset_ci": [
+    0.0,
+    0.0
+   ],
+   "length_diff": -6.0,
+   "length_ci": [
+    -17.0,
+    3.0
+   ],
+   "p_onset_not_better": 1.0,
+   "p_length_not_better": 0.9009
+  },
+  "points": {
+   "len_pt": -1.431980906921241,
+   "len_lo_pt": -4.05727923627685,
+   "len_hi_pt": 0.7159904534606205,
+   "on_pt": 0.0
+  },
+  "movies": [
+   "v5thicks30",
+   "v5thicks31"
+  ]
+ },
+ "orig|wide s26+s27": {
+  "base": [
+   311,
+   445,
+   44,
+   50
+  ],
+  "new": [
+   306,
+   445,
+   42,
+   50
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": -2.0,
+   "onset_ci": [
+    -5.0,
+    0.0
+   ],
+   "length_diff": -5.0,
+   "length_ci": [
+    -16.0,
+    6.0
+   ],
+   "p_onset_not_better": 1.0,
+   "p_length_not_better": 0.8377
+  },
+  "points": {
+   "len_pt": -1.1235955056179776,
+   "len_lo_pt": -3.595505617977528,
+   "len_hi_pt": 1.348314606741573,
+   "on_pt": -4.0
+  },
+  "movies": [
+   "v5ws26",
+   "v5ws27"
+  ]
+ },
+ "human_t2|thin (v5 s3-8, s13-15)": {
+  "base": [
+   453,
+   642,
+   72,
+   203
+  ],
+  "new": [
+   451,
+   642,
+   74,
+   203
+  ],
+  "paired": {
+   "grains": 243,
+   "onset_diff": 2.0,
+   "onset_ci": [
+    -8.0,
+    12.0
+   ],
+   "length_diff": -2.0,
+   "length_ci": [
+    -17.0,
+    13.0
+   ],
+   "p_onset_not_better": 0.3838,
+   "p_length_not_better": 0.6291
+  },
+  "points": {
+   "len_pt": -0.3115264797507788,
+   "len_lo_pt": -2.64797507788162,
+   "len_hi_pt": 2.0249221183800623,
+   "on_pt": 0.9852216748768473
+  },
+  "movies": [
+   "v5s3",
+   "v5s4",
+   "v5s5",
+   "v5s6",
+   "v5s7",
+   "v5s8",
+   "v5s13",
+   "v5s14",
+   "v5s15"
+  ]
+ },
+ "human_t2|faint s30+s31": {
+  "base": [
+   69,
+   137,
+   14,
+   44
+  ],
+  "new": [
+   67,
+   137,
+   15,
+   44
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": 1.0,
+   "onset_ci": [
+    -3.0,
+    5.0
+   ],
+   "length_diff": -2.0,
+   "length_ci": [
+    -15.0,
+    9.0
+   ],
+   "p_onset_not_better": 0.4088,
+   "p_length_not_better": 0.6413
+  },
+  "points": {
+   "len_pt": -1.4598540145985401,
+   "len_lo_pt": -10.94890510948905,
+   "len_hi_pt": 6.569343065693431,
+   "on_pt": 2.272727272727273
+  },
+  "movies": [
+   "v5faints30",
+   "v5faints31"
+  ]
+ },
+ "human_t2|thin+faint pooled": {
+  "base": [
+   522,
+   779,
+   86,
+   247
+  ],
+  "new": [
+   518,
+   779,
+   89,
+   247
+  ],
+  "paired": {
+   "grains": 297,
+   "onset_diff": 3.0,
+   "onset_ci": [
+    -8.0,
+    15.0
+   ],
+   "length_diff": -4.0,
+   "length_ci": [
+    -23.0,
+    15.0
+   ],
+   "p_onset_not_better": 0.3321,
+   "p_length_not_better": 0.6776
+  },
+  "points": {
+   "len_pt": -0.5134788189987163,
+   "len_lo_pt": -2.952503209242619,
+   "len_hi_pt": 1.925545571245186,
+   "on_pt": 1.214574898785425
+  },
+  "movies": [
+   "v5s3",
+   "v5s4",
+   "v5s5",
+   "v5s6",
+   "v5s7",
+   "v5s8",
+   "v5s13",
+   "v5s14",
+   "v5s15",
+   "v5faints30",
+   "v5faints31"
+  ]
+ },
+ "human_t2|thick s30+s31": {
+  "base": [
+   33,
+   147,
+   5,
+   46
+  ],
+  "new": [
+   30,
+   147,
+   5,
+   46
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": 0.0,
+   "onset_ci": [
+    -3.0,
+    3.0
+   ],
+   "length_diff": -3.0,
+   "length_ci": [
+    -10.0,
+    3.0
+   ],
+   "p_onset_not_better": 0.6504,
+   "p_length_not_better": 0.8541
+  },
+  "points": {
+   "len_pt": -2.0408163265306123,
+   "len_lo_pt": -6.802721088435374,
+   "len_hi_pt": 2.0408163265306123,
+   "on_pt": 0.0
+  },
+  "movies": [
+   "v5thicks30",
+   "v5thicks31"
+  ]
+ },
+ "human_t2|wide s26+s27": {
+  "base": [
+   106,
+   159,
+   9,
+   50
+  ],
+  "new": [
+   109,
+   159,
+   10,
+   50
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": 1.0,
+   "onset_ci": [
+    -3.0,
+    5.0
+   ],
+   "length_diff": 3.0,
+   "length_ci": [
+    -3.0,
+    9.0
+   ],
+   "p_onset_not_better": 0.4126,
+   "p_length_not_better": 0.1913
+  },
+  "points": {
+   "len_pt": 1.8867924528301887,
+   "len_lo_pt": -1.8867924528301887,
+   "len_hi_pt": 5.660377358490566,
+   "on_pt": 2.0
+  },
+  "movies": [
+   "v5ws26",
+   "v5ws27"
+  ]
+ }
+}

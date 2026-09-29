@@ -1,0 +1,158 @@
+{
+ "orig|faint s30+s31": {
+  "base": [
+   209,
+   385,
+   16,
+   44
+  ],
+  "new": [
+   210,
+   385,
+   14,
+   44
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": -2.0,
+   "onset_ci": [
+    -7.0,
+    3.0
+   ],
+   "length_diff": 1.0,
+   "length_ci": [
+    -30.0,
+    24.0
+   ],
+   "p_onset_not_better": 0.8512,
+   "p_length_not_better": 0.4609
+  },
+  "points": {
+   "len_pt": 0.2597402597402597,
+   "len_lo_pt": -7.792207792207792,
+   "len_hi_pt": 6.233766233766234,
+   "on_pt": -4.545454545454546
+  },
+  "movies": [
+   "v5faints30",
+   "v5faints31"
+  ]
+ },
+ "orig|thin+faint pooled": {
+  "base": [
+   209,
+   385,
+   16,
+   44
+  ],
+  "new": [
+   210,
+   385,
+   14,
+   44
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": -2.0,
+   "onset_ci": [
+    -7.0,
+    3.0
+   ],
+   "length_diff": 1.0,
+   "length_ci": [
+    -30.0,
+    24.0
+   ],
+   "p_onset_not_better": 0.8512,
+   "p_length_not_better": 0.4609
+  },
+  "points": {
+   "len_pt": 0.2597402597402597,
+   "len_lo_pt": -7.792207792207792,
+   "len_hi_pt": 6.233766233766234,
+   "on_pt": -4.545454545454546
+  },
+  "movies": [
+   "v5faints30",
+   "v5faints31"
+  ]
+ },
+ "human_t2|faint s30+s31": {
+  "base": [
+   69,
+   137,
+   14,
+   44
+  ],
+  "new": [
+   66,
+   137,
+   11,
+   44
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": -3.0,
+   "onset_ci": [
+    -8.0,
+    2.0
+   ],
+   "length_diff": -3.0,
+   "length_ci": [
+    -17.0,
+    8.0
+   ],
+   "p_onset_not_better": 0.9114,
+   "p_length_not_better": 0.6923
+  },
+  "points": {
+   "len_pt": -2.18978102189781,
+   "len_lo_pt": -12.408759124087592,
+   "len_hi_pt": 5.839416058394161,
+   "on_pt": -6.818181818181818
+  },
+  "movies": [
+   "v5faints30",
+   "v5faints31"
+  ]
+ },
+ "human_t2|thin+faint pooled": {
+  "base": [
+   69,
+   137,
+   14,
+   44
+  ],
+  "new": [
+   66,
+   137,
+   11,
+   44
+  ],
+  "paired": {
+   "grains": 54,
+   "onset_diff": -3.0,
+   "onset_ci": [
+    -8.0,
+    2.0
+   ],
+   "length_diff": -3.0,
+   "length_ci": [
+    -17.0,
+    8.0
+   ],
+   "p_onset_not_better": 0.9114,
+   "p_length_not_better": 0.6923
+  },
+  "points": {
+   "len_pt": -2.18978102189781,
+   "len_lo_pt": -12.408759124087592,
+   "len_hi_pt": 5.839416058394161,
+   "on_pt": -6.818181818181818
+  },
+  "movies": [
+   "v5faints30",
+   "v5faints31"
+  ]
+ }
+}
