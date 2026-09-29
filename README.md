@@ -13,12 +13,12 @@ python3 -m venv .venv
 .venv/bin/pip install -e ".[cnn]"      # SparseTrack and its tube network (torch)
 ```
 
-1. **Analyse.** Double-click `Analyze_Movie_SparseTrack.command` and choose the movie
-   (or `.venv/bin/python -m sparsetrack run MOVIE`). The first run prepares the movie
-   (a few minutes); the analysis takes 5-10 minutes on a laptop. A review gallery opens:
-   one card per grain, the tube the model measured drawn on the movie, grains that need
-   a second look first, and opens with the movie's result in one sentence (germinated
-   share, T50, median growth rate). Results are in `runs/sparsetrack/<movie name>/analysis/`:
+1. **Analyse.** Double-click `Analyze_Movie_SparseTrack.command` and choose a movie, or
+   several (Cmd-click; they are analysed in turn), or run `.venv/bin/python -m sparsetrack run MOVIE`.
+   The first run prepares a movie (a few minutes); the analysis takes 5-20 minutes on a
+   laptop, longer for long, crowded movies. A review gallery opens with the movie's result
+   in one sentence (germinated share, T50, median growth rate), then one card per grain,
+   the model's least sure grains first. Results are in `runs/sparsetrack/<movie name>/analysis/`:
    `grains.csv` (per grain: germinated or not, onset interval, final length, growth rate,
    the model's confidence), `growth.csv` (every grain's length at every time),
    `population.png` (germination curve with T50) and `growth_curves.png`. The first time,
@@ -44,8 +44,7 @@ python3 -m venv .venv
    then holds `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`, saying
    which answers you checked and which you changed, and `reviewed_growth.csv` /
    `growth_curves.png`: every grain's length at every time, the model's curve pinned to the
-   lengths you checked. Run it again to carry on.
-   `--um-per-px` and `--s-per-frame` add lengths in um and times in minutes.
+   lengths you checked, in um and minutes too with `calibration.json`. Run it again to carry on.
 
 **If the gallery opens with a red warning** that many grains could not be followed, the grains in
 that movie drift or are still landing after the first minutes: SparseTrack reads each grain at its first
@@ -65,9 +64,10 @@ used in development, so a third, blind-labelled movie is the honest test):
   96% vs 100% germinated by the end) and 2.3 bins on movie 2 (24752 vs 24049 frames; 95%
   both); the curves differ by at most 0.14 and 0.19. `sparsetrack eval` reports this.
 
-**Status (29 Sep 2026).** SparseTrack (below) is the tracker; the cloud session's
-learned-evidence pipeline (`prototypes/learned_evidence/`, merged 29 Sep) is an experiment
-under test on the lab's movies. Work concentrated on isolated grains before crossings and
+**Status (29 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack (below) is the
+tracker. The cloud session's learned-evidence pipeline (`prototypes/learned_evidence/`, merged
+29 Sep) was tested on the lab's movies and read fewer lengths than SparseTrack (ld 40/100 vs
+69/104); it is kept as a research record. Work concentrated on isolated grains before crossings and
 clumps (sparse-first reset, 23 Sep). The research record up to 22 Sep 2026 is in
 `prototypes/LEDGER.md`; the complete pre-reset tree is preserved at the git tag
 `snapshot-2026-09-23`.
