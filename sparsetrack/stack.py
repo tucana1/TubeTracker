@@ -128,6 +128,11 @@ def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, r
     counts = build_bins(iter_keyframes(info), info.n_frames, frames_per_bin,
                         (info.height, info.width), out_dir / "bins.npy")
     log(f"binned into {len(counts)} bins of {frames_per_bin} frames in {time.time() - started:.0f} s")
+    per_bin = float(np.median(counts)) if len(counts) else 0.0
+    if per_bin < 8:  # SparseTrack was built on ~25 keyframes averaged per bin (a keyframe every 12 frames)
+        log(f"WARNING: only ~{per_bin:.0f} keyframes per bin: the averaged images are much noisier than the "
+            f"benchmark movies' (~25), so faint and young tubes will be missed more often. Record with a keyframe "
+            f"every ~12 frames (or losslessly), or use larger bins (--frames-per-bin).")
     bins = np.load(out_dir / "bins.npy", mmap_mode="r")
     if ref_start == "auto":
         ref_start = settled_start(bins)
