@@ -124,6 +124,47 @@ def germination_curves(labels: dict, pred_grains: dict[str, dict], ids: list[str
             "max_gap": round(float(np.max(np.abs(ch - cm))), 3)}
 
 
+def growth_agreement(labels: dict, pred_grains: dict[str, dict], ids: list[str], min_bins: int = 3,
+                     rate_abs: float = 0.1, rate_rel: float = 0.2) -> dict | None:
+    """The growth readout per grain, the model's against the annotator's: the least-squares slope of the grain's FULL
+    trace lengths over their frames (every FULL trace, touching or not; >= 2 traces >= ``min_bins`` bins apart), and
+    the model's lengths at the same frames through the same fit, in px per bin; and the last traced length. A rate
+    agrees within max(``rate_abs`` px/bin, ``rate_rel`` of the human's)."""
+    fpb = int(labels.get("frames_per_bin") or 0)
+    if not fpb:
+        return None
+    hr, mr, hl, ml = [], [], [], []
+    for gid in ids:
+        p = pred_grains.get(gid)
+        tr = sorted(((int(b), t) for b, t in ((labels["labels"].get(gid) or {}).get("traces") or {}).items()
+                     if t["state"] == "full"), key=lambda x: x[0])
+        if p is None or not tr:
+            continue
+        frames = [t.get("source_frame") or b * fpb + fpb // 2 for b, t in tr]
+        model = [length_at(p, f) for f in frames]
+        if any(m is None for m in model):
+            continue
+        hl.append(tr[-1][1]["length_px"])
+        ml.append(model[-1])
+        if len(tr) >= 2 and tr[-1][0] - tr[0][0] >= min_bins:
+            f = np.asarray(frames, float) - np.mean(frames)
+            slope = lambda y: float(np.dot(f, np.asarray(y, float) - np.mean(y)) / np.dot(f, f)) * fpb
+            hr.append(slope([t["length_px"] for _, t in tr]))
+            mr.append(slope(model))
+    if len(hl) < 3:
+        return None
+    hr_, mr_ = np.asarray(hr), np.asarray(mr)
+    rank = lambda v: np.argsort(np.argsort(v))
+    corr = lambda a, b: float(np.corrcoef(a, b)[0, 1]) if len(a) >= 3 and np.std(a) > 0 and np.std(b) > 0 else None
+    return {"grains_with_rate": len(hr), "rate_human_median": float(np.median(hr_)) if len(hr) else None,
+            "rate_model_median": float(np.median(mr_)) if len(hr) else None,
+            "rate_pearson": corr(hr_, mr_), "rate_spearman": corr(rank(hr_), rank(mr_)) if len(hr) >= 3 else None,
+            "rate_within": int(np.sum(np.abs(mr_ - hr_) <= np.maximum(rate_abs, rate_rel * np.abs(hr_)))),
+            "grains_with_length": len(hl), "last_length_human_median": float(np.median(hl)),
+            "last_length_model_median": float(np.median(ml)),
+            "last_length_spearman": corr(rank(np.asarray(hl)), rank(np.asarray(ml)))}
+
+
 def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2.0, len_rel: float = 0.10,
           absent_px: float = 2.0, subset: str = "isolated", tip_abs: float = 5.0, tip_rel: float = 0.10) -> dict:
     """Return a report dict; ``subset`` = "isolated" (sparse benchmark) or "all" included grains."""
@@ -206,6 +247,8 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
         "traces_burst_skipped": len(burst_n),
         "population": germination_curves(labels, {g: p for g, p in matched.items() if p is not None},
                                          [g for g in sorted(grains) if matched.get(g) is not None]),
+        "growth": growth_agreement(labels, {g: p for g, p in matched.items() if p is not None},
+                                   [g for g in sorted(grains) if matched.get(g) is not None]),
         "rows": rows,
     }
 
@@ -231,6 +274,14 @@ def markdown(report: dict) -> str:
                             f"{fmt(P['t50_model'], 0)} frames; germinated by the end: human {100 * P['germinated_human']:.0f}%, "
                             f"model {100 * P['germinated_model']:.0f}%; largest gap between the curves "
                             f"{P['max_gap']:.2f}")(report["population"])]),
+             *([] if not report.get("growth") or not report["growth"]["grains_with_rate"] else [
+                 (lambda G: f"- Growth rate ({G['grains_with_rate']} grains traced at >= 2 times; slope through the "
+                            f"traced times, px/bin): median human {G['rate_human_median']:.2f}, model "
+                            f"{G['rate_model_median']:.2f}; correlation {fmt(G['rate_pearson'], 2)} (ranks "
+                            f"{fmt(G['rate_spearman'], 2)}); within max(0.1 px/bin, 20%): {G['rate_within']}/"
+                            f"{G['grains_with_rate']}. Last traced length ({G['grains_with_length']} grains): median "
+                            f"human {G['last_length_human_median']:.1f} px, model {G['last_length_model_median']:.1f} "
+                            f"px")(report["growth"])]),
              "", "| grain | human | predicted | bracket | pred onset | onset err | FULL errors (px) |", "|---|---|---|---|---|---|---|"]
     for r in report["rows"]:
         full = ", ".join(f"{x['error']:+.1f}" for x in r.get("full", []))

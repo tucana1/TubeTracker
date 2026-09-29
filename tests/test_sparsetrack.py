@@ -722,3 +722,24 @@ def test_germination_curves_compare_the_population_results():
     assert P["grains"] == 10 and P["germinated_human"] == P["germinated_model"] == 0.9
     assert abs((P["t50_model"] - P["t50_human"]) - fpb) < 20  # one bin later
     assert 0.09 <= P["max_gap"] <= 0.11  # one grain's worth of the curve
+
+
+def test_growth_agreement_compares_rates_through_the_traced_times():
+    from sparsetrack.evaluate import growth_agreement
+    fpb, nb = 300, 60
+    frames = [b * fpb + fpb // 2 for b in range(nb)]
+    labels = {"frames_per_bin": fpb, "n_bins": nb, "labels": {}}
+    for k in range(6):  # human rates 0.5 .. 1.0 px/bin
+        labels["labels"][f"g{k:02d}"] = {"traces": {str(b): {"state": "full", "length_px": (0.5 + 0.1 * k) * (b - 10)}
+                                                    for b in (20, 35, 50)}}
+
+    def model(share):  # the model reads every tube at this share of its length
+        return {f"g{k:02d}": {"status": "emerged_within", "length": {
+            "frames": frames, "px": [share * max(0.0, (0.5 + 0.1 * k) * (b - 10)) for b in range(nb)]}} for k in range(6)}
+
+    G = growth_agreement(labels, model(0.9), sorted(labels["labels"]))
+    assert G["grains_with_rate"] == 6 and G["rate_spearman"] > 0.99 and G["rate_pearson"] > 0.99
+    assert abs(G["rate_model_median"] / G["rate_human_median"] - 0.9) < 1e-6
+    assert G["rate_within"] == 6  # 10% slow: within max(0.1 px/bin, 20%)
+    assert abs(G["last_length_model_median"] / G["last_length_human_median"] - 0.9) < 1e-6
+    assert growth_agreement(labels, model(0.6), sorted(labels["labels"]))["rate_within"] == 0  # 40% slow
