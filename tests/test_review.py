@@ -182,3 +182,13 @@ def test_growth_rate_is_the_slope_between_a_tenth_and_nine_tenths_of_the_final_l
     g = {"id": "g1", "status": "emerged_within", "length": {"frames": frames.tolist(), "px": px.tolist()}}
     line = summary_line({"grains": [g], "frames_per_bin": FPB}, None, None, (0.5, 10.0))
     assert "1.50 px per bin" in line and "um/min" in line
+
+
+def test_calibration_comes_from_the_command_line_or_calibration_json(tmp_path, monkeypatch):
+    from sparsetrack import cli
+
+    monkeypatch.chdir(tmp_path)
+    assert cli.calibration() is None
+    (tmp_path / "calibration.json").write_text('{"um_per_px": 0.65, "s_per_frame": 30}')
+    assert cli.calibration() == (0.65, 30.0)
+    assert cli.calibration(0.5, None) == (0.5, 30.0)  # what is given wins

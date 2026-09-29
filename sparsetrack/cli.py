@@ -67,6 +67,18 @@ def auto_frames_per_bin(movie: str | Path, target_bins: int = 175) -> int:
     return int(max(step, round(info.n_frames / target_bins / step) * step))
 
 
+CALIBRATION = Path("calibration.json")  # the lab's microscope: {"um_per_px": ..., "s_per_frame": ...}
+
+
+def calibration(um_per_px: float | None = None, s_per_frame: float | None = None) -> tuple[float, float] | None:
+    """Pixel size and frame interval: as given, else from calibration.json in the working folder; None if
+    either is unknown (tables stay in px and frames)."""
+    if not (um_per_px and s_per_frame) and CALIBRATION.exists():
+        cal = json.loads(CALIBRATION.read_text())
+        um_per_px, s_per_frame = um_per_px or cal.get("um_per_px"), s_per_frame or cal.get("s_per_frame")
+    return (float(um_per_px), float(s_per_frame)) if um_per_px and s_per_frame else None
+
+
 def run_folder(movie: str | Path, out: str | Path | None = None) -> Path:
     """Where ``run`` keeps a movie's cache (``cache/``), analysis (``analysis/``) and review (``review/``)."""
     import re
@@ -112,7 +124,7 @@ def cmd_run(args) -> None:
     model = adapted_model(out)
     if model:
         print(f"reading crowded and noisy grains with the network adapted to this movie ({model})")
-    units = (args.um_per_px, args.s_per_frame) if args.um_per_px and args.s_per_frame else None
+    units = calibration(args.um_per_px, args.s_per_frame)
     analyze(cache, out / "analysis", params=Params(model=str(model) if model else None), video=args.video, units=units)
     page = (out / "analysis" / "index.html").resolve()
     print(f"review gallery: {page}")
@@ -148,7 +160,7 @@ def cmd_review(args) -> None:
         print("Confirm or fix each answer (Enter confirms the model's). Press Ctrl-C here when you stop; "
               "answers are saved as you go.")
         serve(cache, labels, port=args.port, open_browser=not args.no_browser, annotator=args.annotator)
-    export(labels, args.um_per_px, args.s_per_frame)
+    export(labels, *(calibration(args.um_per_px, args.s_per_frame) or (None, None)))
 
 
 def cmd_bench(args) -> None:

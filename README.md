@@ -13,10 +13,11 @@ per grain, detect when a tube emerges and measure the tube's length over time.
    share, T50, median growth rate). Results are in `runs/sparsetrack/<movie name>/analysis/`:
    `grains.csv` (per grain: germinated or not, onset interval, final length, growth rate,
    the model's confidence), `growth.csv` (every grain's length at every time),
-   `population.png` (germination curve with T50) and `growth_curves.png`. Give the pixel
-   size and frame interval (`sparsetrack run MOVIE --um-per-px 0.65 --s-per-frame 30`,
-   your microscope's values) to also get onsets in minutes, lengths in um and growth in
-   um/min.
+   `population.png` (germination curve with T50) and `growth_curves.png`. The first time,
+   the launcher asks for the pixel size and frame interval (Enter skips) and keeps them in
+   `calibration.json`; with them the tables also give onsets in minutes, lengths in um and
+   growth in um/min (`sparsetrack run MOVIE --um-per-px 0.65 --s-per-frame 30` does the same
+   for one run).
 2. **Check and correct.** Double-click `Review_Movie_SparseTrack.command` and choose the
    same movie (or `.venv/bin/python -m sparsetrack review MOVIE`). The labelling tool
    opens with the model's answers already filled in: each grain's onset bracket, and its
