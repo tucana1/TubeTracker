@@ -338,17 +338,25 @@ class Bench:
     # ---- images ---------------------------------------------------------------------
     def follow(self, gid: str) -> np.ndarray:
         """(n_bins, 2) offsets that keep a drifting grain centred in its views (grain registration
-        on top of the field registration; zero before the reference bins and if it is erratic)."""
+        on top of the field registration; zero before the reference bins). With the analysis' default
+        ``Params.grain_track`` "follow" these are the analysis' own (``analyze.followed_drift``; after a loss the
+        view stays where the grain was last seen); with "phase", zero if the phase-correlation track is erratic."""
         if gid not in self._follow:
-            from ..analyze import local_shifts, plausible_drift
+            from ..analyze import Params, followed_drift, hold_nan, local_shifts, plausible_drift
             g = self.grain(gid)
             rs, half = self.renderer.ref_start, FOLLOW_HALF
-            crops = np.stack([self.renderer.crop(b, g["x"], g["y"], half) for b in range(rs, self.n_bins)])
-            if np.isnan(crops).any():
-                crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)))
-            ls = local_shifts(crops, half - 0.5, g["r"], 12.0, 3)
-            if not plausible_drift(ls, FOLLOW_MAX_STEP):
-                ls = np.zeros_like(ls)
+            p = Params()
+            if p.grain_track == "follow":
+                others = [o for oid, o in self.doc["grains"].items()
+                          if oid != gid and o.get("exclude_reason") != "not_a_grain"]
+                ls = hold_nan(followed_drift(self.renderer, self.meta, g, others, p)["drift"])
+            else:
+                crops = np.stack([self.renderer.crop(b, g["x"], g["y"], half) for b in range(rs, self.n_bins)])
+                if np.isnan(crops).any():
+                    crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)))
+                ls = local_shifts(crops, half - 0.5, g["r"], 12.0, 3)
+                if not plausible_drift(ls, FOLLOW_MAX_STEP):
+                    ls = np.zeros_like(ls)
             self._follow[gid] = np.vstack([np.repeat(ls[:1], rs, axis=0), ls])
         return self._follow[gid]
 

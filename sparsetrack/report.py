@@ -52,7 +52,8 @@ def turnbull(intervals: list[tuple[float, float]], tol: float = 1e-9, max_iter: 
 
 
 def onset_intervals(pred: dict, ids: set[str] | None = None) -> list[tuple[float, float]]:
-    """(L, R] per grain from predictions; unobservable grains are left out."""
+    """(L, R] per grain from predictions; unobservable grains are left out. A grain lost before it germinated is
+    known not to have germinated only until it was lost (``observed_until_frame``)."""
     out = []
     for g in pred["grains"]:
         if ids is not None and g["id"] not in ids:
@@ -64,7 +65,7 @@ def onset_intervals(pred: dict, ids: set[str] | None = None) -> list[tuple[float
         elif status == "emerged_at_start":
             out.append((-math.inf, float(frames[0])))
         elif status == "no_emergence_by_end":
-            out.append((float(frames[-1]), math.inf))
+            out.append((float(g.get("observed_until_frame") or frames[-1]), math.inf))
     return out
 
 
@@ -227,6 +228,9 @@ def write_video(renderer, meta: dict, pred: dict, out_path: str | Path, fps: int
                 n_em += 1
                 s = gg[1]
                 pts = turned_path(g, t, pred)[s <= L]
+                drift = (g.get("drift") or {}).get("xy") or []
+                if t < len(drift):  # a followed grain's path is in its own frame: put it where the grain is
+                    pts = pts + np.asarray(drift[t], float)
                 if len(pts) >= 2:
                     cv2.polylines(frame, [np.round(pts * 4).astype(np.int32).reshape(-1, 1, 2)], False, series_bgr, 2,
                                   cv2.LINE_AA, shift=2)
@@ -248,7 +252,8 @@ def write_video(renderer, meta: dict, pred: dict, out_path: str | Path, fps: int
 # flags whose grains deserve a human look before their numbers are used: on synthetic v2/v3
 # every grain carrying one of these was wrong somewhere (base rate 70%)
 REVIEW_FLAGS = ("settled_from_bin", "onset_moved_to_front", "onset_from_front", "contact_censored", "no_grain",
-                "front_too_short", "degenerate_path", "tube_map_without_onset")
+                "front_too_short", "degenerate_path", "tube_map_without_onset",
+                "grain_lost_after")  # Params.grain_track "follow": readings held from where the grain was lost
 # a path that accounts for less than half of its own change region: the tube curls, turns back,
 # wraps round its grain or is shared. On the dev benchmark (ld_v1, 0.4.1) all 11 grains below
 # this had a gross error (a trace off by > max(5 px, 20%) or onset off by > 2400 frames); the

@@ -28,7 +28,7 @@ import json
 import math
 import time
 from collections import deque
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, astuple, dataclass
 from pathlib import Path
 
 import cv2
@@ -140,6 +140,18 @@ class Params:
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
     settle_bins: int = 24
     grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
+    # how each grain is followed through the movie (both readers and the labelling tool): "phase" (to 0.6.0: phase
+    # correlation bin to bin, the whole track dropped by checked_drift when implausible) or "follow" (sparsetrack/
+    # track.py: the grain's own look bin by bin, through occlusions and changes of look, refined to the phase
+    # correlation's precision; a grain it can no longer find is lost from that bin)
+    grain_track: str = "phase"
+    track_step_px: int = 8       # follow: search radius per bin (px)
+    track_min_score: float = 0.5  # follow: a match scoring below this is a missed bin...
+    track_max_gap: int = 8       # ...and more missed bins in a row than this lose the grain
+    track_tol_px: float = 2.0    # follow: the phase correlation refines the track where it agrees within this
+    lost_policy: str = "hold"    # a lost grain: "hold" its readings from the loss on (flag grain_lost_after:<frame>),
+                                 # or "read" on at its last place
+    lost_min_bins: int = 15      # a grain followed for fewer bins than this is unobservable
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -215,6 +227,54 @@ def checked_drift(ls: np.ndarray, p: "Params") -> tuple[np.ndarray, str | None]:
         if plausible_drift(sm):
             return sm, "drift_smoothed"
     return np.zeros_like(ls), "drift_rejected"
+
+
+_FOLLOWED: dict = {}  # followed_drift's results in this process (both readers and the probe read the same grains)
+
+
+def followed_drift(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: "Params") -> dict:
+    """A grain's drift with ``p.grain_track = "follow"``: ``track.follow``'s track of the grain's own look, refined
+    to the phase correlation's precision by ``local_shifts`` with its window centred on the track (the correlation is
+    kept where it agrees with the track within ``p.track_tol_px``; elsewhere it has locked onto something else).
+
+    Returns {"drift": (n, 2) (dx, dy) per bin from the reference start (NaN from the loss on), "lost_from": the
+    first bin (absolute) the grain is lost at, or None, "lost_reason", "score": the track's match score per bin}."""
+    from . import track
+    rs, nb = int(meta.get("ref_start", 0)), int(meta["n_bins"])
+    gx, gy, gr = float(grain["x"]), float(grain["y"]), float(grain["r"])
+    near = tuple((round(float(o["x"]), 2), round(float(o["y"]), 2), round(float(o["r"]), 2)) for o in others
+                 if math.hypot(o["x"] - gx, o["y"] - gy) < 120)
+    cfg = track.FollowConfig(step_px=p.track_step_px, min_score=p.track_min_score, max_gap=p.track_max_gap)
+    key = (id(renderer.bins), round(gx, 2), round(gy, 2), round(gr, 2), rs, nb, near, astuple(cfg), p.reg_pad,
+           p.ref_bins, p.track_tol_px)
+    if key in _FOLLOWED:
+        return _FOLLOWED[key]
+    tr = track.follow(renderer, gx, gy, gr, rs, nb, near, cfg)
+    guide = tr["xy"]
+    n_fol = len(guide) if tr["lost_from"] is None else tr["lost_from"] - rs
+    drift = np.full((nb - rs, 2), np.nan)
+    if n_fol > 0:
+        off = np.round(guide[:n_fol])
+        off_abs = np.zeros((nb, 2))
+        off_abs[rs:rs + n_fol] = off
+        half = 2 * (int(math.ceil(gr + p.reg_pad)) // 2) + 6  # even: local_shifts' window is centred on half - 0.5
+        crops = np.stack([renderer.crop(b, gx, gy, half, offsets=off_abs) for b in range(rs, rs + n_fol)])
+        if np.isnan(crops).any():
+            crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)) if np.isfinite(crops).any() else 0.0)
+        if n_fol > p.ref_bins:
+            resid = local_shifts(crops, half - 0.5, gr, p.reg_pad, p.ref_bins, max_dev=1e9, follow=False)
+            fine = off + resid
+            fine = np.where((np.hypot(*(fine - guide[:n_fol]).T) <= p.track_tol_px)[:, None], fine, guide[:n_fol])
+        else:
+            fine = guide[:n_fol]
+        # a single-bin excursion of the refined drift is replaced by its running median (as local_shifts does)
+        med = np.array([np.median(fine[max(0, b - 3):b + 4], axis=0) for b in range(n_fol)])
+        drift[:n_fol] = np.where((np.hypot(*(fine - med).T) > 1.5)[:, None], med, fine)
+    out = {"drift": drift, "lost_from": tr["lost_from"], "lost_reason": tr["lost_reason"], "score": tr["score"]}
+    if len(_FOLLOWED) > 512:
+        _FOLLOWED.clear()
+    _FOLLOWED[key] = out
+    return out
 
 
 def _geodesic_far(mask: np.ndarray, seeds: np.ndarray) -> tuple[tuple[int, int], np.ndarray]:
@@ -803,11 +863,68 @@ def _pad_front(res: dict, frames: list, b0: int) -> dict:
         res["rotation_deg"] = [res["rotation_deg"][0]] * b0 + list(res["rotation_deg"])
     if res.get("wedge"):
         res["wedge"]["signal"] = [0.0] * b0 + list(res["wedge"]["signal"])
+    if res.get("drift"):
+        res["drift"] = {"frames": frames, "xy": [res["drift"]["xy"][0]] * b0 + list(res["drift"]["xy"])}
     return res
 
 
+def hold_nan(a: np.ndarray) -> np.ndarray:
+    """Rows of NaN after the last finite row repeat that row (a lost grain read on at its last place)."""
+    a = np.array(a, float)
+    fin = np.flatnonzero(np.isfinite(a).all(axis=1))
+    if len(fin) and fin[-1] < len(a) - 1:
+        a[fin[-1] + 1:] = a[fin[-1]]
+    return np.nan_to_num(a)
+
+
+def hold_after(res: dict, frames: list, n_fol: int, flag: str) -> dict:
+    """Re-express a result read over the first ``n_fol`` bins of the grain's frame list ``frames`` on all of it:
+    readings after the grain was lost are held at their last value (not extrapolated), and flagged."""
+    n = len(frames)
+
+    def held(seq, fill=None):
+        seq = list(seq)
+        last = seq[-1] if seq else fill
+        return seq + [last] * (n - len(seq))
+
+    res["length"] = {"frames": frames, "px": held(res["length"]["px"], 0.0)}
+    for key in ("tip", "drift"):
+        if res.get(key):
+            res[key] = {"frames": frames, "xy": held(res[key]["xy"])}
+    for key in ("rotation_deg", "exit_angle_deg"):
+        if res.get(key):
+            res[key] = held(res[key])
+    if res.get("wedge"):
+        res["wedge"]["signal"] = held(res["wedge"]["signal"], 0.0)
+    res["flags"].append(flag)
+    res["observed_until_frame"] = frames[n_fol - 1] if n_fol > 0 else frames[0]
+    return res
+
+
+def _lost_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: "Params", fd: dict,
+                route: list | None) -> dict:
+    """A followed grain lost from bin ``fd["lost_from"]``: read over the bins it was followed, its readings held from
+    there (``hold_after``); followed for fewer than ``p.lost_min_bins`` bins, it is unobservable."""
+    fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
+    n_bins = int(meta["n_bins"]) - rs
+    frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
+    n_fol = int(fd["lost_from"]) - rs
+    flag = f"grain_lost_after:{frames[max(n_fol - 1, 0)]}"
+    if n_fol < p.lost_min_bins:
+        c = np.nan_to_num(renderer.crop(rs, grain["x"], grain["y"], p.half))
+        return {"id": grain["id"], "x": grain["x"], "y": grain["y"], "r": grain["r"], "flags": [flag],
+                "map_threshold": 1.0, "status": "unobservable", "onset_frame": None, "onset_interval": None,
+                "length": {"frames": frames, "px": [0.0] * n_bins}, "path": [],
+                "observed_until_frame": frames[max(n_fol - 1, 0)], "lost_reason": fd["lost_reason"],
+                "_diag": (c, np.zeros_like(c), np.zeros(c.shape, bool), None, None, None, p.half - 0.5)}
+    res = analyze_grain(renderer, {**meta, "n_bins": int(fd["lost_from"])}, grain, others, p, _settled=True,
+                        route=route, _drift=fd["drift"][:n_fol])
+    res["lost_reason"] = fd["lost_reason"]
+    return hold_after(res, frames, n_fol, flag)
+
+
 def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: Params,
-                  _settled: bool = False, route: list | None = None) -> dict:
+                  _settled: bool = False, route: list | None = None, _drift: np.ndarray | None = None) -> dict:
     fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
     n_bins = int(meta["n_bins"]) - rs  # bins before the reference (settling) are not observed
     gx, gy, gr = grain["x"], grain["y"], grain["r"]
@@ -839,28 +956,47 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
                                 _settled=True)
             res["flags"].append(f"settled_from_bin:{b0}")
             return _pad_front(res, frames, b0)
-    ls = local_shifts(crops, centre, gr, p.reg_pad, p.ref_bins)
-    ls, drift_flag = checked_drift(ls, p)  # a track that locked onto a neighbour or the grain's own tube is not used
-    drift_rejected = drift_flag == "drift_rejected"
+    followed = p.grain_track == "follow"
+    if followed and _drift is None:
+        fd = followed_drift(renderer, meta, {**grain, "x": gx, "y": gy}, others, p)
+        if fd["lost_from"] is not None and p.lost_policy == "hold":
+            return _lost_grain(renderer, meta, {**grain, "x": gx, "y": gy}, others, p, fd, route)
+        _drift = hold_nan(fd["drift"])  # "read" on: at its last place
+    if followed:
+        # crops centred on the grain's whole-pixel place, registered by the rest of its drift
+        off = np.round(_drift)
+        if np.any(off != 0):
+            off_abs = np.zeros((int(meta["n_bins"]), 2))
+            off_abs[rs:rs + n_bins] = off
+            crops = np.stack([renderer.crop(b, gx, gy, half, offsets=off_abs) for b in range(rs, rs + n_bins)])
+        ls, resid, drift_flag = _drift, _drift - off, None
+    else:
+        ls = local_shifts(crops, centre, gr, p.reg_pad, p.ref_bins)
+        ls, drift_flag = checked_drift(ls, p)  # a track that locked onto a neighbour or the grain's own tube is not used
+        resid = ls
     reg = np.stack([cv2.warpAffine(c, np.float32([[1, 0, -dx], [0, 1, -dy]]), (2 * half, 2 * half),
                                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-                    for c, (dx, dy) in zip(crops, ls)])
+                    for c, (dx, dy) in zip(crops, resid)])
     late_idx = list(range(n_bins - 1 - p.late_bins, n_bins - 1))
     early = reg[:p.ref_bins].mean(axis=0)
     late = reg[late_idx].mean(axis=0)
     yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float64)
     rg = np.hypot(xx - centre, yy - centre)
     # pixels whose source position leaves the frame in any bin are not evidence
-    shifts = np.asarray(meta["shifts"])[rs:] + ls
+    shifts = np.asarray(meta["shifts"])[rs:rs + n_bins] + ls
     ref_x, ref_y = gx - half + xx + 0.5, gy - half + yy + 0.5
     valid = ((ref_x + shifts[:, 0].min() >= 0) & (ref_x + shifts[:, 0].max() < renderer.width) &
              (ref_y + shifts[:, 1].min() >= 0) & (ref_y + shifts[:, 1].max() < renderer.height))
     change = cv2.GaussianBlur(np.abs(late - early), (0, 0), p.map_sigma)
     blocked = (rg < gr - 1.0) | ~valid
+    # a followed grain moves against the grains around it: their discs are blocked where they were at the start
+    # and where the grain's frame has them at the end (the change map holds both)
+    moves = [np.zeros(2)] + ([ls[late_idx].mean(axis=0)] if followed and len(late_idx) else [])
     for o in others:
-        ox, oy = o["x"] - gx + centre, o["y"] - gy + centre
-        if -o["r"] - 5 < ox < 2 * half + o["r"] + 5 and -o["r"] - 5 < oy < 2 * half + o["r"] + 5:
-            blocked |= np.hypot(xx - ox, yy - oy) < o["r"] + p.other_block_px
+        for mv in moves:
+            ox, oy = o["x"] - gx + centre - mv[0], o["y"] - gy + centre - mv[1]
+            if -o["r"] - 5 < ox < 2 * half + o["r"] + 5 and -o["r"] - 5 < oy < 2 * half + o["r"] + 5:
+                blocked |= np.hypot(xx - ox, yy - oy) < o["r"] + p.other_block_px
     bg = change[(rg > gr + 30) & ~blocked]
     bg = bg[bg < np.percentile(bg, 95)] if bg.size else bg
     sigma_bg = 1.4826 * float(np.median(np.abs(bg - np.median(bg)))) if bg.size else 1.0
@@ -873,6 +1009,8 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     result = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": [drift_flag] if drift_flag else [],
               "map_threshold": round(thr, 2), "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
+    if followed:  # paths and tips are in the grain's frame: its place in the field is census + drift
+        result["drift"] = {"frames": frames, "xy": np.round(ls, 2).tolist()}
     if not attached:
         result.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,
                       length={"frames": frames, "px": [0.0] * n_bins}, path=[])
