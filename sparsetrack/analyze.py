@@ -654,10 +654,14 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
     if p.evidence != "matched":
         kymo_all = _kymograph(diffs, pts, normal, pivot, p.lateral, angles)  # (bins, angles, points)
         if p.bg_subtract:
-            # per-bin background change (focus / illumination drift) away from tube and grains
-            far = cv2.dilate(ctx["tube_mask"].astype(np.uint8), np.ones((13, 13), np.uint8)).astype(bool)
-            bg_mask = (rg > gr + 8) & ~ctx["blocked"] & ~far
-            bg_level = np.array([float(np.median(d[bg_mask])) if bg_mask.any() else 0.0 for d in diffs])
+            # per-bin background change (focus / illumination drift) away from tube and grains; the same for
+            # every candidate path of the grain, so worked out once
+            if "bg_level" not in ctx:
+                far = cv2.dilate(ctx["tube_mask"].astype(np.uint8), np.ones((13, 13), np.uint8)).astype(bool)
+                bg_mask = (rg > gr + 8) & ~ctx["blocked"] & ~far
+                ctx["bg_level"] = (np.median(diffs[:, bg_mask], axis=1).astype(np.float64) if bg_mask.any()
+                                   else np.zeros(len(diffs)))
+            bg_level = ctx["bg_level"]
             kymo_all = np.clip(kymo_all - bg_level[:, None, None], 0.0, None)
             extra["background_change_max"] = round(float(bg_level.max()), 2)
         base = kymo_all[:p.ref_bins].mean(axis=0)
