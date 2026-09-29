@@ -556,11 +556,16 @@ function renderReview() {
     const flags = [g.isolated ? "isolated" : "", g.clump_size > 1 ? `clump ${g.clump_size}` : "", g.border ? "edge" : "",
                    g.source === "user" ? "added" : ""].filter(Boolean).join(", ");
     const bracket = on && on.verdict === "emerged_within" ? `(${on.last_absent_frame ?? "?"}, ${on.first_visible_frame}]` : "";
+    const rv = S.st.review, look = rv && (rv.check_first || {})[gid];
+    const checked = rv ? `<td>${on ? (isModel(on) ? "?" : "✓") : ""}</td><td>${p.length ? `${p.filter((b) => tr[String(b)] && !isModel(tr[String(b)])).length}/${p.length}` : ""}</td>
+      <td class="muted">${look ? look.join(", ") : ""}</td>` : "";
     return `<tr class="click" data-g="${gid}"><td>${gid}</td><td>${flags}</td><td>${g.excluded ? g.exclude_reason : ""}</td>
       <td>${on ? VERDICT_TEXT[on.verdict] : ""}</td><td>${bracket}</td><td>${p.length ? `${done}/${p.length}${Object.values(tr).some((t) => t.state === "burst") ? " · burst" : ""}` : ""}</td>
-      <td>${lab.time_spent_s ? Math.round(lab.time_spent_s) + " s" : ""}</td></tr>`;
+      ${checked}<td>${lab.time_spent_s ? Math.round(lab.time_spent_s) + " s" : ""}</td></tr>`;
   }).join("");
-  $("#content").innerHTML = `<table><tr><th>grain</th><th>layout</th><th>excluded</th><th>onset</th><th>bracket (frames)</th><th>traces</th><th>time</th></tr>${rows}</table>`;
+  const rvHead = S.st.review ? "<th>onset checked</th><th>traces checked</th><th>the model says look at</th>" : "";
+  if (S.st.review) help(`Review of ${S.st.review.model || "the model"}'s answers: ✓ checked, ? still the model's. Click a row to open it. Saved to <code>${S.st.labels_path}</code> after every answer.`);
+  $("#content").innerHTML = `<table><tr><th>grain</th><th>layout</th><th>excluded</th><th>onset</th><th>bracket (frames)</th><th>traces</th>${rvHead}<th>time</th></tr>${rows}</table>`;
   $("#content").onclick = (e) => { const tr = e.target.closest("tr[data-g]"); if (tr) openGrain(tr.dataset.g, "onset"); };
 }
 
