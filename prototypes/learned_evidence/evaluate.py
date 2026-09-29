@@ -226,7 +226,9 @@ def run_on_prob_cache(pcache: str | Path, image_cache: str | Path, work: str | P
     Onset comes from the growth front by default: SparseTrack's matched stub filter z-scores the
     exit against control angles, and on probability maps those controls are exactly zero, so the
     z-score explodes on noise-level values (grains called "emerged at start")."""
-    lp = A.Params(settle=False, tip_offset_px=tip_offset, onset_source=onset_source)
+    # reader="change": SparseTrack's own decoder on this evidence. Its default since 0.5.0, the hybrid
+    # reader, would run its tube network on the probability maps as if they were a movie.
+    lp = A.Params(settle=False, tip_offset_px=tip_offset, onset_source=onset_source, reader="change")
     with image_registration(image_cache), contextlib.redirect_stdout(io.StringIO()):
         return A.analyze(pcache, Path(work) / tag, grains_path=grains_path, params=lp, log=lambda *a: None)
 

@@ -83,3 +83,13 @@ def test_e2e_summary_counts_a_grain_left_unanalysed_apart_from_false_positives()
     assert "control false positives 0/2" in line and "labelled grains not analysed 1" in line
     rep["germination_confusion"]["no_emergence_by_end"]["emerged_within"] = 1
     assert "control false positives 1/3" in e2e_summary("x", rep)
+
+
+def test_sparsetracks_decoder_reads_a_probability_cache_with_its_change_reader(image_cache, tmp_path, monkeypatch):
+    # SparseTrack's default reader since 0.5.0 (hybrid) runs its own tube network on the cache it is given
+    from sparsetrack import analyze as A
+
+    seen = {}
+    monkeypatch.setattr(A, "analyze", lambda cache, out, params, **k: seen.setdefault("p", params))
+    evaluate.run_on_prob_cache(image_cache, image_cache, tmp_path, "learned")
+    assert seen["p"].reader == "change" and seen["p"].settle is False
