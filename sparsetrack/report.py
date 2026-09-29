@@ -265,6 +265,19 @@ def review_reasons(res: dict) -> list[str]:
     return out
 
 
+def grain_confidence(res: dict, fpb: int) -> float | None:
+    """The model's confidence in a germinated grain's readings: the lowest ``review.trace_confidence`` at the
+    times an annotator traces it (``bench.server.trace_bins`` after the model's onset); None without a tube."""
+    from .bench.server import trace_bins
+    from .review import trace_confidence
+    px = (res.get("length") or {}).get("px") or []
+    if res.get("status") not in ("emerged_within", "emerged_at_start") or not px:
+        return None
+    fv = int(res["onset_frame"]) // fpb if res.get("status") == "emerged_within" and res.get("onset_frame") else 0
+    plan = trace_bins(fv, len(px)) or [len(px) - 1]
+    return min(trace_confidence(px, b) for b in plan)
+
+
 def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = None) -> Path:
     """index.html next to diagnostics/: every grain's panels (end state + path, change map,
     kymograph + front) with its calls; grains with review flags first within each group."""
@@ -283,6 +296,8 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
                 ("path", f"{r.get('path_length_px', 0) or 0:.1f} px")]
         if r.get("path_coverage") is not None:
             rows.append(("path explains", f"{100 * r['path_coverage']:.0f}% of its change region"))
+        if conf.get(r["id"]) is not None:
+            rows.append(("model confidence", f"{100 * conf[r['id']]:.0f}% (least sure reading)"))
         table = "".join(f"<tr><th>{html.escape(k)}</th><td>{html.escape(str(v))}</td></tr>" for k, v in rows)
         flags = " ".join(f"<span class='flag{' review' if f in reasons else ''}'>{html.escape(f)}</span>"
                          for f in r.get("flags", []) + [x for x in reasons if x not in r.get("flags", [])])
@@ -294,11 +309,13 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
 
     iso = [r for r in grains if isolated is None or r["id"] in isolated]
     rest = [r for r in grains if isolated is not None and r["id"] not in isolated]
-    key = lambda r: (not review_reasons(r), r.get("path_coverage", 1.0) if review_reasons(r) else 0.0, r["id"])
+    conf = {r["id"]: grain_confidence(r, fpb) for r in grains}
+    # least sure first (the model's own reading history: runs/review_triage, 29 Sep 2026); grains without a tube last
+    key = lambda r: (conf[r["id"]] is None, conf[r["id"]] if conf[r["id"]] is not None else 1.0, r["id"])
     n_check = sum(bool(review_reasons(r)) for r in iso)
     body = (f"<h1>SparseTrack review — {html.escape(str(pred.get('movie', {}).get('name', '')))}</h1>"
-            f"<p class='sub'>{html.escape(pred.get('method', ''))} · {len(iso)} isolated grains, {n_check} marked "
-            f"<b>check</b> (their flags ask for a second look; lowest path coverage first) · {fpb} frames per bin · panels: end state with the "
+            f"<p class='sub'>{html.escape(pred.get('method', ''))} · {len(iso)} isolated grains, least sure first; {n_check} marked "
+            f"<b>check</b> (their flags ask for a second look) · {fpb} frames per bin · panels: end state with the "
             f"traced path, end-state change map, kymograph (time down, arclength right) with the growth front. "
             f"Model output, not human-verified.</p>"
             f"<h2 class='group'>Isolated grains</h2><div class='grid'>{''.join(card(r) for r in sorted(iso, key=key))}</div>")

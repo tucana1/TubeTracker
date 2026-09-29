@@ -155,3 +155,18 @@ def test_trace_confidence_prefers_long_growing_readings_and_orders_the_review(re
     assert set(doc["prefill"]["confidence"]) == {"g001"}
     assert all(0 < t["model_confidence"] < 1 for t in doc["labels"]["g001"]["traces"].values())
     assert Bench(cache, out, annotator="reviewer").order()[0] == "g001"  # grains with traces, least sure first
+
+
+def test_the_gallery_opens_with_the_least_sure_grain(tmp_path):
+    from sparsetrack.report import grain_confidence, write_gallery
+
+    frames = [b * FPB + FPB // 2 for b in range(N_BINS)]
+    growing = {"id": "g001", "status": "emerged_within", "onset_frame": frames[5], "onset_interval": [frames[4], frames[5]],
+               "length": {"frames": frames, "px": [0.0] * 5 + [2.0 * k for k in range(1, N_BINS - 4)]}, "flags": []}
+    stalled = {"id": "g002", "status": "emerged_within", "onset_frame": frames[5], "onset_interval": [frames[4], frames[5]],
+               "length": {"frames": frames, "px": [0.0] * 5 + [3.0] * (N_BINS - 5)}, "flags": []}
+    none = {"id": "g003", "status": "no_emergence_by_end", "length": {"frames": frames, "px": [0.0] * N_BINS}, "flags": []}
+    assert grain_confidence(stalled, FPB) < grain_confidence(growing, FPB) and grain_confidence(none, FPB) is None
+    page = write_gallery({"grains": [growing, none, stalled], "frames_per_bin": FPB}, tmp_path).read_text()
+    assert page.index("id='g002'") < page.index("id='g001'") < page.index("id='g003'")
+    assert "model confidence" in page
