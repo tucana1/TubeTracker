@@ -36,7 +36,8 @@ const plan = (gid = S.gid) => S.st.trace_plan[gid] || [];
 const included = () => S.st.order.filter((g) => !S.st.grains[g].excluded);
 const needsOnset = (g) => !label(g).onset;
 const needsTrace = (g) => plan(g).some((b) => !((label(g).traces || {})[String(b)]));
-function spent() { return (S.timers[S.gid] || 0) + (Date.now() - S.openedAt) / 1000; }
+// time on a grain accumulates across sessions: start from what was saved for it
+function spent() { return (S.timers[S.gid] ?? label().time_spent_s ?? 0) + (Date.now() - S.openedAt) / 1000; }
 
 function resetGrainState() {
   S.step = "coarse"; S.fv = null; S.la = null; S.coarseTile = null; S.consulted = new Set();
