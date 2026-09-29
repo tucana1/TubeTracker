@@ -185,6 +185,32 @@ def _extend_dist(dist: np.ndarray, comp: np.ndarray, sources: np.ndarray, bridge
     sub_d[upd] = out[upd]
 
 
+def centreline(tube: np.ndarray, dist: np.ndarray, tip: tuple[int, int], centre: float, gr: float,
+               reach: float = 4.5) -> list[tuple[float, float]]:
+    """Rim-to-tip polyline (y, x) through a flooded tube: from the tip, back along the geodesic that
+    gave its rim distance (each step to the tube pixel within ``reach`` px, the bridge, whose distance
+    plus the step is the current one, taking the longest such step), then out to the rim on the ray
+    through the last pixel. Its length is about the tip's rim distance, the length reported."""
+    h, w = dist.shape
+    y, x = tip
+    out = [(float(y), float(x))]
+    r = int(math.ceil(reach))
+    while True:
+        y0, y1, x0, x1 = max(y - r, 0), min(y + r + 1, h), max(x - r, 0), min(x + r + 1, w)
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        step = np.hypot(yy - y, xx - x)
+        ok = tube[y0:y1, x0:x1] & np.isfinite(dist[y0:y1, x0:x1]) & (step <= reach) & (step > 0)
+        ok &= dist[y0:y1, x0:x1] + step <= dist[y, x] + 1e-3  # on a shortest path to (y, x)
+        if not ok.any():
+            break
+        k = np.flatnonzero(ok.ravel())[int(np.argmin(dist[y0:y1, x0:x1].ravel()[ok.ravel()]))]
+        y, x = int(yy.ravel()[k]), int(xx.ravel()[k])
+        out.append((float(y), float(x)))
+    a = math.atan2(out[-1][0] - centre, out[-1][1] - centre)
+    rim = (centre + gr * math.sin(a), centre + gr * math.cos(a))
+    return [rim] + out[::-1]
+
+
 def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray, gr: float, recent: int = 12,
           bridge: int = 4, start_band: float = 4.0, min_len: float = 8.0, give_up: int = 40) -> dict:
     """Grow one grain's tube through an arrival map (see the module docstring).
@@ -288,10 +314,11 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
         sel = tube & (t_in <= t) & np.isfinite(dist)
         y, x = np.unravel_index(int(np.argmax(np.where(sel, dist, -1.0))), dist.shape) if sel.any() else (centre, centre)
         tips.append(to_ref(y, x))
-    # the route for the gallery: rim to the final tip through the tube
+    # the tube's pixels on the way from the rim to the final tip, nearest the rim first (the look-back's exit)
     ty, tx = np.unravel_index(int(np.argmax(np.where(tube & np.isfinite(dist), dist, -1.0))), dist.shape)
     order = sorted(zip(*np.nonzero(tube & np.isfinite(dist))), key=lambda q: dist[q])
     route = [q for q in order if math.hypot(q[0] - ty, q[1] - tx) <= dist[ty, tx] - dist[q] + 3.0][::3]
+    line = centreline(tube, dist, (int(ty), int(tx)), centre, gr, p.flood_bridge + 0.5)  # what is drawn and reviewed
     if p.flood_lookback > 0 and route:
         # the flood starts once the map is sure; a young tube often shows at its own exit earlier,
         # below that certainty: walk back while the exit sector stays above the lower threshold
@@ -308,10 +335,10 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     status = "emerged_at_start" if b == 0 else "emerged_within"
     res.update(status=status, onset_frame=frames[b], onset_interval=None if b == 0 else [frames[b - 1], frames[b]],
                length={"frames": frames, "px": [round(float(v), 2) for v in length]},
-               tip={"frames": frames, "xy": tips}, path=[to_ref(y, x) for y, x in route],
-               exit_xy=to_ref(*route[0]) if route else to_ref(centre, centre),
+               tip={"frames": frames, "xy": tips}, path=[to_ref(y, x) for y, x in line],
+               exit_xy=to_ref(*line[0]),
                final_length_px=round(float(length[-1]), 2), path_length_px=round(float(dist[ty, tx]), 2))
-    pts = np.array([[x, y] for y, x in route], float) if len(route) > 1 else None
+    pts = np.array([[x, y] for y, x in line], float)
     res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), tube, pts, None, None, centre)
     return res
 

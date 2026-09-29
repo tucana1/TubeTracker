@@ -541,6 +541,30 @@ def test_flood_keeps_a_slow_start():
     assert fl["emerge"] == 5 and fl["length"][-1] > 25
 
 
+
+def test_flood_centreline_follows_a_wide_bent_tube():
+    """The flood's reported path (drawn in the gallery, pre-filled for review): a polyline from the rim to the tip
+    along the tube, as long as the length read, not the tube's pixels sorted by rim distance (a zig-zag)."""
+    from sparsetrack.learned import flood, centreline
+    size, c, gr = 131, 65.0, 10.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
+    arr = np.full((size, size), 200)
+    for k, x in enumerate(range(int(c + gr + 3), 110)):  # 5 px wide, out to the right, 1 px per bin from bin 5
+        arr[63:68, x] = 5 + k
+    for k, y in enumerate(range(62, 20, -1)):            # then up
+        arr[y, 105:110] = np.minimum(arr[y, 105:110], 5 + 32 + k)
+    fl = flood(arr, rg, ang, np.zeros((size, size), bool), gr)
+    tube, dist = fl["tube"], fl["dist"]
+    tip = np.unravel_index(int(np.argmax(np.where(tube & np.isfinite(dist), dist, -1.0))), dist.shape)
+    line = np.array(centreline(tube, dist, (int(tip[0]), int(tip[1])), c, gr))
+    arc = float(np.sum(np.hypot(*np.diff(line, axis=0).T)))
+    assert abs(np.hypot(line[0, 0] - c, line[0, 1] - c) - gr) < 0.01           # starts on the rim
+    assert tuple(line[-1]) == (float(tip[0]), float(tip[1]))                   # ends at the tip
+    assert all(tube[int(y), int(x)] for y, x in line[1:])                      # through the tube
+    assert abs(arc - fl["length"][-1]) <= 0.1 * fl["length"][-1]               # as long as the length read
+    assert fl["length"][-1] > 70
+
 def test_score_counts_a_right_length_on_the_wrong_tube_apart():
     labels = {"frames_per_bin": 300, "grains": {"g1": {"x": 100, "y": 100, "isolated": True}},
               "labels": {"g1": {"traces": {"20": {"state": "full", "length_px": 30.0, "source_frame": 6150,
