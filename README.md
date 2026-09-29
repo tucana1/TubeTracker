@@ -19,7 +19,13 @@ per grain, detect when a tube emerges and measure the tube's length over time.
    tube traced at a few times. **Enter** confirms an answer as it stands; otherwise fix it
    as you would label it (click the first bin where the tube is visible; click along the
    tube from the grain to its tip). The bar at the top counts what you have checked, and
-   "next unfinished" goes to the next answer still the model's. Answers are saved as you
+   "next unfinished" goes to the next answer still the model's. Grains come least sure
+   first: the model's confidence in a reading rises with the tube's length and falls the
+   longer the reading has stood still (fitted on one labelled movie, checked on the other).
+   Checking in that order brought both movies to 79% of traces within tolerance (the
+   annotator's own repeatability) after checking 28% and 41% of the traces, against 48%
+   and 65% in random order. Confident answers can still be wrong: check them too when
+   the numbers matter. Answers are saved as you
    go; press Ctrl-C in the window when you stop. `runs/sparsetrack/<movie name>/review/`
    then holds `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`, saying
    which answers you checked and which you changed, and `reviewed_growth.csv` /

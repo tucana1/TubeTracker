@@ -106,7 +106,6 @@ class Params:
     cand_tips: int = 4
     cand_nms_px: float = 10.0
     cand_branch_tips: int = 6    # + this many skeleton branch ends
-    cand_contact_tips: bool = True  # + each rim contact's geodesically farthest point (a tube curling back)
     path_extend_px: float = 0.0   # carry each path's far end on along the change ridge (faint tips), up to this
     drift_smooth: bool = False    # an implausible drift track gets a second chance as its 9-bin running median
     nest_px: float = 5.0         # a candidate within this of a longer one all along is the same tube
@@ -624,13 +623,6 @@ def candidate_paths(comp: np.ndarray, ring: np.ndarray, cost: np.ndarray, gr: fl
             tips.append((y, x))
     n_c, c_lab = cv2.connectedComponents((ring & comp).astype(np.uint8), connectivity=8)
     contacts = [c_lab == c for c in range(1, n_c) if (c_lab == c).sum() >= 2]
-    if p.cand_contact_tips and len(contacts) > 1:
-        # measured from the whole rim, the tip of a tube that curls back towards its grain is near and never a
-        # candidate: measured from each contact it is that contact's farthest point
-        for c in sorted(contacts, key=lambda c: -int(c.sum()))[:3]:
-            y, x = _geodesic_far(comp, c)[0]
-            if all(math.hypot(y - ty, x - tx) >= p.cand_nms_px for ty, tx in tips):
-                tips.append((int(y), int(x)))
     out, seen = [], []
     for tip in tips:
         base = _cheapest_path(cost, comp, ring, tip)
