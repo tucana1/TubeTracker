@@ -107,7 +107,6 @@ class Params:
     cand_nms_px: float = 10.0
     cand_branch_tips: int = 6    # + this many skeleton branch ends
     path_extend_px: float = 0.0   # carry each path's far end on along the change ridge (faint tips), up to this
-    drift_smooth: bool = False    # an implausible drift track gets a second chance as its 9-bin running median
     nest_px: float = 5.0         # a candidate within this of a longer one all along is the same tube
     ridge_px: float = 5.0        # tube-likeness: end-state change on the path vs this far beside it
     ridge_weight: float = 1.0    # score *= (1 - w) + w * fraction of path points on a ridge
@@ -204,16 +203,10 @@ def plausible_drift(ls: np.ndarray, max_step: float = 10.0) -> bool:
 
 
 def checked_drift(ls: np.ndarray, p: "Params") -> tuple[np.ndarray, str | None]:
-    """A grain's tracked drift after the plausibility check: as tracked; else, with ``p.drift_smooth``, its
-    9-bin running median if that is plausible (registration jitter on a real drift); else no drift at all.
-    Returns the drift and a flag ("drift_smoothed", "drift_rejected" or None)."""
+    """A grain's tracked drift after the plausibility check: as tracked, else no drift at all (a track that
+    jumped or wandered locked onto something else). Returns the drift and a flag ("drift_rejected" or None)."""
     if not p.drift_check or plausible_drift(ls):
         return ls, None
-    if p.drift_smooth:
-        from scipy.ndimage import median_filter
-        sm = median_filter(ls, size=(9, 1), mode="nearest")
-        if plausible_drift(sm):
-            return sm, "drift_smoothed"
     return np.zeros_like(ls), "drift_rejected"
 
 
