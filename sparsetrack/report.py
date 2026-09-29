@@ -265,6 +265,19 @@ def review_reasons(res: dict) -> list[str]:
     return out
 
 
+def growth_rate(frames, px, min_px: float = 8.0) -> float | None:
+    """A tube's growth rate in px per frame: its length gain between the times it first reaches 10% and 90%
+    of its final length, over that time (the slow start and the final stop left out). None for a tube
+    shorter than ``min_px``."""
+    f, L = np.asarray(frames, float), np.asarray(px, float)
+    if not len(L) or L[-1] < min_px:
+        return None
+    i10, i90 = int(np.argmax(L >= 0.1 * L[-1])), int(np.argmax(L >= 0.9 * L[-1]))
+    if i90 <= i10:
+        return None
+    return float((L[i90] - L[i10]) / (f[i90] - f[i10]))
+
+
 def grain_confidence(res: dict, fpb: int) -> float | None:
     """The model's confidence in a germinated grain's readings: the lowest ``review.trace_confidence`` at the
     times an annotator traces it (``bench.server.trace_bins`` after the model's onset); None without a tube."""
@@ -278,7 +291,30 @@ def grain_confidence(res: dict, fpb: int) -> float | None:
     return min(trace_confidence(px, b) for b in plan)
 
 
-def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = None) -> Path:
+def summary_line(pred: dict, isolated: set[str] | None, population: dict | None,
+                 units: tuple[float, float] | None) -> str:
+    """The movie's result in one sentence: grains, germinated, T50, median growth rate (model output)."""
+    fpb = int(pred.get("frames_per_bin", 300))
+    um, spf = units or (None, None)
+    iso = [g for g in pred["grains"] if isolated is None or g["id"] in isolated]
+    counts = (population or {}).get("counts") or {}
+    n = sum(counts.values()) - counts.get("unobservable", 0) if counts else len(iso)
+    germ = counts.get("emerged_within", 0) + counts.get("emerged_at_start", 0)
+    parts = [f"{n} isolated grains, {germ} germinated ({100 * germ / max(n, 1):.0f}%)"]
+    t50 = (population or {}).get("t50_interval")
+    if t50:
+        parts.append(f"half germinated by frame {t50[1]:.0f}" + (f" ({t50[1] * spf / 60:.0f} min)" if spf else ""))
+    rates = [r for r in (growth_rate(g["length"]["frames"], g["length"]["px"]) for g in iso
+                         if g.get("status", "").startswith("emerged")) if r is not None]
+    if rates:
+        med = float(np.median(rates))
+        parts.append(f"median growth {med * fpb:.2f} px per bin" + (f" ({med * um * 60 / spf:.3g} um/min)" if um and spf else "")
+                     + f" over {len(rates)} tubes")
+    return "; ".join(parts) + ". Model output, not human-verified."
+
+
+def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = None, population: dict | None = None,
+                  units: tuple[float, float] | None = None) -> Path:
     """index.html next to diagnostics/: every grain's panels (end state + path, change map,
     kymograph + front) with its calls; grains with review flags first within each group."""
     import html
@@ -314,6 +350,7 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
     key = lambda r: (conf[r["id"]] is None, conf[r["id"]] if conf[r["id"]] is not None else 1.0, r["id"])
     n_check = sum(bool(review_reasons(r)) for r in iso)
     body = (f"<h1>SparseTrack review — {html.escape(str(pred.get('movie', {}).get('name', '')))}</h1>"
+            f"<p class='sum'>{html.escape(summary_line(pred, isolated, population, units))}</p>"
             f"<p class='sub'>{html.escape(pred.get('method', ''))} · {len(iso)} isolated grains, least sure first; {n_check} marked "
             f"<b>check</b> (their flags ask for a second look) · {fpb} frames per bin · panels: end state with the "
             f"traced path, end-state change map, kymograph (time down, arclength right) with the growth front. "
@@ -323,6 +360,7 @@ def write_gallery(pred: dict, out_dir: str | Path, isolated: set[str] | None = N
         body += f"<h2 class='group'>Clumped / edge grains</h2><div class='grid'>{''.join(card(r) for r in sorted(rest, key=key))}</div>"
     css = ("body{font:14px/1.4 -apple-system,system-ui,sans-serif;color:#0b0b0b;background:#fcfcfb;margin:24px}"
            "h1{font-size:20px;margin:0 0 4px}.sub{color:#52514e;margin:0 0 16px;max-width:1100px}"
+           ".sum{font-size:15px;margin:4px 0 8px;max-width:1100px}"
            ".group{font-size:16px;margin:20px 0 8px}.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(460px,1fr));gap:12px}"
            ".card{border:1px solid #e1e0d9;border-radius:6px;padding:10px;background:#fff}.card.needs{border-color:#c3c2b7}"
            ".card h2{font-size:15px;margin:0 0 6px}.card img{width:100%;image-rendering:pixelated;border-radius:3px}"

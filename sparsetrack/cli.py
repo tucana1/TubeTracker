@@ -112,7 +112,8 @@ def cmd_run(args) -> None:
     model = adapted_model(out)
     if model:
         print(f"reading crowded and noisy grains with the network adapted to this movie ({model})")
-    analyze(cache, out / "analysis", params=Params(model=str(model) if model else None), video=args.video)
+    units = (args.um_per_px, args.s_per_frame) if args.um_per_px and args.s_per_frame else None
+    analyze(cache, out / "analysis", params=Params(model=str(model) if model else None), video=args.video, units=units)
     page = (out / "analysis" / "index.html").resolve()
     print(f"review gallery: {page}")
     if not args.no_browser:
@@ -245,6 +246,8 @@ def main(argv=None) -> None:
     r.add_argument("--frames-per-bin", type=int, help="default: whole keyframe groups, about 175 bins per movie")
     r.add_argument("--flatfield", action="store_true", help="correct vignetting before grain detection")
     r.add_argument("--video", action="store_true", help="also render field_overlay.mp4")
+    r.add_argument("--um-per-px", type=float, help="pixel size: lengths and growth in um in the tables")
+    r.add_argument("--s-per-frame", type=float, help="frame interval: onsets in minutes, growth in um/min")
     r.add_argument("--no-browser", action="store_true")
     r.set_defaults(func=cmd_run)
     v = sub.add_parser("review", help="check and correct an analysis in the labelling tool, pre-filled with the "

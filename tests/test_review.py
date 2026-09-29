@@ -170,3 +170,15 @@ def test_the_gallery_opens_with_the_least_sure_grain(tmp_path):
     page = write_gallery({"grains": [growing, none, stalled], "frames_per_bin": FPB}, tmp_path).read_text()
     assert page.index("id='g002'") < page.index("id='g001'") < page.index("id='g003'")
     assert "model confidence" in page
+
+
+def test_growth_rate_is_the_slope_between_a_tenth_and_nine_tenths_of_the_final_length():
+    from sparsetrack.report import growth_rate, summary_line
+
+    frames = np.arange(40) * FPB + FPB // 2
+    px = np.r_[np.zeros(10), np.arange(1, 21) * 1.5, np.full(10, 30.0)]  # 1.5 px per bin, then stops
+    assert growth_rate(frames, px) == pytest.approx(1.5 / FPB, rel=0.05)
+    assert growth_rate(frames, np.r_[np.zeros(30), np.full(10, 5.0)]) is None  # shorter than a tube
+    g = {"id": "g1", "status": "emerged_within", "length": {"frames": frames.tolist(), "px": px.tolist()}}
+    line = summary_line({"grains": [g], "frames_per_bin": FPB}, None, None, (0.5, 10.0))
+    assert "1.50 px per bin" in line and "um/min" in line

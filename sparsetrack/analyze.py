@@ -1138,7 +1138,8 @@ def growth_scale(renderer: Renderer, meta: dict, grains: list[dict], p: "Params"
 
 
 def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path | None = None,
-            params: Params | None = None, only: list[str] | None = None, video: bool = False, log=print) -> dict:
+            params: Params | None = None, only: list[str] | None = None, video: bool = False, log=print,
+            units: tuple[float, float] | None = None) -> dict:
     p = params or Params()
     bins, meta = stack.load(cache_dir)
     renderer = Renderer(bins, meta)
@@ -1200,25 +1201,36 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             "cache": str(cache_dir), "grains_source": str(src), "params": asdict(p),
             "frames_per_bin": meta["frames_per_bin"], "movie": meta["movie"], "grains": results}
     (out_dir / "predictions.json").write_text(json.dumps(pred))
+    from . import report
+    um, spf = units or (None, None)  # (um per px, s per frame): physical units in the tables when both are known
+    cal = bool(um and spf)
     with open(out_dir / "grains.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["grain", "x", "y", "status", "onset_frame", "onset_after", "onset_by", "final_length_px", "flags"])
+        w.writerow(["grain", "x", "y", "status", "onset_frame", "onset_after", "onset_by", "final_length_px",
+                    "growth_px_per_bin", "model_confidence"]
+                   + (["onset_min", "final_length_um", "growth_um_per_min"] if cal else []) + ["flags"])
         for r in results:
             iv = r.get("onset_interval") or [None, None]
-            w.writerow([r["id"], r["x"], r["y"], r["status"], r.get("onset_frame"), iv[0], iv[1],
-                        r.get("final_length_px", 0), ";".join(r["flags"])])
+            rate = report.growth_rate(r["length"]["frames"], r["length"]["px"]) if r["status"].startswith("emerged") else None
+            conf = report.grain_confidence(r, meta["frames_per_bin"])
+            row = [r["id"], r["x"], r["y"], r["status"], r.get("onset_frame"), iv[0], iv[1], r.get("final_length_px", 0),
+                   "" if rate is None else round(rate * meta["frames_per_bin"], 3), "" if conf is None else round(conf, 3)]
+            if cal:
+                row += ["" if r.get("onset_frame") is None else round(r["onset_frame"] * spf / 60.0, 2),
+                        round((r.get("final_length_px") or 0) * um, 2),
+                        "" if rate is None else round(rate * um * 60.0 / spf, 4)]
+            w.writerow(row + [";".join(r["flags"])])
     with open(out_dir / "growth.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(["grain", "frame", "length_px", "tip_x", "tip_y"])
+        w.writerow(["grain", "frame", "length_px", "tip_x", "tip_y"] + (["minutes", "length_um"] if cal else []))
         for r in results:
             tips = (r.get("tip") or {}).get("xy") or [[None, None]] * len(r["length"]["frames"])
             for f, L, (tx, ty) in zip(r["length"]["frames"], r["length"]["px"], tips):
-                w.writerow([r["id"], f, L, tx, ty])
-    from . import report
+                w.writerow([r["id"], f, L, tx, ty] + ([round(f * spf / 60.0, 2), round(L * um, 2)] if cal else []))
     isolated = [r["id"] for r in results if next((g for g in grains if g["id"] == r["id"]), {}).get("isolated", True)]
     pop = report.write_population(pred, out_dir, set(isolated))
     report.write_growth_curves(pred, out_dir, isolated)
-    report.write_gallery(pred, out_dir, set(isolated))
+    report.write_gallery(pred, out_dir, set(isolated), population=pop, units=units)
     if pop and pop.get("t50_interval"):
         log(f"population ({pop['n']} isolated grains): half germinated by frame {pop['t50_interval'][1]:.0f}")
     if video:
