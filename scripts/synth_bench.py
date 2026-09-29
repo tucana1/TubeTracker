@@ -22,12 +22,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 REPO = Path(__file__).resolve().parents[1]
+BENCH_DIR = os.environ.get("TT_BENCH_DIR", "/tmp/tt_bench")  # separate folders let benches run side by side
 sys.path.insert(0, str(REPO))
 from sparsetrack.analyze import Params, analyze  # noqa: E402
 from sparsetrack.evaluate import load, score  # noqa: E402
@@ -82,7 +84,7 @@ def _within(err: float, truth_len: float) -> bool:
 def score_real(name: str, params: Params, tag: str) -> dict:
     """One human benchmark: totals, per-grain hits (for paired comparisons) and every FULL error."""
     cache, labels = (REPO / p for p in REAL[name])
-    pred = analyze(cache, f"/tmp/tt_bench/{name}_real_{tag}", grains_path=labels, params=params, log=lambda *a: None)
+    pred = analyze(cache, f"{BENCH_DIR}/{name}_real_{tag}", grains_path=labels, params=params, log=lambda *a: None)
     rep = score(load(labels), pred)
     grains = {}
     for r in rep["rows"]:
@@ -96,7 +98,7 @@ def score_real(name: str, params: Params, tag: str) -> dict:
             "len_med": rep["length_full"]["median_abs_error"], "len_bias": rep["length_full"]["bias"],
             "both": rep["tips"]["length_and_tip"],
             "errs": [(f["error"], f["human"], r["grain"], f["frame"]) for r in rep["rows"] for f in r.get("full", [])],
-            "grains": grains, "pred": f"/tmp/tt_bench/{name}_real_{tag}/predictions.json"}
+            "grains": grains, "pred": f"{BENCH_DIR}/{name}_real_{tag}/predictions.json"}
 
 
 def paired(base: dict, new: dict, n_boot: int = 4000, seed: int = 0) -> str:
@@ -134,7 +136,7 @@ def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True
         if built is None:
             print(f"  (no movie for {suite} seed {s}: skipped)", flush=True)
             continue
-        pred = analyze(cache, f"/tmp/tt_bench/{suite}_s{s}", params=params, log=lambda *a: None)
+        pred = analyze(cache, f"{BENCH_DIR}/{suite}_s{s}", params=params, log=lambda *a: None)
         if built and not keep_caches:
             import shutil
             shutil.rmtree(cache)
@@ -160,7 +162,7 @@ def run(params: Params, seeds: list[int], suite: str = "v1", legacy: bool = True
             jobs = {name: ex.submit(score_real, name, params, tag) for name in real}
             out["real"] = {name: job.result() for name, job in jobs.items()}
     if legacy:
-        pred = analyze(REPO / "runs/sparsetrack/ld", "/tmp/tt_bench/ld", params=params, only=LEGACY_IDS,
+        pred = analyze(REPO / "runs/sparsetrack/ld", f"{BENCH_DIR}/ld", params=params, only=LEGACY_IDS,
                        log=lambda *a: None)
         rep = score(load(REPO / "benchmark/labels/legacy_v0.json"), pred)
         out["legacy"] = {"on_hit": rep["onset"]["hits"], "on_n": rep["onset"]["n_timed"],
