@@ -106,7 +106,6 @@ class Params:
     cand_tips: int = 4
     cand_nms_px: float = 10.0
     cand_branch_tips: int = 6    # + this many skeleton branch ends
-    path_extend_px: float = 0.0   # carry each path's far end on along the change ridge (faint tips), up to this
     nest_px: float = 5.0         # a candidate within this of a longer one all along is the same tube
     ridge_px: float = 5.0        # tube-likeness: end-state change on the path vs this far beside it
     ridge_weight: float = 1.0    # score *= (1 - w) + w * fraction of path points on a ridge
@@ -288,33 +287,6 @@ def _cheapest_path(cost: np.ndarray, mask: np.ndarray, seeds: np.ndarray, target
     while prev[path[-1]][0] >= 0:
         path.append(tuple(prev[path[-1]]))
     return np.array(path[::-1], np.float64)
-
-
-def extend_along_ridge(path: np.ndarray, change: np.ndarray, floor: float, blocked: np.ndarray, max_px: float,
-                       cone_deg: float = 35.0) -> np.ndarray:
-    """A path's far end carried on along the ridge of the end-state change map, 1 px at a time within a
-    +/-``cone_deg`` cone of its heading, while the ridge stays above ``floor`` (half the region threshold):
-    a tube's faint tip falls below the threshold that cut its change region, and the path stopped there.
-    The growth front still decides how far the tube got."""
-    h, w = change.shape
-    pts = [np.asarray(q, float) for q in path]
-    back = next((q for q in pts[-2::-1] if np.hypot(*(pts[-1] - q)) >= 4.0), pts[0])
-    d = (pts[-1] - back) / max(float(np.hypot(*(pts[-1] - back))), 1e-6)
-    offs = np.deg2rad(np.linspace(-cone_deg, cone_deg, 15))
-    added = 0.0
-    while added < max_px:
-        cand = [pts[-1] + np.array([d[0] * np.cos(a) - d[1] * np.sin(a), d[0] * np.sin(a) + d[1] * np.cos(a)])
-                for a in offs]
-        vals = [change[int(round(c[1])), int(round(c[0]))] if 0 <= c[0] < w - 1 and 0 <= c[1] < h - 1
-                and not blocked[int(round(c[1])), int(round(c[0]))] else -1.0 for c in cand]
-        k = int(np.argmax(vals))
-        if vals[k] < floor:
-            break
-        d = 0.7 * d + 0.3 * (cand[k] - pts[-1])  # a smooth heading
-        d /= max(float(np.hypot(*d)), 1e-6)
-        pts.append(cand[k])
-        added += 1.0
-    return np.array(pts)
 
 
 def _resample(path_xy: np.ndarray, step: float) -> tuple[np.ndarray, np.ndarray]:
@@ -653,8 +625,6 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
     v = path[0] - centre
     v = v / (np.linalg.norm(v) + 1e-9)
     path = np.vstack([centre + v * gr, path])
-    if p.path_extend_px > 0 and len(path) >= 3:
-        path = extend_along_ridge(path, ctx["change"], 0.5 * ctx["thr"], ctx["blocked"], p.path_extend_px)
     pts, ss = _resample(path, p.step)
     if len(pts) < 4:
         return None
