@@ -138,6 +138,20 @@ class Params:
     exit_edge: bool = True       # change reader: lengths from the grain's visible edge along the exit, where an
                                  # annotator starts a trace, not from the census circle
     exit_edge_onset: bool = False  # ...and its onset stub there too (ld: fixes 2 onsets, loses 3: off)
+    # tip continuation (change reader): a tube grows at its tip, so change that appears beyond the chosen path's
+    # tip only after its front got there, and runs on from it, is the tube going on - typically back along its own
+    # grain after a turn, where every point is nearer the rim than the tip and no path starting on the rim reaches
+    # it the long way. A second front reads it from that bin on; the first reading is kept as it was.
+    # ld 69 -> 73/104 lengths (95% CI +0 to +9; g022, g031, g002 gain, g031 loses one), m2 unchanged; the gains
+    # hang on cont_back_px (3 or 10 px lose them): off
+    tip_continue: bool = False
+    cont_min_px: float = 6.0       # ...when the second front gets at least this far
+    cont_after_bins: int = 10      # ...and the first reached its tip at least this many bins before the end
+    cont_margin_bins: int = 3      # material that changed from this many bins before then on counts
+    cont_clear_px: float = 3.0     # ...away from the path itself (a swaying tube is not a continuation)
+    cont_order: float = 0.6        # its change must arrive in order outwards (rank correlation with the distance)
+    cont_back_px: float = 6.0      # it may leave the path this far before its end (a path overshoots a tight turn)
+    cont_gate_bins: int = 2        # a continuation point is read as tube from this many bins before its arrival on
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
     settle_bins: int = 24
     grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
@@ -266,15 +280,18 @@ def geodesic_owner(mask: np.ndarray, seeds: list[np.ndarray]) -> np.ndarray:
     return owner
 
 
-def _cheapest_path(cost: np.ndarray, mask: np.ndarray, seeds: np.ndarray, target: tuple[int, int]) -> np.ndarray:
-    """Dijkstra from any seed pixel to ``target`` through ``mask``; returns (n, 2) array of (y, x)."""
+def _cheapest_path(cost: np.ndarray, mask: np.ndarray, seeds: np.ndarray, target: tuple[int, int],
+                   start_cost: np.ndarray | None = None) -> np.ndarray:
+    """Dijkstra from any seed pixel (at ``start_cost`` there, default 0) to ``target`` through ``mask``; returns
+    (n, 2) array of (y, x)."""
     h, w = mask.shape
     dist = np.full((h, w), np.inf)
     prev = np.full((h, w, 2), -1, np.int32)
     pq = []
     for y, x in zip(*np.nonzero(seeds & mask)):
-        dist[y, x] = 0.0
-        heapq.heappush(pq, (0.0, int(y), int(x)))
+        d0 = 0.0 if start_cost is None else float(start_cost[y, x])
+        dist[y, x] = d0
+        heapq.heappush(pq, (d0, int(y), int(x)))
     while pq:
         d, y, x = heapq.heappop(pq)
         if (y, x) == target:
@@ -773,6 +790,127 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
             "flags": flags, "result": extra}
 
 
+def arrival_map(diffs: np.ndarray, thr: float, sigma: float = 1.0, hold: float = 0.8) -> np.ndarray:
+    """Per pixel, the first bin from which its (blurred) change stays above ``thr`` in at least ``hold`` of the
+    remaining bins - a tube, once grown, stays; -1 where that never happens."""
+    n = len(diffs)
+    above = np.stack([cv2.GaussianBlur(np.asarray(d, np.float32), (0, 0), sigma) > thr for d in diffs])
+    rest = np.cumsum(above[::-1], axis=0, dtype=np.int16 if n < 32000 else np.int32)[::-1]  # bins above, t to end
+    ok = above & (rest >= hold * np.arange(n, 0, -1)[:, None, None])
+    return np.where(ok.any(axis=0), ok.argmax(axis=0), -1)
+
+
+def _point_arrivals(pts: np.ndarray, arr: np.ndarray) -> np.ndarray:
+    """Per point (x, y): the earliest arrival (``arrival_map``) within 1 px; inf where nothing changed to stay."""
+    a = np.where(arr < 0, np.inf, arr.astype(np.float64))
+    h, w = a.shape
+    out = np.full(len(pts), np.inf)
+    for i, (x, y) in enumerate(np.round(pts).astype(int)):
+        if 0 <= x < w and 0 <= y < h:
+            out[i] = a[max(y - 1, 0):y + 2, max(x - 1, 0):x + 2].min()
+    return out
+
+
+def _gate_by_arrival(evid: np.ndarray, pts: np.ndarray, arr: np.ndarray, t0: int, gate_bins: int) -> np.ndarray:
+    """``evid`` (bins from ``t0`` on, then points at ``pts``, (x, y); any axes between) set to -1 at each point
+    before the bin its change arrived to stay, less ``gate_bins``; points that never changed to stay are kept."""
+    for i, ai in enumerate(_point_arrivals(pts, arr)):
+        if np.isfinite(ai):
+            evid[:max(0, int(ai) - gate_bins - t0), ..., i] = -1.0
+    return evid
+
+
+def _rank_corr(x: np.ndarray, y: np.ndarray) -> float:
+    """Spearman rank correlation (average ranks for ties); 0 when either side is constant."""
+    from scipy.stats import rankdata
+    rx, ry = rankdata(x), rankdata(y)
+    if np.std(rx) == 0 or np.std(ry) == 0:
+        return 0.0
+    return float(np.corrcoef(rx, ry)[0, 1])
+
+
+def continue_read(ctx: dict, read: dict, p: "Params") -> dict | None:
+    """The chosen read carried on beyond its tip (``p.tip_continue``), or None.
+
+    Only when its front reached the path's end ``cont_after_bins`` or more before the last bin: the change region's
+    material that changed from then on (``cont_margin_bins`` early), away from the path but connected to its last
+    ``cont_back_px``, is the candidate continuation, followed to its geodesically farthest point; its change must
+    arrive in order outwards (``cont_order``). Up to the bin the first front reached the tip the reading is kept
+    as it was (capped where the continuation leaves the path); from then on a second front (the same dynamic
+    programme, a point counting from the bin its change arrived) grows along the continuation, and it must get
+    ``cont_min_px`` along it."""
+    front, pts, path_yx = read["front"], read["pts"], read.get("path_yx")
+    n_bins, step = ctx["n_bins"], p.step
+    if path_yx is None or len(path_yx) < 2 or front[-1] < len(pts) - 1 - int(round(2.0 / step)):
+        return None  # the tube never got to the end of this path: nothing grew beyond it
+    t1 = int(np.argmax(front >= front[-1] - int(round(1.0 / step))))
+    if t1 > n_bins - 1 - p.cont_after_bins:
+        return None
+    if ctx.get("arrival") is None:
+        ctx["arrival"] = arrival_map(ctx["diffs"], ctx["thr"], p.map_sigma)
+    comp, arr = ctx["comp"], ctx["arrival"]
+    h, w = comp.shape
+    tip = (int(round(path_yx[-1][0])), int(round(path_yx[-1][1])))
+    if not (0 <= tip[0] < h and 0 <= tip[1] < w):
+        return None
+    on_path = np.zeros((h, w), np.uint8)
+    cv2.polylines(on_path, [np.round(pts).astype(np.int32).reshape(-1, 1, 2)], False, 1, 1)
+    away = cv2.distanceTransform(1 - on_path, cv2.DIST_L2, 3) > p.cont_clear_px
+    # the continuation may leave the path within its last cont_back_px (the path's end overshoots a tight turn):
+    # wherever makes the whole route, along the path and then on, cheapest through the change map
+    cost = 1.0 / (ctx["change"] + 1.0)
+    yx = np.round(path_yx).astype(int)
+    step_len = np.concatenate([[0.0], np.hypot(*np.diff(path_yx, axis=0).T)])
+    raw_arc = np.cumsum(step_len)
+    along = np.cumsum(cost[yx[:, 0], yx[:, 1]] * step_len)
+    k0 = int(np.searchsorted(raw_arc, raw_arc[-1] - p.cont_back_px))
+    seeds = np.zeros((h, w), bool)
+    start_cost = np.full((h, w), np.inf)
+    for i in range(k0, len(yx)):
+        seeds[yx[i, 0], yx[i, 1]] = True
+        start_cost[yx[i, 0], yx[i, 1]] = min(start_cost[yx[i, 0], yx[i, 1]], along[i] - along[k0])
+    end = np.zeros((h, w), np.uint8)
+    end[seeds] = 1
+    near_end = comp & (cv2.distanceTransform(1 - end, cv2.DIST_L2, 3) <= p.cont_clear_px + 1.0)
+    later = (comp & (arr >= t1 - p.cont_margin_bins) & away) | near_end | seeds
+    _, lab = cv2.connectedComponents(later.astype(np.uint8), connectivity=8)
+    part = lab == lab[tip]
+    far, dist = _geodesic_far(part, seeds & part)
+    if dist[far] < p.cont_min_px:
+        return None
+    cont = _cheapest_path(cost, part, seeds & part, far, start_cost=start_cost)
+    # where it leaves the path: the path is cut there
+    on = np.nonzero((yx[k0:, 0] == int(cont[0, 0])) & (yx[k0:, 1] == int(cont[0, 1])))[0]
+    j = k0 + int(on[-1]) if len(on) else len(yx) - 1
+    cut = path_yx[j, ::-1].astype(float)  # (x, y)
+    path_yx = path_yx[:j + 1]
+    # the tube grows at its tip: along a real continuation the change arrives later the farther out it is
+    a = arr[cont[:, 0].astype(int), cont[:, 1].astype(int)].astype(float)
+    ok = a >= 0
+    if ok.sum() < 4 or _rank_corr(np.nonzero(ok)[0].astype(float), a[ok]) < p.cont_order:
+        return None
+    full = read_path(ctx, np.vstack([path_yx, cont[1:]]), p)
+    if full is None:
+        return None
+    # the cut point on the new path (its first part is the old path's up to there)
+    n1 = int(np.argmin(np.hypot(*(full["pts"][:len(pts)] - cut).T)))
+    # read in the order it arrived: a continuation point is tube only from the bin its change came to stay
+    ev2 = _gate_by_arrival(full["evid"][t1:, n1:].copy(), full["pts"][n1:], arr, t1, p.cont_gate_bins)
+    # the second front starts at the tip (a first row nothing but the tip can explain)
+    f2 = dp_front(np.vstack([np.full((1, ev2.shape[1]), -1e3), ev2]), max(1, int(round(p.vmax_px / step))))[1:]
+    if f2[-1] * step < p.cont_min_px:
+        return None
+    merged = dict(full)
+    merged["front"] = np.concatenate([np.minimum(front[:t1], n1), n1 + f2]).astype(np.int32)
+    merged["theta"] = np.concatenate([read["theta"][:t1], full["theta"][t1:]])
+    merged["kymo"] = full["kymo"]
+    merged["flags"] = list(read["flags"])
+    merged["result"] = {**read["result"], "rotation_deg": [round(float(t), 1) for t in merged["theta"]],
+                        "continued_px": round(float(full["ss"][-1] - full["ss"][n1]), 1)}
+    merged["path_yx"] = np.vstack([path_yx, cont[1:]])
+    return merged
+
+
 def grain_settling(crops: np.ndarray, centre: float, gr: float, p: "Params") -> dict:
     """Is there a settled grain here, and from which bin?
 
@@ -923,6 +1061,7 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         for path_yx in candidate_paths(comp, ring, cost, gr, centre, p):
             read = read_path(ctx, path_yx, p)
             if read is not None:
+                read["path_yx"] = path_yx
                 cands.append(read)
         # a candidate that is only a shorter stretch of another along the same tube is dropped:
         # the growth front, not the path, decides how far the tube got (and tips are faint)
@@ -946,6 +1085,11 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
                                       "ridge": round(c["ridge"], 2), "through": c["through"]} for c in cands]
         if len(cands) > 1 and read is not cands[0]:
             result["flags"].append("path_by_growth")
+        if p.tip_continue and read is not None:
+            cont = continue_read(ctx, read, p)
+            if cont is not None:
+                read = cont
+                result["flags"].append(f"tip_continued:{cont['result']['continued_px']:.0f}px")
     else:
         far, _ = _geodesic_far(comp, ring)
         read = read_path(ctx, _cheapest_path(cost, comp, ring, far), p)
