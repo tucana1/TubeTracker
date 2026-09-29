@@ -47,6 +47,11 @@ python3 -m venv .venv
    lengths you checked. Run it again to carry on.
    `--um-per-px` and `--s-per-frame` add lengths in um and times in minutes.
 
+**If the gallery opens with a red warning** that many grains could not be followed, the grains in
+that movie drift or are still landing after the first minutes: SparseTrack reads each grain at its first
+place, so a grain's results after it moved are wrong. Check those grains (flag `drift_rejected`) in the
+review, or use a movie whose grains have settled. Following moving grains is being worked on.
+
 **How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.6.0, against one
 annotator's traces; length within max(2 px, 10%), onset within 2 bins; both movies were
 used in development, so a third, blind-labelled movie is the honest test):
