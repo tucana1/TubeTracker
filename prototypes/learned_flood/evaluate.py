@@ -11,7 +11,7 @@
    per-bin geometry and fed to SparseTrack's ``dp_front``: the growth front then depends only on
    the evidence (``abs``, ``matched``, ``union`` as in ``read_path``, or ``learned``).
 
-    python -m prototypes.learned_evidence.evaluate --model unet.pt --field FIELD_CACHE \
+    python -m prototypes.learned_flood.evaluate --model unet.pt --field FIELD_CACHE \
         --movie v5s3_cache:v5:3 --movie v5s4_cache:v5:4 --out OUT
 """
 

@@ -1,6 +1,6 @@
 """Tube growth read by an arrival-time flood from the grain's rim (prototype; see README.md).
 
-    python -m prototypes.learned_evidence.flood MOVIE all|GID ... [--half H] [--ridge | --prob PROB_CACHE] [--png DIR]
+    python -m prototypes.learned_flood.flood MOVIE all|GID ... [--half H] [--ridge | --prob PROB_CACHE] [--png DIR]
 
 Each pixel's arrival bin = first bin from which it stays changed (>= 70% of the next P bins).
 The grain's tube is flooded in arrival order: a newly arrived component joins it only if it

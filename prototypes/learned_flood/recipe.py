@@ -1,9 +1,9 @@
 """How sparsetrack/models/tubes_synth_v1.pt was made (27 Sep 2026), step by step.
 
-    python -m prototypes.learned_evidence.recipe movies      # ~7 min per movie-2-field movie
-    python -m prototypes.learned_evidence.recipe shards      # bins each movie, cuts a shard, drops the bins
-    python -m prototypes.learned_evidence.train --shards "runs/learned_evidence/shards/train_*.npz" \
-        --val runs/learned_evidence/shards/val_v5s3.npz --out runs/learned_evidence/unet_d_syn.pt --steps 8000
+    python -m prototypes.learned_flood.recipe movies      # ~7 min per movie-2-field movie
+    python -m prototypes.learned_flood.recipe shards      # bins each movie, cuts a shard, drops the bins
+    python -m prototypes.learned_flood.train --shards "runs/learned_flood/shards/train_*.npz" \
+        --val runs/learned_flood/shards/val_v5s3.npz --out runs/learned_flood/unet_d_syn.pt --steps 8000
 
 Training data: synthetic v5 movies on the dev movie's field (seeds 0-2, the existing
 runs/sparsetrack/synth/synthv5_s*.mp4; seed 3 for validation) and on movie 2's field (seeds
@@ -21,7 +21,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
 SYN = REPO / "runs/sparsetrack/synth"
-SHARDS = REPO / "runs/learned_evidence/shards"
+SHARDS = REPO / "runs/learned_flood/shards"
 M2 = dict(n_frames=351 * 25, onset_bins=(10.0, 250.0), rate_px_per_bin=(0.15, 1.5), max_length=280.0)
 LOOK = dict(p_bright_core=0.8, width=(1.0, 1.6))  # movie 2's tubes: mostly light-cored, wider
 # (field cache, seed, config overrides, shard name, bins per shard)

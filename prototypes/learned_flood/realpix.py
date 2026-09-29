@@ -1,6 +1,6 @@
 """Pixel-level check of a tube-probability cache against the human traces.
 
-    python -m prototypes.learned_evidence.realpix PROB_CACHE LABELS
+    python -m prototypes.learned_flood.realpix PROB_CACHE LABELS
 
 Along every FULL trace (at its bin): the share of centreline points the network calls tube
 (max P over +/-2 px across the path >= 0.5), and the share of points 8-14 px to either side

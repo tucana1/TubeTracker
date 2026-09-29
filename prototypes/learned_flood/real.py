@@ -1,11 +1,11 @@
 """Learned evidence on the human benchmarks (ld_v1, m2_v1): SparseTrack on tube-probability movies.
 
-    python -m prototypes.learned_evidence.real --model runs/learned_evidence/unet_v5_a.pt \
+    python -m prototypes.learned_flood.real --model runs/learned_flood/unet_v5_a.pt \
         [--movies ld m2] [--set key=value ...] [--dump-real OUT.json] [--baseline BASE.json]
 
 Each real movie is read by the network bin by bin (the same registered bin, "before" and "after"
 images SparseTrack uses) and written as a cache of P(tube) x SCALE_P next to the model
-(runs/learned_evidence/prob_<model>_<movie>, reused when present). The unchanged SparseTrack
+(runs/learned_flood/prob_<model>_<movie>, reused when present). The unchanged SparseTrack
 pipeline then runs on it, with each grain's local registration measured on the real images, and
 is scored like ``scripts/synth_bench.py --real`` (same per-grain dump, same paired comparison).
 """

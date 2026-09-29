@@ -1,5 +1,9 @@
 # Learned tube evidence (prototype, 27 Sep 2026)
 
+(This folder was `prototypes/learned_evidence/` until 29 Sep 2026. It holds the lab-side experiments,
+run on the real movies, behind SparseTrack's hybrid reader, `sparsetrack/learned.py`. The cloud
+branch's learned-evidence pipeline, merged the same day, now lives in `prototypes/learned_evidence/`.)
+
 A small U-Net reads SparseTrack's three images (the bin, the "before" and the "after" reference)
 and outputs, per pixel, the probability that tube body is there (and a tip heatmap). The idea
 (from the 24 Sep assessment on branch `claude/magical-maxwell-i5tpeh`, whose scaffold this is):
@@ -13,7 +17,7 @@ keeps the training and evaluation code and the record of every experiment.
 | file | what |
 |---|---|
 | `truth.py` | exact per-frame tube-body and apex rasters from a synthetic scene |
-| `data.py` | training crops from a synthetic movie (`python -m prototypes.learned_evidence.data ...`) |
+| `data.py` | training crops from a synthetic movie (`python -m prototypes.learned_flood.data ...`) |
 | `realdata.py` | training crops from the human traces: body = centreline +/- 3 px, background 6-14 px off it, the same crops before the onset bracket as negatives; everything else unscored |
 | `model.py`, `train.py` | U-Net (0.49 M parameters); training on MPS; `--real` mixes in trace crops, `--init` fine-tunes |
 | `realpix.py` | pixel check against the traces: share of traced centreline called tube, and of points 8-14 px beside it |

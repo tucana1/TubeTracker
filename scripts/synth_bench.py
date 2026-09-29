@@ -39,7 +39,7 @@ REAL = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
 SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json"),
           "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json"),
           "v5": ("v5s{}_cache", "synthv5_s{}_truth.json"),
-          # v5 on movie 2's field, sized like movie 2 (prototypes/learned_evidence/recipe.py); seeds 10-15
+          # v5 on movie 2's field, sized like movie 2 (prototypes/learned_flood/recipe.py); seeds 10-15
           # trained the tube-probability model, seed 20 is held out for tuning its reader
           "v5m2": ("v5m2s{}_cache", "synthv5m2_s{}_truth.json")}
 

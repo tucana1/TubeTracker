@@ -1,7 +1,7 @@
 """Train the evidence U-Net on synthetic shards (CPU is enough for this size).
 
-    python -m prototypes.learned_evidence.train --shards runs/learned_evidence/shards/train_*.npz \
-        --val runs/learned_evidence/shards/val.npz --out runs/learned_evidence/unet.pt
+    python -m prototypes.learned_flood.train --shards runs/learned_flood/shards/train_*.npz \
+        --val runs/learned_flood/shards/val.npz --out runs/learned_flood/unet.pt
 """
 
 from __future__ import annotations

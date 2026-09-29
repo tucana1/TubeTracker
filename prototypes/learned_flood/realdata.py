@@ -1,6 +1,6 @@
 """Training crops from the human benchmark traces (real movies, partial labels).
 
-    python -m prototypes.learned_evidence.realdata MOVIE OUT.npz      # MOVIE = ld | m2
+    python -m prototypes.learned_flood.realdata MOVIE OUT.npz      # MOVIE = ld | m2
 
 A trace gives one tube centreline at one bin. Target body = the centreline +/- BODY px; the loss
 sees only a band round it: the body, and background from GAP to BAND px off the centreline
