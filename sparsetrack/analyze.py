@@ -142,8 +142,9 @@ class Params:
     # tip only after its front got there, and runs on from it, is the tube going on - typically back along its own
     # grain after a turn, where every point is nearer the rim than the tip and no path starting on the rim reaches
     # it the long way. A second front reads it from that bin on; the first reading is kept as it was.
-    # ld 69 -> 73/104 lengths (95% CI +0 to +9; g022, g031, g002 gain, g031 loses one), m2 unchanged; the gains
-    # hang on cont_back_px (3 or 10 px lose them): off
+    # ld 69 -> 73/104 lengths (95% CI +0 to +9; g022, g031, g002 gain, g031 loses one), m2 unchanged (flood-read);
+    # synthetic v5 seeds 0-2, change reader: 331 -> 341/647 (+0 to +21). cont_back_px 3/6/10: ld -2/+4/+0,
+    # synthetic +0/+10/+17. Off until it holds on labels it was not developed on.
     tip_continue: bool = False
     cont_min_px: float = 6.0       # ...when the second front gets at least this far
     cont_after_bins: int = 10      # ...and the first reached its tip at least this many bins before the end
