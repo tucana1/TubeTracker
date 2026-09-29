@@ -8,7 +8,7 @@ from scipy.spatial import cKDTree
 from sparsetrack.analyze import Params, analyze_grain, arrival_map, dp_front
 from sparsetrack.render import Renderer
 
-SIZE, GX, GY, R = 320, 160.0, 160.0, 13.0
+SIZE, GX, GY, R = 220, 110.0, 110.0, 13.0  # a 200 px crop (Params(half=100)) round the grain fits
 
 
 def _polyline(points, step=0.25):
@@ -32,9 +32,10 @@ def _hairpin():
     return _polyline(first + turn[1:] + back[1:])
 
 
-def _render(line, arc, rate=2.0, onset=6, n_bins=60, seed=0, rim_change_bin=4):
-    """The tube grows along ``line`` at ``rate`` px/bin from ``onset``; from ``rim_change_bin`` the grain's rim
-    darkens all round (the body's own change, as at germination), so the whole rim band is one change region."""
+def _render(line, arc, rate=2.0, onset=6, n_bins=60, seed=0, rim_change_bin=4, others=()):
+    """The tube grows along ``line`` at ``rate`` px/bin from ``onset`` (``others``: more (line, arc, rate, onset)
+    tubes); from ``rim_change_bin`` the grain's rim darkens all round (the body's own change, as at germination),
+    so the whole rim band is one change region. Returns the bins and the first tube's true length per bin."""
     rng = np.random.default_rng(seed)
     yy, xx = np.mgrid[0:SIZE, 0:SIZE].astype(np.float64)
     ring = np.exp(-((np.hypot(xx - GX, yy - GY) - R) ** 2) / 3.0)
@@ -42,12 +43,14 @@ def _render(line, arc, rate=2.0, onset=6, n_bins=60, seed=0, rim_change_bin=4):
     pix = np.stack([xx.ravel(), yy.ravel()], axis=1)
     bins, true = [], []
     for t in range(n_bins):
-        L = min(arc[-1], max(0.0, (t - onset + 1) * rate))
-        true.append(L)
         img = 175 - (90 + (14 if t >= rim_change_bin else 0)) * ring
-        if L > 0:
-            d = cKDTree(line[arc <= L]).query(pix)[0].reshape(SIZE, SIZE)
-            img += outside * (18 * np.exp(-d ** 2 / 0.8) - 22 * np.exp(-(d - 1.6) ** 2 / 0.5))
+        for k, (ln, ar, rt, on) in enumerate([(line, arc, rate, onset), *others]):
+            L = min(ar[-1], max(0.0, (t - on + 1) * rt))
+            if k == 0:
+                true.append(L)
+            if L > 0:
+                d = cKDTree(ln[ar <= L]).query(pix)[0].reshape(SIZE, SIZE)
+                img += outside * (18 * np.exp(-d ** 2 / 0.8) - 22 * np.exp(-(d - 1.6) ** 2 / 0.5))
         bins.append(img + rng.normal(0, 0.4, img.shape))
     return np.stack(bins).astype(np.float16), np.array(true)
 
@@ -79,14 +82,36 @@ def test_a_tube_turning_back_along_its_grain_is_read_the_long_way():
     assert np.all(np.diff(L_on) >= -1e-9)
 
 
-def test_a_straight_tube_is_not_continued():
-    line, arc = _polyline([(GX - R, GY), (GX - R - 70, GY)])
-    bins, true = _render(line, arc, rate=1.5, n_bins=40)
+def test_a_tube_that_stopped_is_not_continued():
+    line, arc = _polyline([(GX - R, GY), (GX - R - 30, GY)])
+    bins, true = _render(line, arc, rate=1.5, n_bins=50)  # 30 px by bin 25, then no more growth
     meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
     grain = {"id": "g001", "x": GX, "y": GY, "r": R}
-    p = Params(half=100, exit_edge=False, tip_continue=True)
+    p = Params(half=100, exit_edge=False, rotate=False)
+    off = analyze_grain(Renderer(bins, meta), meta, grain, [], p)
+    on = analyze_grain(Renderer(bins, meta), meta, grain, [], replace(p, tip_continue=True))
+    assert not any(f.startswith("tip_continued") for f in on["flags"])
+    assert on["length"]["px"] == off["length"]["px"]
+
+
+def test_a_tube_growing_into_a_stopped_tip_is_not_its_continuation():
+    """The hairpin's last leg, but a foreign tube growing along the rim towards the stopped tip: its change arrives
+    in the wrong order (latest next to the tip), which alone keeps it out (without the order test it is taken)."""
+    line, arc = _hairpin()
+    own = arc <= 24 + 9 * np.pi                     # the first leg and the turn: stops by bin ~31
+    back = line[~own][::-1]                          # the last leg, grown from its far end from bin 34
+    back_arc = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(back, axis=0).T))])
+    bins, true = _render(line[own], arc[own], n_bins=64, others=[(back, back_arc, 2.0, 34)])
+    meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
+    grain = {"id": "g001", "x": GX, "y": GY, "r": R}
+    p = Params(half=100, exit_edge=False, rotate=False, tip_continue=True)
     res = analyze_grain(Renderer(bins, meta), meta, grain, [], p)
+    off = analyze_grain(Renderer(bins, meta), meta, grain, [], replace(p, tip_continue=False))
     assert not any(f.startswith("tip_continued") for f in res["flags"])
+    assert res["length"]["px"] == off["length"]["px"]
+    unordered = analyze_grain(Renderer(bins, meta), meta, grain, [], replace(p, cont_order=-1.0))
+    assert any(f.startswith("tip_continued") for f in unordered["flags"])
+    assert unordered["final_length_px"] > off["final_length_px"] + 20
 
 
 def test_second_front_starts_at_the_tip():
