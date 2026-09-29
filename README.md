@@ -9,10 +9,14 @@ per grain, detect when a tube emerges and measure the tube's length over time.
    (or `.venv/bin/python -m sparsetrack run MOVIE`). The first run prepares the movie
    (a few minutes); the analysis takes 5-10 minutes on a laptop. A review gallery opens:
    one card per grain, the tube the model measured drawn on the movie, grains that need
-   a second look first. Results are in `runs/sparsetrack/<movie name>/analysis/`:
-   `grains.csv` (per grain: germinated or not, onset interval, final length),
-   `growth.csv` (every grain's length at every time), `population.png` (germination
-   curve with T50) and `growth_curves.png`.
+   a second look first, and opens with the movie's result in one sentence (germinated
+   share, T50, median growth rate). Results are in `runs/sparsetrack/<movie name>/analysis/`:
+   `grains.csv` (per grain: germinated or not, onset interval, final length, growth rate,
+   the model's confidence), `growth.csv` (every grain's length at every time),
+   `population.png` (germination curve with T50) and `growth_curves.png`. Give the pixel
+   size and frame interval (`sparsetrack run MOVIE --um-per-px 0.65 --s-per-frame 30`,
+   your microscope's values) to also get onsets in minutes, lengths in um and growth in
+   um/min.
 2. **Check and correct.** Double-click `Review_Movie_SparseTrack.command` and choose the
    same movie (or `.venv/bin/python -m sparsetrack review MOVIE`). The labelling tool
    opens with the model's answers already filled in: each grain's onset bracket, and its
@@ -33,12 +37,14 @@ per grain, detect when a tube emerges and measure the tube's length over time.
    lengths you checked. Run it again to carry on.
    `--um-per-px` and `--s-per-frame` add lengths in um and times in minutes.
 
-**How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.5.3, against one
-annotator's traces; length within max(2 px, 10%), onset within 2 bins):
-- sparse movie (dev): lengths 62/104 (60%), onsets 15/26 (58%). The same annotator
+**How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.6.0, against one
+annotator's traces; length within max(2 px, 10%), onset within 2 bins; both movies were
+used in development, so a third, blind-labelled movie is the honest test):
+- sparse movie: lengths 69/104 (66%), onsets 15/26 (58%). The same annotator
   repeating 15 traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
-- crowded movie 2: lengths 23/54 (43%), onsets 5/19 (26%). Tubes that touch or cross
-  other tubes are the hard case; check those first (the gallery and the review list them).
+- crowded movie 2: lengths 25/54 (46%), onsets 5/19 (26%). Tubes that touch or cross
+  other tubes, and very young tubes, are the hard cases; check those first (the gallery
+  and the review open with the model's least sure grains).
 - the germination curve holds up better than single onsets, whose errors partly cancel:
   T50 within about one bin of the annotator's on the sparse movie (7735 vs 7383 frames;
   96% vs 100% germinated by the end) and 2.3 bins on movie 2 (24752 vs 24049 frames; 95%
