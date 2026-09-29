@@ -3,10 +3,41 @@
 TubeTracker is a research prototype for pollen germination time-lapse movies:
 per grain, detect when a tube emerges and measure the tube's length over time.
 
-**Status (23 Sep 2026): sparse-first reset.** Work now concentrates on isolated
-grains before crossings and clumps. The research record up to 22 Sep 2026 is in
-`prototypes/LEDGER.md`; the complete pre-reset tree (all prototype generations,
-round scripts and their tests) is preserved at the git tag `snapshot-2026-09-23`.
+## For the lab: analyse a movie, then check it
+
+1. **Analyse.** Double-click `Analyze_Movie_SparseTrack.command` and choose the movie
+   (or `.venv/bin/python -m sparsetrack run MOVIE`). The first run prepares the movie
+   (a few minutes); the analysis takes 5-10 minutes on a laptop. A review gallery opens:
+   one card per grain, the tube the model measured drawn on the movie, grains that need
+   a second look first. Results are in `runs/sparsetrack/<movie name>/analysis/`:
+   `grains.csv` (per grain: germinated or not, onset interval, final length),
+   `growth.csv` (every grain's length at every time), `population.png` (germination
+   curve with T50) and `growth_curves.png`.
+2. **Check and correct.** Double-click `Review_Movie_SparseTrack.command` and choose the
+   same movie (or `.venv/bin/python -m sparsetrack review MOVIE`). The labelling tool
+   opens with the model's answers already filled in: each grain's onset bracket, and its
+   tube traced at a few times. **Enter** confirms an answer as it stands; otherwise fix it
+   as you would label it (click the first bin where the tube is visible; click along the
+   tube from the grain to its tip). The bar at the top counts what you have checked, and
+   "next unfinished" goes to the next answer still the model's. Answers are saved as you
+   go; press Ctrl-C in the window when you stop. `runs/sparsetrack/<movie name>/review/`
+   then holds `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`, saying
+   which answers you checked and which you changed. Run it again to carry on.
+   `--um-per-px` and `--s-per-frame` add lengths in um and times in minutes.
+
+**How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.5.3, against one
+annotator's traces; length within max(2 px, 10%), onset within 2 bins):
+- sparse movie (dev): lengths 62/104 (60%), onsets 15/26 (58%). The same annotator
+  repeating 15 traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
+- crowded movie 2: lengths 23/54 (43%), onsets 5/19 (26%). Tubes that touch or cross
+  other tubes are the hard case; check those first (the gallery and the review list them).
+
+**Status (29 Sep 2026).** SparseTrack (below) is the tracker; the cloud session's
+learned-evidence pipeline (`prototypes/learned_evidence/`, merged 29 Sep) is an experiment
+under test on the lab's movies. Work concentrated on isolated grains before crossings and
+clumps (sparse-first reset, 23 Sep). The research record up to 22 Sep 2026 is in
+`prototypes/LEDGER.md`; the complete pre-reset tree is preserved at the git tag
+`snapshot-2026-09-23`.
 
 ## SparseTrack (active development)
 

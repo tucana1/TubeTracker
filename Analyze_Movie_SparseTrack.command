@@ -6,4 +6,4 @@ MOVIE=$(osascript -e 'POSIX path of (choose file with prompt "Choose a pollen mo
 [ -z "$MOVIE" ] && { echo "No movie chosen."; exit 0; }
 echo "Analysing $MOVIE (a few minutes)..."
 .venv/bin/python -m sparsetrack run "$MOVIE" || { echo "Analysis failed."; read; exit 1; }
-echo "Done. You can close this window."
+echo "Done. To check and correct the answers, double-click Review_Movie_SparseTrack.command. You can close this window."
