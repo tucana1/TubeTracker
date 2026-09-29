@@ -21,7 +21,8 @@ per grain, detect when a tube emerges and measure the tube's length over time.
 2. **Check and correct.** Double-click `Review_Movie_SparseTrack.command` and choose the
    same movie (or `.venv/bin/python -m sparsetrack review MOVIE`). The labelling tool
    opens with the model's answers already filled in: each grain's onset bracket, and its
-   tube traced at a few times. **Enter** confirms an answer as it stands; otherwise fix it
+   tube traced at a few times. **Enter** confirms an answer as it stands; **-** and **=**
+   shorten or lengthen a traced tube along the model's route (Shift: 5 px); otherwise fix it
    as you would label it (click the first bin where the tube is visible; click along the
    tube from the grain to its tip). The bar at the top counts what you have checked, and
    "next unfinished" goes to the next answer still the model's. Grains come least sure
