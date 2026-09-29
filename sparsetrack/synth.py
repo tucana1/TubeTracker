@@ -89,6 +89,34 @@ class SynthConfig:
     p_stub: float = 0.0                  # a short fat tube that stops early
     stub_len: tuple = (8.0, 14.0)
     stub_width: tuple = (1.8, 2.5)
+    # v6 realism, all off before v6. Young real tubes emerge as rounded bulbs (5-8 px across) and keep a
+    # rounded tip; and near the rim the change is dominated by the grain itself: on both labelled movies
+    # grains shift a median 0.2-0.5 px against the registered field, the focus changes field-wide by up to
+    # ~1.5 px (Gaussian sigma, either way) and interiors change by a median 5-10% (up to ~50%) around
+    # germination (measured 29 Sep 2026, prototypes/synth_v6/grainstats.py)
+    tip_bulb: tuple = (0.0, 0.0)         # a: the tube widens towards its apex, w(s) = w (1 + a exp(-(L - s) / l))
+    tip_bulb_px: tuple = (2.0, 4.0)      # l (px)
+    tip_round: bool = False              # a closed, rounded apex (a dome) instead of a cut-off cross-section
+    body_change: tuple = (0.0, 0.0)      # a germinating grain's interior contrast changes by +/- this share...
+    body_bins: tuple = (10.0, 30.0)      # ...over this many bins,
+    body_lead_bins: tuple = (-2.0, 4.0)  # ...starting this many bins after its onset (negative: before - real rims
+                                         # change before a tube emerges)
+    p_body: float = 0.8                  # share of germinating grains whose interior changes
+    p_body_idle: float = 0.0             # share of the other grains whose interior changes, at a random time
+    focus_px: float = 0.0                # field-wide focus drift: blur sigma (px) up to this, blurrier or sharper
+    focus_grain_px: float = 0.0          # + each grain's own focus / halo drift, up to this
+    focus_bins: float = 8.0              # smoothing of the focus wander (bins)
+    focus_max_px: float = 2.0            # limit of the focus shift; beyond 2 px the halo change grows linearly
+    jitter_px: tuple = (0.0, 0.0)        # each grain's own slow wander: largest excursion (px), log-uniform in this
+
+
+# v6's realism options (their defaults switch them off). The grain's own change was calibrated on its size inside
+# r + 3 px against the real movies at matched times since the reference (prototypes/synth_v6/crescent.py): movie 2's
+# median grows from ~2 grey levels (first 30 bins) to ~10 (120-150 bins) and the dev movie's faster
+V6_REALISM = dict(tip_bulb=(0.5, 1.2), tip_bulb_px=(2.0, 4.0), tip_round=True, body_change=(0.1, 0.25),
+                  body_bins=(10.0, 30.0), body_lead_bins=(-30.0, 4.0), p_body=0.8, p_body_idle=0.3,
+                  focus_px=3.0, focus_grain_px=1.2, focus_bins=4.0, focus_max_px=3.0, jitter_px=(0.3, 4.0))
+_V6_DEFAULTS = {k: SynthConfig.__dataclass_fields__[k].default for k in V6_REALISM}
 
 
 def preset(name: str, **kw) -> SynthConfig:
@@ -97,7 +125,8 @@ def preset(name: str, **kw) -> SynthConfig:
     growth that pauses or stops, width changes, drifting grains and docking particles. ``v3``:
     also tubes that start dark and turn bright-cored, tubes stuck to the substrate while their
     grain drifts, grains still landing in the first bins, and short fat stubs. ``v4``: also
-    sideways sway of the tube over time. ``v5``: v4 with the tube's end blurred like real tips."""
+    sideways sway of the tube over time. ``v5``: v4 with the tube's end blurred like real tips. ``v6``: v5 with
+    young tubes emerging as rounded bulbs and a grain body that changes (focus, sub-pixel wander, cytoplasm)."""
     if name == "v1":
         return SynthConfig(**kw)
     v2 = dict(foreign_sources=True, p_free=0.35, p_curl=0.25, width=(0.8, 1.3), p_stop=0.35, pauses=0.7,
@@ -112,6 +141,9 @@ def preset(name: str, **kw) -> SynthConfig:
     if name == "v5":  # calibrated on the human benchmark: real fronts run ~2.9 px past the clicked apex,
         # so tips are blurred over ~2.5 px and barely mature (strong maturation would pull fronts back)
         return SynthConfig(**{**v3, **dict(p_sway=0.7, tip_blur_px=2.5, maturation_bins=(0.0, 3.0)), **kw})
+    if name == "v6":  # v5 + bulbs and rounded tips, and the grain body's own change (V6_REALISM)
+        return SynthConfig(**{**v3, **dict(p_sway=0.7, tip_blur_px=2.5, maturation_bins=(0.0, 3.0)), **V6_REALISM,
+                              **kw})
     raise ValueError(f"unknown synthetic preset {name!r}")
 
 
@@ -127,6 +159,52 @@ def tube_profile(d: np.ndarray, bright: bool) -> np.ndarray:
     if bright:  # bright core with dark walls (g033/g036-like)
         return 11.0 * np.exp(-d ** 2 / 2.0) - 14.0 * np.exp(-(np.abs(d) - 3.5) ** 2 / 1.28)
     return -23.0 * np.exp(-d ** 2 / 3.4) + 1.5 * np.exp(-(np.abs(d) - 4.2) ** 2 / 0.5)  # dark line (median)
+
+
+# v6 tips: the widest a bulb gets (profile units: a dark line 3.1 px FWHM x w, a light core's walls at +/-3.5 w)
+# and where the apex dome is centred, in tip widths behind the apex (a dark bulb's middle; a light-cored tip's
+# wall wraps round ~1 px beyond the apex, as on real tips)
+TIP_WIDTH_MAX = {False: 2.6, True: 1.25}
+TIP_CAP = {False: 0.0, True: 2.5}
+EDGE_IN = (2.5, 1.0)  # a v6 tube fades out between these depths inside the census circle (the grain's visible edge)
+FOCUS_LEVELS = (0.5, 1.0, 1.5, 2.0)
+
+
+def _focus_stack(img: np.ndarray) -> np.ndarray:
+    """An image's change when it blurs by each of FOCUS_LEVELS (Gaussian sigma, px)."""
+    img = np.asarray(img, np.float32)
+    return np.stack([cv2.GaussianBlur(img, (0, 0), s) - img for s in FOCUS_LEVELS])
+
+
+def _focus_delta(stack_: np.ndarray, sigma: float, limit: float = FOCUS_LEVELS[-1]) -> np.ndarray | float:
+    """Change for a focus shift of ``sigma`` px: blurrier if > 0; sharper if < 0 (the mirror image, an unsharp
+    mask), interpolated between the stack's levels; up to ``limit``, beyond the last level linearly extrapolated
+    (a stronger halo change than a pure blur, as out-of-focus bright-field rims show)."""
+    a = min(abs(float(sigma)), limit)
+    if a < 1e-3:
+        return 0.0
+    if a > FOCUS_LEVELS[-1]:
+        out = stack_[-1] * (a / FOCUS_LEVELS[-1])
+        return out if sigma > 0 else -out
+    i = int(np.searchsorted(FOCUS_LEVELS, a))  # FOCUS_LEVELS[i - 1] < a <= FOCUS_LEVELS[i]
+    lo_s, lo = (0.0, 0.0) if i == 0 else (FOCUS_LEVELS[i - 1], stack_[i - 1])
+    w = (a - lo_s) / (FOCUS_LEVELS[i] - lo_s)
+    out = lo * (1.0 - w) + stack_[i] * w
+    return out if sigma > 0 else -out
+
+
+def _walk(rng, n: int, smooth: float, zero_at: float, dims: int = 1) -> np.ndarray:
+    """Smooth random wander over n frames, zero at frame ``zero_at``, largest excursion 1."""
+    pad = int(3 * smooth)
+    w = np.cumsum(rng.normal(0, 1, (n + 2 * pad, dims)), axis=0)
+    w = cv2.GaussianBlur(w.astype(np.float64), (1, 0), 0, sigmaY=smooth)[pad:pad + n]
+    w = w - w[int(np.clip(zero_at, 0, n - 1))]
+    w = w / (np.abs(w).max() + 1e-9)
+    return w[:, 0] if dims == 1 else w
+
+
+def _ramp(x: np.ndarray) -> np.ndarray:
+    return 0.5 - 0.5 * np.cos(np.pi * np.clip(x, 0.0, 1.0))
 
 
 @dataclass
@@ -151,6 +229,8 @@ class Tube:
     bend: float = 0.0                            # ...only this much of its base follows the grain
     sway: np.ndarray = field(default=None)       # (n_frames,) sideways displacement at full amplitude (px)
     sway_base: float = 20.0
+    bulb: float = 0.0                            # v6: extra width at the apex (x width), before TIP_WIDTH_MAX
+    bulb_px: float = 3.0                         # ...fading over this far back from the apex
     _anchor_maps: dict = field(default_factory=dict)
     _sway_maps: dict = field(default_factory=dict)
 
@@ -238,12 +318,13 @@ def _arrival(rng, cfg: SynthConfig) -> np.ndarray:
     return d0[None, :] * (np.clip(1.0 - k / land, 0.0, None) ** 2)[:, None]
 
 
-def _paste(img: np.ndarray, sprite: np.ndarray, alpha: np.ndarray, x0: float, y0: float) -> None:
+def _paste(img: np.ndarray, sprite: np.ndarray, alpha: np.ndarray, x0: float, y0: float,
+           interp: int = cv2.INTER_LINEAR) -> None:
     """Alpha-blend ``sprite`` into ``img`` with its top-left corner at subpixel (x0, y0)."""
     ix, iy = int(math.floor(x0)), int(math.floor(y0))
     m = np.float32([[1, 0, x0 - ix], [0, 1, y0 - iy]])
     hs, ws = sprite.shape
-    sp = cv2.warpAffine(sprite, m, (ws + 1, hs + 1), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    sp = cv2.warpAffine(sprite, m, (ws + 1, hs + 1), flags=interp, borderMode=cv2.BORDER_REPLICATE)
     al = cv2.warpAffine(alpha, m, (ws + 1, hs + 1), flags=cv2.INTER_LINEAR, borderValue=0)
     h, w = img.shape
     x_a, y_a, x_b, y_b = max(ix, 0), max(iy, 0), min(ix + ws + 1, w), min(iy + hs + 1, h)
@@ -436,14 +517,23 @@ class Scene:
                 t.move = self.moves.get(t.grain["id"])
             if t.grain["id"] in self.arriving:
                 t.info["arriving"] = True
+        # v6 draws come from their own generator: the scene above (and its noise) is v5's for the same seed
+        v6 = any(getattr(cfg, k) != v for k, v in _V6_DEFAULTS.items())
+        rng6 = np.random.default_rng([cfg.seed, 6]) if v6 else None
+        if cfg.tip_bulb[1] > 0:
+            for t in self.tubes:
+                t.bulb = float(rng6.uniform(*cfg.tip_bulb))
+                t.bulb_px = float(rng6.uniform(*cfg.tip_bulb_px))
+                t.info["bulb"] = round(t.bulb, 3)
         # per-tube lookup maps in the grain frame: nearest centreline arclength and distance
         self.maps = []
         for t in self.tubes:
-            lo = np.floor(t.path.min(axis=0) - 8).astype(int)
-            hi = np.ceil(t.path.max(axis=0) + 8).astype(int)
+            pad = 8 + (max(0, int(math.ceil(6 * t.width * (1 + t.bulb) - 8))) if t.bulb > 0 else 0)
+            lo = np.floor(t.path.min(axis=0) - pad).astype(int)
+            hi = np.ceil(t.path.max(axis=0) + pad).astype(int)
             gx, gy = t.grain["x"], t.grain["y"]
             if t.rot is not None:  # a rotating tube sweeps a disc around its grain
-                reach = float(np.max(np.hypot(t.path[:, 0] - gx, t.path[:, 1] - gy))) + 8
+                reach = float(np.max(np.hypot(t.path[:, 0] - gx, t.path[:, 1] - gy))) + pad
                 lo = np.floor([gx - reach, gy - reach]).astype(int)
                 hi = np.ceil([gx + reach, gy + reach]).astype(int)
             drift = t.move if t.move is not None else t.anchor
@@ -475,13 +565,114 @@ class Scene:
         drift[int(jb):] += cfg.jump_px
         self.drift = drift
         self.gain = 1.0 + cfg.gain_amp * np.sin(np.linspace(0, rng.uniform(1, 3) * np.pi, cfg.n_frames))
+        self.focus, self.bg_focus = None, None     # v6: field-wide focus shift per frame (px), background's stack
+        self.dyn: dict[str, dict] = {}              # v6: each grain's own change (focus, wander, interior)
+        self.dsprites: dict[str, tuple] = {}        # v6: sprites of the grains that do not drift
+        if v6 and (cfg.body_change[1] > 0 or cfg.focus_px > 0 or cfg.focus_grain_px > 0 or cfg.jitter_px[1] > 0):
+            self._grain_dynamics(rng6, census, original)
+
+    def _grain_dynamics(self, rng, census: list[dict], original: np.ndarray) -> None:
+        """v6: every grain becomes a sprite whose focus, position (sub-pixel) and interior change over time,
+        relative to the reference bins: rim rings and crescents, and cytoplasm moving at germination."""
+        cfg, n, fpb = self.cfg, self.cfg.n_frames, self.cfg.frames_per_bin
+        ref = 1.5 * fpb  # the reference bins' centre: no change there
+        k = np.arange(n, dtype=np.float64)
+        if cfg.focus_px > 0:  # a slow wander, and in half the movies a refocus step
+            phi = _walk(rng, n, cfg.focus_bins * fpb, ref) * rng.uniform(0.3, 1.0) * cfg.focus_px
+            if rng.random() < 0.5:
+                k0 = rng.uniform(0.1, 0.8) * n
+                phi = phi + rng.uniform(-1.0, 1.0) * cfg.focus_px / (1.0 + np.exp(-(k - k0) / (0.5 * fpb)))
+            self.focus = np.clip(phi - phi[int(ref)], -cfg.focus_max_px, cfg.focus_max_px)
+        first = {}  # grain -> (onset, exit angle) of its first tube
+        for t in self.tubes:
+            a = math.atan2(t.path[0, 1] - t.grain["y"], t.path[0, 0] - t.grain["x"])
+            if t.grain["id"] not in first or t.onset < first[t.grain["id"]][0]:
+                first[t.grain["id"]] = (t.onset, a)
+        # grains whose sprites overlap share one wander (a clump moves as one)
+        parent = {g["id"]: g["id"] for g in census}
+
+        def root(i):
+            while parent[i] != i:
+                parent[i] = parent[parent[i]]
+                i = parent[i]
+            return i
+        for i, g in enumerate(census):
+            for o in census[i + 1:]:
+                if math.hypot(g["x"] - o["x"], g["y"] - o["y"]) < g["r"] + o["r"] + 16:
+                    parent[root(g["id"])] = root(o["id"])
+        walks = {}
+        hole = np.zeros((self.h, self.w), np.uint8)
+        for g in census:
+            gid = g["id"]
+            if gid in self.sprites:  # a drifting grain (v2+) keeps its own motion
+                sp = self.sprites[gid]
+            else:
+                sp = _sprite(original, g)
+                self.dsprites[gid] = sp
+                cv2.circle(hole, (int(round(g["x"])), int(round(g["y"]))), int(math.ceil(g["r"] + 6)), 255, -1)
+            S, al, x0, y0 = sp
+            c = root(gid)
+            if c not in walks:
+                walks[c] = (_walk(rng, n, 2 * fpb, ref, dims=2) *
+                            math.exp(rng.uniform(math.log(max(cfg.jitter_px[0], 1e-3)), math.log(cfg.jitter_px[1])))
+                            if cfg.jitter_px[1] > 0 else None,
+                            _walk(rng, n, 0.75 * cfg.focus_bins * fpb, ref) * rng.uniform(0.0, cfg.focus_grain_px)
+                            if cfg.focus_grain_px > 0 else None)
+            d = {"D": _focus_stack(S) if (cfg.focus_px > 0 or cfg.focus_grain_px > 0) else None,
+                 "jit": walks[c][0] if gid in self.dsprites else None, "focus": walks[c][1], "c": None, "M": None}
+            if cfg.body_change[1] > 0:
+                germ = gid in first
+                if rng.random() < (cfg.p_body if germ else cfg.p_body_idle):
+                    start = (first[gid][0] + rng.uniform(*cfg.body_lead_bins) * fpb if germ
+                             else rng.uniform(5.0, 0.9 * n / fpb) * fpb)
+                    theta = first[gid][1] if germ else rng.uniform(0, 2 * np.pi)
+                    final = float(rng.uniform(*cfg.body_change) * rng.choice([-1.0, 1.0]))
+                    d["c"] = final * _ramp((k - start) / (rng.uniform(*cfg.body_bins) * fpb))
+                    yy, xx = np.mgrid[0:S.shape[0], 0:S.shape[1]].astype(np.float32)
+                    px, py = xx + x0 + 0.5 - g["x"], yy + y0 + 0.5 - g["y"]
+                    dc = np.hypot(px, py)
+                    inner = np.clip((g["r"] - 2.0 - dc) / 1.5, 0.0, 1.0)
+                    bg = float(np.median(S[dc > g["r"] + 6])) if np.any(dc > g["r"] + 6) else float(np.median(S))
+                    tilt = rng.uniform(0.0, 1.0) * (px * math.cos(theta) + py * math.sin(theta)) / g["r"]
+                    d["M"] = (inner * (1.0 + tilt) * (S - bg)).astype(np.float32)  # cytoplasm gathers towards the pore
+                    d["body_change"] = round(final, 3)
+            self.dyn[gid] = d
+        if hole.any():
+            u8 = np.clip(np.round(self.background), 0, 255).astype(np.uint8)
+            filled = cv2.inpaint(u8, hole, 9, cv2.INPAINT_TELEA).astype(np.float32)
+            self.background = np.where(hole > 0, filled, self.background).astype(np.float32)
+        if self.focus is not None:
+            self.bg_focus = _focus_stack(self.background)
+        for t in self.tubes:
+            bc = self.dyn.get(t.grain["id"], {}).get("body_change")
+            if bc is not None:
+                t.info["body_change"] = bc
+
+    def _grain_delta(self, gid: str, k: int):
+        """v6: the change of grain ``gid``'s sprite at frame ``k`` (focus shift and interior change)."""
+        d = self.dyn[gid]
+        out = 0.0
+        if d["D"] is not None:
+            f = (self.focus[k] if self.focus is not None else 0.0) + (d["focus"][k] if d["focus"] is not None else 0.0)
+            out = out + _focus_delta(d["D"], f, self.cfg.focus_max_px)
+        if d["c"] is not None and d["c"][k] != 0.0:
+            out = out + d["c"][k] * d["M"]
+        return out
 
     def render(self, k: int) -> np.ndarray:
         cfg = self.cfg
         img = self.background * self.gain[k]
+        if self.bg_focus is not None:
+            img = img + _focus_delta(self.bg_focus, self.focus[k], cfg.focus_max_px) * self.gain[k]
         for gid, (sp, al, x0, y0) in self.sprites.items():
             dx, dy = self.moves[gid][k]
+            if gid in self.dyn:
+                sp = sp + self._grain_delta(gid, k)
             _paste(img, sp * self.gain[k], al, x0 + dx, y0 + dy)
+        for gid, (sp, al, x0, y0) in self.dsprites.items():  # v6: the other grains' own change
+            jit = self.dyn[gid]["jit"]
+            jx, jy = (float(jit[k, 0]), float(jit[k, 1])) if jit is not None else (0.0, 0.0)
+            _paste(img, (sp + self._grain_delta(gid, k)) * self.gain[k], al, x0 + jx, y0 + jy, cv2.INTER_CUBIC)
         for t, (lo, hi, xx, yy, s, d) in zip(self.tubes, self.maps):
             L = float(t.length(np.array([k]))[0])
             if L <= 0:
@@ -505,6 +696,9 @@ class Scene:
                 ss = cv2.remap(s, rx, ry, cv2.INTER_NEAREST, borderValue=1e6)
                 dd = cv2.remap(d, rx, ry, cv2.INTER_NEAREST, borderValue=1e6)
             blur = cfg.tip_blur_px
+            if t.bulb > 0 or cfg.tip_round:
+                self._draw_v6(img, t, k, L, lo, hi, xx, yy, ss, dd)
+                continue
             on = (ss <= L + 3 * blur) & (dd < 6 * t.width)
             if not on.any():
                 continue
@@ -541,6 +735,56 @@ class Scene:
                              borderMode=cv2.BORDER_REPLICATE)
         img = img + self.rng.standard_normal(img.shape, dtype=np.float32) * np.float32(cfg.noise_sigma)
         return np.clip(np.round(img), 0, 255).astype(np.uint8)
+
+    def tip_width(self, t: Tube, bright: bool, L: float, s: np.ndarray) -> np.ndarray | float:
+        """v6: the tube's width at arclength ``s`` when it is ``L`` long - wider towards the apex (a bulb),
+        but never beyond TIP_WIDTH_MAX (so wide tubes and fat stubs are not blown up)."""
+        a = max(0.0, min(t.width * (1.0 + t.bulb), max(t.width, TIP_WIDTH_MAX[bright])) / t.width - 1.0)
+        if a <= 0:
+            return t.width
+        return t.width * (1.0 + a * np.exp(-np.clip(L - s, 0.0, None) / t.bulb_px))
+
+    def tip_distance(self, t: Tube, bright: bool, L: float, s: np.ndarray, d: np.ndarray, w) -> np.ndarray:
+        """v6: distance used for the cross-section: to the centreline, or beyond the dome's centre to that
+        centre (a rounded, closed apex)."""
+        if not self.cfg.tip_round:
+            return d
+        c = L - TIP_CAP[bright] * float(self.tip_width(t, bright, L, np.float64(L)))
+        return np.where(s > c, np.hypot(d, s - c), d)
+
+    @staticmethod
+    def outside_grain(t: Tube, k: int, xx: np.ndarray, yy: np.ndarray) -> np.ndarray:
+        """v6: 0 inside the grain, 1 outside its visible edge (a tube is not drawn over its own grain)."""
+        gx, gy = t.grain["x"], t.grain["y"]
+        for off in (t.move, t.anchor):
+            if off is not None:
+                gx, gy = gx + float(off[k][0]), gy + float(off[k][1])
+        dc = np.hypot(xx - gx, yy - gy)
+        return np.clip((dc - (t.grain["r"] - EDGE_IN[0])) / (EDGE_IN[0] - EDGE_IN[1]), 0.0, 1.0)
+
+    def _draw_v6(self, img: np.ndarray, t: Tube, k: int, L: float, lo, hi, xx, yy, ss: np.ndarray,
+                 dd: np.ndarray) -> None:
+        cfg = self.cfg
+        blur = cfg.tip_blur_px
+        wmax = t.width * (1.0 + t.bulb)
+        on = (ss <= L + max(3 * blur, 3 * wmax)) & (dd < 6 * wmax)
+        if not on.any():
+            return
+        s_raw, d_raw = ss[on], dd[on]
+        age = np.maximum(k - t.birth(np.minimum(s_raw, L)), 0.0)
+        mature = 1.0 - np.exp(-age / t.tau) if t.tau > 0 else np.ones_like(age)
+        if blur > 0:  # the tube's end is blurred by the optics: half contrast at the apex
+            mature = mature * 0.5 * erfc((s_raw - L) / (math.sqrt(2.0) * blur))
+
+        def look(bright: bool) -> np.ndarray:
+            w = self.tip_width(t, bright, L, np.minimum(s_raw, L))
+            return tube_profile(self.tip_distance(t, bright, L, s_raw, d_raw, w) / w, bright)
+        prof = look(t.bright)
+        if t.evolve_tau > 0:  # young tube: a dark line; the bright core comes with age
+            wgt = 1.0 - np.exp(-age / t.evolve_tau)
+            prof = wgt * prof + (1.0 - wgt) * look(False)
+        patch = img[lo[1]:hi[1] + 1, lo[0]:hi[0] + 1]
+        patch[on] += t.amp * prof * mature * self.outside_grain(t, k, xx[on], yy[on])
 
     def truth(self, name: str) -> dict:
         """Benchmark-format labels (reference coordinates, synthetic frame units)."""
@@ -586,8 +830,11 @@ class Scene:
                            "truth": {"dock_frame": docked.get(g["id"], (None,))[0],
                                      "max_drift_px": (float(np.hypot(*self.moves[g["id"]].T).max())
                                                       if g["id"] in self.moves else 0.0),
-                                     "anchored": g["id"] in self.anchored, "arriving": g["id"] in self.arriving}}
-        return {"schema": "sparsetrack.bench.v1", "origin": f"synthetic movie {name}", "config": asdict(cfg),
+                                     "anchored": g["id"] in self.anchored, "arriving": g["id"] in self.arriving,
+                                     **({"body_change": self.dyn.get(g["id"], {}).get("body_change")}
+                                        if self.dyn else {})}}
+        config = {k: v for k, v in asdict(cfg).items() if k not in _V6_DEFAULTS or v != _V6_DEFAULTS[k]}
+        return {"schema": "sparsetrack.bench.v1", "origin": f"synthetic movie {name}", "config": config,
                 "frames_per_bin": fpb, "n_bins": n_bins, "grains": grains, "labels": labels,
                 "retest": {"grains": [], "labels": {}}}
 
