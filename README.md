@@ -33,6 +33,10 @@ annotator's traces; length within max(2 px, 10%), onset within 2 bins):
   repeating 15 traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
 - crowded movie 2: lengths 23/54 (43%), onsets 5/19 (26%). Tubes that touch or cross
   other tubes are the hard case; check those first (the gallery and the review list them).
+- the germination curve holds up better than single onsets, whose errors partly cancel:
+  T50 within about one bin of the annotator's on the sparse movie (7735 vs 7383 frames;
+  96% vs 100% germinated by the end) and 2.3 bins on movie 2 (24752 vs 24049 frames; 95%
+  both); the curves differ by at most 0.14 and 0.19. `sparsetrack eval` reports this.
 
 **Status (29 Sep 2026).** SparseTrack (below) is the tracker; the cloud session's
 learned-evidence pipeline (`prototypes/learned_evidence/`, merged 29 Sep) is an experiment
