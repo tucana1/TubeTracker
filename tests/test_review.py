@@ -140,3 +140,18 @@ def test_export_writes_the_reviewed_growth_curves(reviewed):
     L = {int(r["bin"]): float(r["length_px"]) for r in rows}
     assert L[plan[-1]] == pytest.approx(fixed, abs=0.01) and L[9] == 0.0  # through the fix; nothing before onset
     assert rows[0]["checked_lengths"] == "1" and (out.parent / "growth_curves.png").exists()
+
+
+def test_trace_confidence_prefers_long_growing_readings_and_orders_the_review(reviewed):
+    from sparsetrack.review import trace_confidence
+
+    growing = np.r_[np.zeros(10), np.arange(1, 31) * 2.0]      # still growing at the end
+    stalled = np.r_[np.zeros(10), np.arange(1, 6) * 2.0, np.full(25, 10.0)]  # stopped 25 bins ago
+    assert trace_confidence(growing, 39) > trace_confidence(growing, 12)   # a longer reading, more often right
+    assert trace_confidence(growing, 39) > trace_confidence(stalled, 39)   # a long stall is suspect
+    cache, pred, out = reviewed
+    prefill(cache, pred, out, log=lambda *a: None)
+    doc = json.loads(out.read_text())
+    assert set(doc["prefill"]["confidence"]) == {"g001"}
+    assert all(0 < t["model_confidence"] < 1 for t in doc["labels"]["g001"]["traces"].values())
+    assert Bench(cache, out, annotator="reviewer").order()[0] == "g001"  # grains with traces, least sure first

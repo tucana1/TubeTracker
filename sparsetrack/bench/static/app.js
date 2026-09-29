@@ -446,7 +446,8 @@ function renderTrace() {
   const chips = p.map((bb, i) => `<span data-i="${i}" class="${tr[String(bb)] && !isModel(tr[String(bb)]) ? "done" : ""} ${i === S.traceIdx ? "cur" : ""}">f${bb * S.st.frames_per_bin + S.st.frames_per_bin / 2}${mark(tr[String(bb)])}</span>`).join("");
   const saved = tr[String(b)];
   if (isModel(saved)) $("#help").insertAdjacentHTML("afterbegin", `<b>Review:</b> this is the model's answer
-    (${saved.state === "full" ? `a ${saved.length_px} px tube` : saved.state.replace("_", " ")}). <kbd>Enter</kbd> confirms it as it
+    (${saved.state === "full" ? `a ${saved.length_px} px tube` : saved.state.replace("_", " ")}${saved.model_confidence != null ?
+    `; model confidence ${Math.round(100 * saved.model_confidence)}%` : ""}). <kbd>Enter</kbd> confirms it as it
     stands; or fix it and save as usual.<br>`);
   c.innerHTML = `<div class="row"><div class="wrap"><canvas id="tc" width="${size}" height="${size}"></canvas></div>
     <div class="side"><h3>Trace ${S.traceIdx + 1} of ${p.length} · frame ${b * S.st.frames_per_bin + S.st.frames_per_bin / 2} (bin ${b})</h3>
@@ -558,13 +559,14 @@ function renderReview() {
     const bracket = on && on.verdict === "emerged_within" ? `(${on.last_absent_frame ?? "?"}, ${on.first_visible_frame}]` : "";
     const rv = S.st.review, look = rv && (rv.check_first || {})[gid];
     const checked = rv ? `<td>${on ? (isModel(on) ? "?" : "✓") : ""}</td><td>${p.length ? `${p.filter((b) => tr[String(b)] && !isModel(tr[String(b)])).length}/${p.length}` : ""}</td>
-      <td class="muted">${look ? look.join(", ") : ""}</td>` : "";
+      <td class="muted">${look ? look.join(", ") : ""}</td>
+      <td>${rv && (rv.confidence || {})[gid] != null ? Math.round(100 * rv.confidence[gid]) + "%" : ""}</td>` : "";
     return `<tr class="click" data-g="${gid}"><td>${gid}</td><td>${flags}</td><td>${g.excluded ? g.exclude_reason : ""}</td>
       <td>${on ? VERDICT_TEXT[on.verdict] : ""}</td><td>${bracket}</td><td>${p.length ? `${done}/${p.length}${Object.values(tr).some((t) => t.state === "burst") ? " · burst" : ""}` : ""}</td>
       ${checked}<td>${lab.time_spent_s ? Math.round(lab.time_spent_s) + " s" : ""}</td></tr>`;
   }).join("");
-  const rvHead = S.st.review ? "<th>onset checked</th><th>traces checked</th><th>the model says look at</th>" : "";
-  if (S.st.review) help(`Review of ${S.st.review.model || "the model"}'s answers: ✓ checked, ? still the model's. Click a row to open it. Saved to <code>${S.st.labels_path}</code> after every answer.`);
+  const rvHead = S.st.review ? "<th>onset checked</th><th>traces checked</th><th>the model says look at</th><th>confidence</th>" : "";
+  if (S.st.review) help(`Review of ${S.st.review.model || "the model"}'s answers, the model's least sure grains first: ✓ checked, ? still the model's. Click a row to open it. Saved to <code>${S.st.labels_path}</code> after every answer.`);
   $("#content").innerHTML = `<table><tr><th>grain</th><th>layout</th><th>excluded</th><th>onset</th><th>bracket (frames)</th><th>traces</th>${rvHead}<th>time</th></tr>${rows}</table>`;
   $("#content").onclick = (e) => { const tr = e.target.closest("tr[data-g]"); if (tr) openGrain(tr.dataset.g, "onset"); };
 }

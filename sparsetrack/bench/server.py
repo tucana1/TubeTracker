@@ -155,9 +155,14 @@ class Bench:
         return self.doc["grains"][gid]
 
     def order(self) -> list[str]:
-        """Isolated, included grains first; then other included grains; excluded last."""
+        """Isolated, included grains first; then other included grains; excluded last. A review (a file
+        pre-filled with a model's answers) goes by the model's confidence instead: its least sure grains first."""
+        conf = (self.doc.get("prefill") or {}).get("confidence") or {}
+
         def key(item):
             gid, g = item
+            if conf:
+                return (bool(g.get("excluded")), gid not in conf, conf.get(gid, 1.0), gid)
             return (bool(g.get("excluded")), not g.get("isolated", False), gid)
         return [gid for gid, _ in sorted(self.doc["grains"].items(), key=key)]
 

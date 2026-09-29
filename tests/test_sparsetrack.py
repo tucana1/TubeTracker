@@ -260,7 +260,8 @@ def test_analyze_grain_recovers_synthetic_onset_and_length():
     bins, true = _synthetic_growth()
     meta = {"shifts": [[0.0, 0.0]] * len(bins), "n_bins": len(bins), "frames_per_bin": 300}
     grain = {"id": "g001", "x": 160.0, "y": 160.0, "r": 13.0}
-    res = analyze_grain(Renderer(bins, meta), meta, grain, [], Params(half=100))
+    # a ring-shaped grain whose tube starts on the census circle: the reading itself, not where the exit is
+    res = analyze_grain(Renderer(bins, meta), meta, grain, [], Params(half=100, exit_edge=False))
     assert res["status"] == "emerged_within"
     onset_bin = res["onset_frame"] // 300
     assert abs(onset_bin - 12) <= 2
@@ -269,6 +270,35 @@ def test_analyze_grain_recovers_synthetic_onset_and_length():
     assert np.median(np.abs(est[late] - true[late])) < 2.0
     assert np.all(np.diff(est) >= -1e-9)
 
+
+
+def test_lengths_count_from_the_grains_visible_edge_not_its_census_circle():
+    """A dark grain whose body ends 2 px inside its census radius, where its tube starts: an annotator traces
+    from that edge, so the reported lengths must too (exit_edge), not from the census circle."""
+    from sparsetrack.analyze import exit_edge
+    size, gx, gy, r_true, r_census, n_bins, onset_bin, rate = 320, 160.0, 160.0, 11.0, 13.0, 40, 12, 1.5
+    rng = np.random.default_rng(0)
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    d = np.hypot(xx - gx, yy - gy)
+    grain = 175 - 90 / (1 + np.exp((d - r_true) / 0.7))  # a dark body with a soft edge at 11 px
+    u = np.array([np.cos(np.deg2rad(200.0)), np.sin(np.deg2rad(200.0))])
+    along = (xx - gx) * u[0] + (yy - gy) * u[1] - r_true
+    across = -(xx - gx) * u[1] + (yy - gy) * u[0]
+    bins, true = [], []
+    for t in range(n_bins):
+        L = max(0.0, (t - onset_bin + 1) * rate)
+        true.append(L)
+        cap = np.where(along > 0, 0.5 * erfc((along - L) / (np.sqrt(2) * 1.2)), 0.0) if L > 0 else 0.0
+        bins.append(grain + cap * (18 * np.exp(-across ** 2 / 0.8) - 22 * np.exp(-(np.abs(across) - 1.6) ** 2 / 0.5))
+                    + rng.normal(0, 0.4, grain.shape))
+    bins, true = np.stack(bins).astype(np.float16), np.array(true)
+    assert abs(exit_edge(grain, 159.5 + 0.5, r_census, np.deg2rad(200.0)) - (r_true - r_census)) < 0.6
+    meta = {"shifts": [[0.0, 0.0]] * n_bins, "n_bins": n_bins, "frames_per_bin": 300}
+    g = {"id": "g001", "x": gx, "y": gy, "r": r_census}
+    late = slice(20, n_bins)
+    edge = np.array(analyze_grain(Renderer(bins, meta), meta, g, [], Params(half=100))["length"]["px"])
+    circle = np.array(analyze_grain(Renderer(bins, meta), meta, g, [], Params(half=100, exit_edge=False))["length"]["px"])
+    assert np.median(np.abs(edge[late] - true[late])) < 1.0 < np.median(np.abs(circle[late] - true[late]))
 
 def test_analyze_grain_rejects_a_stub_that_never_grows():
     bins, _ = _synthetic_growth(max_len=3.0)  # a persistent 3 px bump at the rim that never elongates
@@ -541,6 +571,75 @@ def test_flood_keeps_a_slow_start():
     assert fl["emerge"] == 5 and fl["length"][-1] > 25
 
 
+
+
+def _stalled_tube_and_a_passer(from_rival: bool):
+    """A target tube 20 px long by bin 24, then stopped; later another tube grows down past its tip, 2 px away:
+    from a rival grain in the crop, or from outside the crop (no grain in view)."""
+    size, c, gr = 131, 65.0, 10.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
+    arr = np.full((size, size), 200)
+    for k, x in enumerate(range(78, 98)):  # target: 1 px per bin from bin 5, stops at bin 24
+        arr[64:67, x] = 5 + k
+    y0 = 31 if from_rival else 0
+    for y in range(y0, 125):  # the passer, 1 px per bin, down columns 99-101
+        arr[y, 99:102] = min(arr[y, 99], 40 + (y - y0))
+    blocked = np.zeros((size, size), bool)
+    rivals = [(20.0, 100.0, 8.0)] if from_rival else []
+    for cy, cx, r in rivals:
+        blocked |= np.hypot(xx - cx, yy - cy) < r + 2.0
+    return arr, rg, ang, blocked, gr, rivals
+
+
+@pytest.mark.parametrize("from_rival", [True, False])
+def test_competing_flood_does_not_take_over_a_tube_passing_a_stopped_tip(from_rival):
+    from sparsetrack.learned import flood, flood_compete
+    arr, rg, ang, blocked, gr, rivals = _stalled_tube_and_a_passer(from_rival)
+    alone = flood(arr, rg, ang, blocked, gr)
+    joint = flood_compete(arr, rg, ang, blocked, gr, rivals)
+    assert alone["length"][-1] > 50                      # alone, the flood runs down the passing tube
+    assert joint["emerge"] == 5 and abs(joint["length"][-1] - alone["length"][30]) < 1.0  # it stays ~22 px
+    assert joint["length"][30] == pytest.approx(alone["length"][30])
+
+
+def test_competing_flood_keeps_what_the_single_flood_gets_right():
+    from sparsetrack.learned import flood, flood_compete
+    size, c, gr = 131, 65.0, 10.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
+    arr = np.full((size, size), 80)
+    for k, x in enumerate(range(int(c + gr + 3), int(c + gr + 43))):  # our tube, 1 px per bin from bin 5
+        arr[64:67, x] = 5 + k
+    arr[10:120, 95:98] = np.minimum(arr[10:120, 95:98], 2)  # an older foreign tube across it
+    arr[70:72, 100:102] = 30  # a speck of noise near the tube's path, before the tube gets there
+    for fn in (flood, lambda *a: flood_compete(*a, [])):
+        fl = fn(arr, rg, ang, np.zeros((size, size), bool), gr)
+        assert fl["emerge"] == 5 and fl["length"][-1] >= 40 and not fl["tube"][20:40, 95:98].any()
+
+
+def test_flood_length_counts_from_where_the_tube_leaves_the_grain():
+    """The flood starts on material beside the exit and runs round the rim before the tube turns out (movie 2's
+    g066): measured from the exit, the rim detour does not count."""
+    from sparsetrack.learned import HALO, centreline, flood, from_exit
+    size, c, gr = 131, 65.0, 10.0
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
+    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
+    arr = np.full((size, size), 200)
+    band = (rg >= gr + HALO + 0.5) & (rg <= gr + HALO + 2.5)
+    for k, deg in enumerate(range(-60, 1, 3)):  # 21 bins round the rim, from -60 deg to the exit at 0 deg
+        a = np.deg2rad(deg)
+        arr[band & (np.abs(np.angle(np.exp(1j * (ang - a)))) <= np.deg2rad(2.0))] = 5 + k
+    for k, x in enumerate(range(int(c + gr + HALO + 3), int(c + gr + 40))):  # then out along +x, 1 px per bin
+        arr[64:67, x] = np.minimum(arr[64:67, x], 26 + k)
+    fl = flood(arr, rg, ang, np.zeros((size, size), bool), gr)
+    tube, dist = fl["tube"], fl["dist"]
+    tip = np.unravel_index(int(np.argmax(np.where(tube & np.isfinite(dist), dist, -1.0))), dist.shape)
+    line, L = from_exit(centreline(tube, dist, (int(tip[0]), int(tip[1])), c, gr), c, gr, gr + HALO + 4.0)
+    radial = float(np.hypot(tip[0] - c, tip[1] - c)) - gr
+    assert fl["length"][-1] > radial + 8           # the rim detour inflates the flood's own reach
+    assert abs(L - radial) <= 2.0                  # from the exit: the radial tube
+    assert abs(np.hypot(line[0][0] - c, line[0][1] - c) - gr) < 0.01
 
 def test_flood_centreline_follows_a_wide_bent_tube():
     """The flood's reported path (drawn in the gallery, pre-filled for review): a polyline from the rim to the tip

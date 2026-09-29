@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import time
 from pathlib import Path
 
@@ -69,6 +70,21 @@ def trace_body(res: dict, b: int, pred: dict, min_px: float = 2.0) -> dict:
     return {"bin": b, "state": "full", "points": to_length(path, length).round(2).tolist(), "view": "model"}
 
 
+def trace_confidence(px, i: int) -> float:
+    """How likely the model's length at bin ``i`` of its series ``px`` is within tolerance of an annotator's,
+    from the reading's own history: longer tubes, and tubes still growing, are more often right; a reading that
+    has stood still for long is suspect. Fitted on one labelled movie and checked on the other (29 Sep 2026,
+    runs/review_triage: cross-movie AUROC 0.73 ld / 0.83 m2; checking the least confident first reached 79% of
+    traces within tolerance after checking 28% / 41% of them, against 48% / 65% in random order). It orders a
+    review; it does not make checking safe to skip (answers above 0.7 were still only 74-76% right)."""
+    L = np.asarray(px, float)
+    i = min(max(int(i), 0), len(L) - 1)
+    grew = np.flatnonzero(np.diff(L[: i + 1]) > 0.25) if i > 0 else np.array([], int)
+    stall = float(i - (grew[-1] + 1)) if len(grew) else float(i)
+    z = -0.41 - 0.63 * math.log1p(stall) + 0.50 * math.log1p(max(float(L[i]), 0.0))
+    return 1.0 / (1.0 + math.exp(-z))
+
+
 def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=print) -> Path:
     """Write the review labels file ``out`` (and the proposals as made, ``*.model.json``)."""
     from . import __version__
@@ -87,7 +103,7 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
     bench = Bench(cache, building, annotator=model_name)
     bench.save = lambda *a, **k: None  # the answers go through the tool's own code; the file is written once, below
     census, fpb, nb = bench.doc["grains"], bench.fpb, bench.n_bins
-    n_traces, check_first = 0, {}
+    n_traces, check_first, confidence = 0, {}, {}
     for res in pred.get("grains", []):
         g = census.get(res["id"])
         if g is None or g.get("excluded"):
@@ -99,8 +115,13 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
         bench.set_onset(res["id"], body)
         if body["verdict"] not in ("emerged_within", "emerged_at_start"):
             continue
+        px = res.get("length", {}).get("px") or []
         for b in trace_bins(body.get("first_visible_bin") or 0, nb):
             bench.set_trace(res["id"], trace_body(res, b, pred))
+            if px:
+                conf = round(trace_confidence(px, b), 3)
+                bench.doc["labels"][res["id"]]["traces"][str(b)]["model_confidence"] = conf
+                confidence[res["id"]] = min(confidence.get(res["id"], 1.0), conf)
             n_traces += 1
     doc = bench.doc
     for lab in doc["labels"].values():
@@ -110,7 +131,7 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
         lab.pop("time_spent_s", None)
     info = {"source": source, "field": str(cache), "method": pred.get("method"), "model": model_name,
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "grains": len(doc["labels"]), "traces": n_traces,
-            "check_first": check_first}
+            "check_first": check_first, "confidence": confidence}
     doc["prefill"] = info
     doc["updated"] = info["created"]
     out.write_text(json.dumps(doc, indent=1))

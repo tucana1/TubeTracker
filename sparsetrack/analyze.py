@@ -106,6 +106,9 @@ class Params:
     cand_tips: int = 4
     cand_nms_px: float = 10.0
     cand_branch_tips: int = 6    # + this many skeleton branch ends
+    cand_contact_tips: bool = True  # + each rim contact's geodesically farthest point (a tube curling back)
+    path_extend_px: float = 0.0   # carry each path's far end on along the change ridge (faint tips), up to this
+    drift_smooth: bool = False    # an implausible drift track gets a second chance as its 9-bin running median
     nest_px: float = 5.0         # a candidate within this of a longer one all along is the same tube
     ridge_px: float = 5.0        # tube-likeness: end-state change on the path vs this far beside it
     ridge_weight: float = 1.0    # score *= (1 - w) + w * fraction of path points on a ridge
@@ -129,6 +132,12 @@ class Params:
     flood_start_band: float = 4.0  # px beyond the rim halo where a tube may start
     flood_tip_px: float = 0.0    # subtracted from the flood's reach
     flood_lookback: float = 0.25  # walk the onset back while P at the tube's exit stays above this (0 = off)
+    flood_compete: bool = False  # flood every tube in view at once: new material goes to the tube growing there
+    flood_fallback: bool = False  # hybrid: where the flood finds no tube but the change reader saw one, keep it (no gain)
+    flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
+    exit_edge: bool = True       # change reader: lengths from the grain's visible edge along the exit, where an
+                                 # annotator starts a trace, not from the census circle
+    exit_edge_onset: bool = False  # ...and its onset stub there too (ld: fixes 2 onsets, loses 3: off)
     settle: bool = True          # grains still arriving in the census bins are read from when they settle
     settle_bins: int = 24
     grain_min_rim: float = 1.5   # no rim at all in the early bins: not a grain (passing debris)
@@ -169,6 +178,23 @@ def local_shifts(crops: np.ndarray, centre: float, radius: float, pad: float, re
     return np.where(bad[:, None], med, raw)
 
 
+def exit_edge(img: np.ndarray, centre: float, r: float, theta: float, wedge_deg: float = 10.0, n_ang: int = 9,
+              step: float = 0.25) -> float:
+    """The grain's visible edge along a tube's exit direction ``theta`` (radians, image axes), as an offset from
+    its census radius ``r``: where the before image ``img`` (grain-centred at (``centre``, ``centre``)) changes
+    most steeply along the radius, 7 px inside to 5 px outside the census circle, over the median profile of a
+    +/-10 degree wedge. Grains are not perfect discs, and an annotator starts a trace where the tube leaves this
+    edge: over the benchmark grains it tracks their exit clicks (correlation 0.80 on ld, 0.62 on m2)."""
+    rads = np.arange(0.0, r + 16.0, step)
+    angs = theta + np.deg2rad(np.linspace(-wedge_deg, wedge_deg, n_ang))
+    xs = (centre + rads[None] * np.cos(angs)[:, None]).astype(np.float32)
+    ys = (centre + rads[None] * np.sin(angs)[:, None]).astype(np.float32)
+    prof = np.median(cv2.remap(np.nan_to_num(img).astype(np.float32), xs, ys, cv2.INTER_LINEAR), axis=0)
+    g = np.gradient(np.convolve(prof, np.ones(5) / 5, mode="same"), rads)
+    win = (rads > r - 7.0) & (rads < r + 5.0)
+    return float(rads[win][np.argmax(np.abs(g[win]))] - r)
+
+
 def plausible_drift(ls: np.ndarray, max_step: float = 10.0) -> bool:
     """Is a grain's tracked drift physical? A real drift (even a sudden push) moves a few px per
     bin and mostly one way; locking onto a neighbour, a clump or the grain's own growing tube
@@ -176,6 +202,20 @@ def plausible_drift(ls: np.ndarray, max_step: float = 10.0) -> bool:
     steps = np.hypot(*np.diff(ls, axis=0).T) if len(ls) > 1 else np.zeros(1)
     reach = float(np.hypot(*ls.T).max())
     return not (steps.max() > max_step or (steps > 2).sum() > 10 or steps.sum() > 4 * reach + 30)
+
+
+def checked_drift(ls: np.ndarray, p: "Params") -> tuple[np.ndarray, str | None]:
+    """A grain's tracked drift after the plausibility check: as tracked; else, with ``p.drift_smooth``, its
+    9-bin running median if that is plausible (registration jitter on a real drift); else no drift at all.
+    Returns the drift and a flag ("drift_smoothed", "drift_rejected" or None)."""
+    if not p.drift_check or plausible_drift(ls):
+        return ls, None
+    if p.drift_smooth:
+        from scipy.ndimage import median_filter
+        sm = median_filter(ls, size=(9, 1), mode="nearest")
+        if plausible_drift(sm):
+            return sm, "drift_smoothed"
+    return np.zeros_like(ls), "drift_rejected"
 
 
 def _geodesic_far(mask: np.ndarray, seeds: np.ndarray) -> tuple[tuple[int, int], np.ndarray]:
@@ -256,6 +296,33 @@ def _cheapest_path(cost: np.ndarray, mask: np.ndarray, seeds: np.ndarray, target
     while prev[path[-1]][0] >= 0:
         path.append(tuple(prev[path[-1]]))
     return np.array(path[::-1], np.float64)
+
+
+def extend_along_ridge(path: np.ndarray, change: np.ndarray, floor: float, blocked: np.ndarray, max_px: float,
+                       cone_deg: float = 35.0) -> np.ndarray:
+    """A path's far end carried on along the ridge of the end-state change map, 1 px at a time within a
+    +/-``cone_deg`` cone of its heading, while the ridge stays above ``floor`` (half the region threshold):
+    a tube's faint tip falls below the threshold that cut its change region, and the path stopped there.
+    The growth front still decides how far the tube got."""
+    h, w = change.shape
+    pts = [np.asarray(q, float) for q in path]
+    back = next((q for q in pts[-2::-1] if np.hypot(*(pts[-1] - q)) >= 4.0), pts[0])
+    d = (pts[-1] - back) / max(float(np.hypot(*(pts[-1] - back))), 1e-6)
+    offs = np.deg2rad(np.linspace(-cone_deg, cone_deg, 15))
+    added = 0.0
+    while added < max_px:
+        cand = [pts[-1] + np.array([d[0] * np.cos(a) - d[1] * np.sin(a), d[0] * np.sin(a) + d[1] * np.cos(a)])
+                for a in offs]
+        vals = [change[int(round(c[1])), int(round(c[0]))] if 0 <= c[0] < w - 1 and 0 <= c[1] < h - 1
+                and not blocked[int(round(c[1])), int(round(c[0]))] else -1.0 for c in cand]
+        k = int(np.argmax(vals))
+        if vals[k] < floor:
+            break
+        d = 0.7 * d + 0.3 * (cand[k] - pts[-1])  # a smooth heading
+        d /= max(float(np.hypot(*d)), 1e-6)
+        pts.append(cand[k])
+        added += 1.0
+    return np.array(pts)
 
 
 def _resample(path_xy: np.ndarray, step: float) -> tuple[np.ndarray, np.ndarray]:
@@ -557,6 +624,13 @@ def candidate_paths(comp: np.ndarray, ring: np.ndarray, cost: np.ndarray, gr: fl
             tips.append((y, x))
     n_c, c_lab = cv2.connectedComponents((ring & comp).astype(np.uint8), connectivity=8)
     contacts = [c_lab == c for c in range(1, n_c) if (c_lab == c).sum() >= 2]
+    if p.cand_contact_tips and len(contacts) > 1:
+        # measured from the whole rim, the tip of a tube that curls back towards its grain is near and never a
+        # candidate: measured from each contact it is that contact's farthest point
+        for c in sorted(contacts, key=lambda c: -int(c.sum()))[:3]:
+            y, x = _geodesic_far(comp, c)[0]
+            if all(math.hypot(y - ty, x - tx) >= p.cand_nms_px for ty, tx in tips):
+                tips.append((int(y), int(x)))
     out, seen = [], []
     for tip in tips:
         base = _cheapest_path(cost, comp, ring, tip)
@@ -594,6 +668,8 @@ def read_path(ctx: dict, path_yx: np.ndarray, p: "Params") -> dict | None:
     v = path[0] - centre
     v = v / (np.linalg.norm(v) + 1e-9)
     path = np.vstack([centre + v * gr, path])
+    if p.path_extend_px > 0 and len(path) >= 3:
+        path = extend_along_ridge(path, ctx["change"], 0.5 * ctx["thr"], ctx["blocked"], p.path_extend_px)
     pts, ss = _resample(path, p.step)
     if len(pts) < 4:
         return None
@@ -739,7 +815,7 @@ def _pad_front(res: dict, frames: list, b0: int) -> dict:
 
 
 def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict], p: Params,
-                  _settled: bool = False) -> dict:
+                  _settled: bool = False, route: list | None = None) -> dict:
     fpb, rs = int(meta["frames_per_bin"]), int(meta.get("ref_start", 0))
     n_bins = int(meta["n_bins"]) - rs  # bins before the reference (settling) are not observed
     gx, gy, gr = grain["x"], grain["y"], grain["r"]
@@ -772,9 +848,8 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
             res["flags"].append(f"settled_from_bin:{b0}")
             return _pad_front(res, frames, b0)
     ls = local_shifts(crops, centre, gr, p.reg_pad, p.ref_bins)
-    drift_rejected = p.drift_check and not plausible_drift(ls)
-    if drift_rejected:  # the track locked onto a neighbour or the grain's own tube, not the grain
-        ls = np.zeros_like(ls)
+    ls, drift_flag = checked_drift(ls, p)  # a track that locked onto a neighbour or the grain's own tube is not used
+    drift_rejected = drift_flag == "drift_rejected"
     reg = np.stack([cv2.warpAffine(c, np.float32([[1, 0, -dx], [0, 1, -dy]]), (2 * half, 2 * half),
                                    flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
                     for c, (dx, dy) in zip(crops, ls)])
@@ -803,7 +878,7 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     ring = (rg >= gr - 1.0) & (rg <= gr + 4.0)
     attached = [(stats[l, cv2.CC_STAT_AREA], l) for l in range(1, n_lab)
                 if stats[l, cv2.CC_STAT_AREA] >= p.min_component_px and np.any(ring & (lab == l))]
-    result = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": ["drift_rejected"] if drift_rejected else [],
+    result = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": [drift_flag] if drift_flag else [],
               "map_threshold": round(thr, 2), "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
     if not attached:
@@ -838,7 +913,19 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
            "centre": centre, "gr": gr, "rg": rg, "blocked": blocked, "tube_mask": tube_mask, "diffs": diffs,
            "signed": (reg - early[None]).astype(np.float32), "n_bins": n_bins, "thr": thr, "comp": comp,
            "change": change}
-    if p.candidates:
+    if route is not None:
+        # a centreline chosen elsewhere (the flood's: which tube is the grain's), read here from the rim out;
+        # reference (x, y) points -> crop (y, x), densified to ~1 px and cut where it leaves the crop
+        q = np.array([[y - gy + centre, x - gx + centre] for x, y in route], float)
+        seg = np.hypot(*np.diff(q, axis=0).T) if len(q) > 1 else np.zeros(0)
+        dense = [q[0]] + [q[i] + (q[i + 1] - q[i]) * f for i in range(len(seg))
+                          for f in np.linspace(0, 1, max(2, int(np.ceil(seg[i])) + 1))[1:]] if len(q) > 1 else list(q)
+        dense = np.array(dense)
+        out = np.nonzero((dense < 2).any(axis=1) | (dense > 2 * half - 3).any(axis=1))[0]
+        dense = dense[:out[0]] if len(out) else dense
+        read = read_path(ctx, dense, p) if len(dense) >= 3 else None
+        result["flags"].append("route_given")
+    elif p.candidates:
         cands = []
         for path_yx in candidate_paths(comp, ring, cost, gr, centre, p):
             read = read_path(ctx, path_yx, p)
@@ -914,13 +1001,21 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     above = np.nonzero(length >= p.onset_px)[0]
     front_onset = int(above[0]) if len(above) else None
     end_angle = math.degrees(math.atan2(pts[0][1] - centre, pts[0][0] - centre))
+    u_exit = (pts[0] - centre) / max(float(np.hypot(*(pts[0] - centre))), 1e-6)
+    e_exit = (float(np.clip(exit_edge(early, centre, gr, math.atan2(u_exit[1], u_exit[0])), -(gr - 1.0), ss[-1] - 1.0))
+              if p.exit_edge else 0.0)
+    stub_pts = pts
+    if p.exit_edge_onset and e_exit < 0:  # the tube leaves the body inside the census circle: watch it there
+        stub_pts = np.vstack([pts[0][None] + np.arange(e_exit, 0.0, p.step)[:, None] * u_exit[None], pts])
+    elif p.exit_edge_onset and e_exit > 0:
+        stub_pts = pts[min(int(np.searchsorted(ss, e_exit)), len(pts) - 2):]
     if p.onset_source == "matched":
         signed = (reg - early[None]).astype(np.float32)
-        z, mf_info = matched_stub_signal(signed, (late - early), pts, centre, p,
+        z, mf_info = matched_stub_signal(signed, (late - early), stub_pts, centre, p,
                                          theta=theta if p.mf_follow_rotation is True and p.rotate else None)
         if p.mf_follow_rotation == "both" and p.rotate and np.max(np.abs(theta)) >= 5:
             # a rotating grain's tube emerged elsewhere on the rim: also look along the rotation track
-            z_rot, _ = matched_stub_signal(signed, (late - early), pts, centre, p, theta=theta)
+            z_rot, _ = matched_stub_signal(signed, (late - early), stub_pts, centre, p, theta=theta)
             z = np.maximum(z, z_rot)
         result["matched_filter"] = mf_info
         wedge, exit_track = z, np.full(n_bins, end_angle)
@@ -977,12 +1072,22 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         for t in np.nonzero(grown)[0]:
             tips[t] = rotated(pts[max(int(front[t]) - 1 - back, 0)], theta[t])
     to_ref = lambda xy: [round(float(xy[0] - centre + gx), 2), round(float(xy[1] - centre + gy), 2)]
+    drawn = list(pts[:: max(1, int(2 / p.step))]) + [pts[-1]]
+    path_len = float(ss[-1])
+    if p.exit_edge and (length > 0).any():
+        # measure from where the tube leaves the grain's visible edge; the path starts there too
+        u, e = u_exit, e_exit
+        length = np.where(length > 0, np.maximum(length - e, 0.0), 0.0)
+        start = np.asarray(pts[0], float) + e * u if e < 0 else pts[min(int(np.searchsorted(ss, e)), len(pts) - 1)]
+        drawn = [start] + [q for q, sq in zip(drawn, ss[:: max(1, int(2 / p.step))].tolist() + [ss[-1]]) if sq > e]
+        path_len -= e
+        result["exit_edge_px"] = round(e, 2)
     result.update(status=status, onset_frame=onset, onset_interval=interval,
                   length={"frames": frames, "px": [round(float(v), 2) for v in length]},
                   tip={"frames": frames, "xy": [to_ref(t) for t in tips]},
-                  path=[to_ref(q) for q in pts[:: max(1, int(2 / p.step))]] + [to_ref(pts[-1])],
-                  exit_xy=to_ref(pts[0]), final_length_px=round(float(length[-1]), 2),
-                  path_length_px=round(float(ss[-1]), 2))
+                  path=[to_ref(q) for q in drawn],
+                  exit_xy=to_ref(drawn[0]), final_length_px=round(float(length[-1]), 2),
+                  path_length_px=round(path_len, 2))
     result["_diag"] = (late, change, tube_mask, pts, kymo, (front, tau), centre)
     return result
 
@@ -1085,11 +1190,15 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         if p.reader == "flood" or (p.reader == "hybrid" and (crowded or noisy)):
             from . import learned
             fl = learned.read_grain(renderer, prob, meta, g, others, p)
-            if res is not None and not crowded:
-                # a clean rim still gives the better onset: keep the change reader's germination call,
-                # and the flood's lengths from that onset on
-                fl = learned.with_onset(fl, res)
-            res = fl
+            if (p.reader == "hybrid" and p.flood_fallback and res is not None and res["status"] != "no_emergence_by_end"
+                    and fl["status"] == "no_emergence_by_end"):
+                res["flags"].append("flood_found_no_tube")  # a gap in the map at its base, say: keep what grew
+            else:
+                if res is not None and not crowded:
+                    # a clean rim still gives the better onset: keep the change reader's germination call,
+                    # and the flood's lengths from that onset on
+                    fl = learned.with_onset(fl, res)
+                res = fl
         cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)
         results.append(res)
