@@ -8,19 +8,24 @@ grain that bursts, is carried off or leaves the field is read long after it is g
 ``follow`` tracks one grain by its own look, bin by bin, with a bank of templates of the grain:
 
 - each bin, the normalised cross-correlation (NCC) of every template in the bank with the grain's
-  neighbourhood (a disc a little larger than the grain, high-passed) is taken within ``step_px`` of the
-  last position (more after missed bins), never on another census grain's disc;
-- the best match is accepted when it scores at least ``min_score``; otherwise the bin is missed and the
-  grain coasts at its last position (a passing blob, a tube crossing the grain, a focus flicker);
+  neighbourhood (its disc and rim, high-passed) is taken within ``step_px`` of the last position (more after
+  missed bins), never on the disc of another census grain that is still at its place;
+- the best match is accepted when it scores at least ``min_score`` (``reacquire_score`` after missed bins);
+  otherwise the bin is missed and the grain coasts at its last position (a passing blob, a tube crossing the
+  grain, a focus flicker);
 - the bank learns the grain's changing look: when an accepted match scores below ``learn_below``, the
   grain's current appearance (at the accepted position) joins the bank, so a grain that darkens, empties
   or gets its own tube is still recognised; the reference template always stays in the bank;
-- after more than ``max_gap`` missed bins in a row the grain is lost, from the first of them; a grain whose
-  disc leaves the movie frame is lost too.
+- after more than ``max_gap`` missed bins in a row the grain is lost, from the first of them (a burst, a grain
+  swept off faster than the search reaches); a grain whose centre leaves the movie frame is lost too.
 
 Missed bins inside the track are filled by linear interpolation between accepted neighbours, and single-bin
-excursions are removed with a running median. The result is a coarse (0.25-px) track; ``analyze`` refines
-it to the phase-correlation precision it used before with a correlation window centred on this track.
+excursions are removed with a running median. ``analyze.followed_drift`` keeps the phase-correlation track
+wherever it stays within a few px of this one (so readings do not change there) and uses this one elsewhere.
+
+Linking per-bin census detections (Hough circles, then laptrack) was tried first (29 Sep 2026): the detector
+misses a grain for tens of bins once its look changes (m2 g054 once its tube grew) and the links jump onto
+neighbours in crowds (m2 g048), so the grain's own look is followed instead.
 """
 
 from __future__ import annotations
