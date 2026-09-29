@@ -5,6 +5,14 @@ per grain, detect when a tube emerges and measure the tube's length over time.
 
 ## For the lab: analyse a movie, then check it
 
+**Setup, once per Mac** (Python 3.10-3.14 and Homebrew):
+
+```bash
+brew install ffmpeg                    # reads the movies' keyframes
+python3 -m venv .venv
+.venv/bin/pip install -e ".[cnn]"      # SparseTrack and its tube network (torch)
+```
+
 1. **Analyse.** Double-click `Analyze_Movie_SparseTrack.command` and choose the movie
    (or `.venv/bin/python -m sparsetrack run MOVIE`). The first run prepares the movie
    (a few minutes); the analysis takes 5-10 minutes on a laptop. A review gallery opens:
