@@ -234,39 +234,8 @@ def from_exit(line: list[tuple[float, float]], centre: float, gr: float, zone: f
     return cut, float(np.sum(np.hypot(*np.diff(arr, axis=0).T))) if len(arr) > 1 else 0.0
 
 
-def _cone(tube: np.ndarray, dist: np.ndarray, reach: float, half_deg: float) -> tuple[np.ndarray, np.ndarray] | None:
-    """Where a stalled tube may continue: pixels within ``reach`` px of its tip (the farthest tube pixel from the
-    rim) and within +/-``half_deg`` of its heading (from the tube 6-12 px behind the tip). Returns the cone mask
-    and the tip pixel as the source mask; None if the tube is too short to have a heading."""
-    fin = tube & np.isfinite(dist)
-    if not fin.any():
-        return None
-    ty, tx = np.unravel_index(int(np.argmax(np.where(fin, dist, -1.0))), dist.shape)
-    dmax = dist[ty, tx]
-    back = fin & (dist >= dmax - 12.0) & (dist <= dmax - 6.0)
-    if not back.any():
-        return None
-    by, bx = (float(v.mean()) for v in np.nonzero(back))
-    hy, hx = ty - by, tx - bx
-    norm = math.hypot(hy, hx)
-    if norm < 1e-6:
-        return None
-    r = int(math.ceil(reach))
-    y0, y1, x0, x1 = max(ty - r, 0), min(ty + r + 1, dist.shape[0]), max(tx - r, 0), min(tx + r + 1, dist.shape[1])
-    yy, xx = np.mgrid[y0:y1, x0:x1]
-    dy, dx = yy - ty, xx - tx
-    d = np.hypot(dy, dx)
-    cos = (dy * hy + dx * hx) / (np.maximum(d, 1e-6) * norm)
-    mask = np.zeros(dist.shape, bool)
-    mask[y0:y1, x0:x1] = (d > 0) & (d <= reach) & (cos >= math.cos(math.radians(half_deg)))
-    src = np.zeros(dist.shape, bool)
-    src[ty, tx] = True
-    return mask, src
-
-
 def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray, gr: float, recent: int = 12,
-          bridge: int = 4, start_band: float = 4.0, min_len: float = 8.0, give_up: int = 40,
-          cone_px: float = 0.0, cone_deg: float = 20.0, cone_after: int = 3) -> dict:
+          bridge: int = 4, start_band: float = 4.0, min_len: float = 8.0, give_up: int = 40) -> dict:
     """Grow one grain's tube through an arrival map (see the module docstring).
 
     Returns the tube mask, each tube pixel's arrival bin and rim distance, the emergence bin
@@ -310,20 +279,13 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
             else:
                 tip = tube & (t_in >= t_in.max() - recent)
                 seeds = cv2.dilate(tip.astype(np.uint8), ker).astype(bool)
-                cone = _cone(tube, dist, cone_px, cone_deg) if cone_px > 0 and b - grew >= cone_after else None
                 for l in range(1, nl):
                     c = lab == l
                     if (c & seeds).any():
                         _extend_dist(dist, c, tip, bridge)
-                    elif cone is not None and (c & cone[0]).any():
-                        # a stalled tube picked up past a gap (a faint stretch, a wider crossing tube): straight
-                        # ahead of its tip only
-                        _extend_dist(dist, c, cone[1], int(math.ceil(cone_px)))
-                    else:
-                        continue
-                    tube |= c
-                    t_in[c] = b
-                    grew = b
+                        tube |= c
+                        t_in[c] = b
+                        grew = b
         fin = tube & np.isfinite(dist)
         length[b] = float(dist[fin].max()) if fin.any() else 0.0
     return {"tube": tube, "t_in": t_in, "dist": dist, "emerge": emerge, "length": np.maximum.accumulate(length)}
@@ -473,8 +435,7 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
                   if -o["r"] < o["x"] - gx + centre < 2 * half + o["r"] and -o["r"] < o["y"] - gy + centre < 2 * half + o["r"]]
         fl = flood_compete(arr, rg, ang, blocked, gr, rivals, p.flood_recent, p.flood_bridge, p.flood_start_band)
     else:
-        fl = flood(arr, rg, ang, blocked, gr, p.flood_recent, p.flood_bridge, p.flood_start_band,
-                   cone_px=getattr(p, "flood_cone_px", 0.0))
+        fl = flood(arr, rg, ang, blocked, gr, p.flood_recent, p.flood_bridge, p.flood_start_band)
     length = np.maximum(fl["length"] - p.flood_tip_px, 0.0) * (fl["length"] > 0)
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
     to_ref = lambda y, x: [round(float(x - centre + gx), 2), round(float(y - centre + gy), 2)]

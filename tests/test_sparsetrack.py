@@ -654,24 +654,6 @@ def test_flood_length_of_a_tube_curling_back_to_its_grain_counts_from_where_it_f
     assert np.allclose(cut[0], (c, c + gr))                              # on the exit's ray, not near the curl's end
 
 
-def test_a_stalled_flood_picks_its_tube_up_again_straight_ahead_only():
-    """The map misses an 8 px stretch of a tube (faint, or a wider crossing tube): the flood stops there, unless it
-    may continue straight ahead of its tip (cone); a piece off to the side is still not taken."""
-    from sparsetrack.learned import flood
-    size, c, gr = 151, 75.0, 10.0
-    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
-    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
-    arr = np.full((size, size), 200)
-    for k, x in enumerate(range(int(c + gr + 3), int(c + gr + 63))):  # 1 px per bin along +x from bin 5
-        if not 30 <= k < 38:                                            # ...but never seen for 8 px
-            arr[74:77, x] = 5 + k
-    arr[40:56, 100:103] = 60  # a piece beside the stalled tip (off its heading), arriving while it waits
-    alone = flood(arr, rg, ang, np.zeros((size, size), bool), gr)
-    ahead = flood(arr, rg, ang, np.zeros((size, size), bool), gr, cone_px=12.0)
-    assert alone["length"][-1] < 36                  # stopped at the gap
-    assert ahead["length"][-1] > 60                  # picked up past it
-    assert not ahead["tube"][40:56, 100:103].any()   # the piece beside it is not taken
-
 def test_flood_centreline_follows_a_wide_bent_tube():
     """The flood's reported path (drawn in the gallery, pre-filled for review): a polyline from the rim to the tip
     along the tube, as long as the length read, not the tube's pixels sorted by rim distance (a zig-zag)."""

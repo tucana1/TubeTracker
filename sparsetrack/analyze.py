@@ -134,7 +134,6 @@ class Params:
     flood_compete: bool = False  # flood every tube in view at once: new material goes to the tube growing there
     flood_fallback: bool = False  # hybrid: where the flood finds no tube but the change reader saw one, keep it (no gain)
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
-    flood_cone_px: float = 0.0    # a stalled flood may pick its tube up again this far straight ahead (gaps, crossings)
     exit_edge: bool = True       # change reader: lengths from the grain's visible edge along the exit, where an
                                  # annotator starts a trace, not from the census circle
     exit_edge_onset: bool = False  # ...and its onset stub there too (ld: fixes 2 onsets, loses 3: off)
