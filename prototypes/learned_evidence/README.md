@@ -1,5 +1,14 @@
 # Learned evidence for SparseTrack (experiment)
 
+> **29 Sep 2026, on the lab's movies (Part A, step 2, the dev test):** with its own network trained on the dev
+> movie's field, fused thick-tube evidence and continuity (the default), the per-bin decoder read **40/100** ld
+> lengths within tolerance and **8/28** onsets (32/100 without fusion and continuity); SparseTrack 0.6.0 reads
+> **69/104** and **15/26**. On SparseTrack's own maps it read 30/100; anchored on each grain's latest human trace
+> (trace once), 31/76 of the earlier traces against SparseTrack's 46/76. The pipeline stays here as a research
+> record; its launchers moved to `launchers/`, and the lab's review loop now lives in `sparsetrack review`
+> (the decoder-free part of this folder's prefill and export). See docs/status-2026-09-29.md.
+
+
 **Running it on the lab's own movies:** `HANDOVER.md` gives the steps in order (merge, adapt to the dev movie, freeze,
 score movie 2 once) and the rules that keep movie 2 a held-out test.
 
@@ -17,7 +26,7 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 
 ## For the lab: analyse a new movie (prototype)
 
-1. Double-click `Analyze_Movie_Learned.command` in the repository folder and choose the movie.
+1. Double-click `launchers/Analyze_Movie_Learned.command` in the repository folder and choose the movie.
    - It prepares the movie the first time, which takes a few minutes. The cache is the same one SparseTrack uses.
    - It then runs three analyses, taking 15–25 minutes on a laptop:
      - SparseTrack as it is;
@@ -31,7 +40,7 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
    - `per_grain.csv`: per grain and per analysis, the status, onset interval and final length;
    - `perbin/population.png`: the germination curve with T50;
    - `perbin/growth_curves.png`.
-4. To check and correct them, double-click `Review_Movie_Learned.command` and choose the same movie.
+4. To check and correct them, double-click `launchers/Review_Movie_Learned.command` and choose the same movie.
    - Your labelling tool opens with the model's answers already filled in: an onset bracket and traced tubes for
      every grain. Confirm or fix each grain as you would label it.
    - Press Ctrl-C in the window when you stop. `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`
@@ -48,7 +57,7 @@ the probability that tube has already been built there, plus a tip heatmap. Noth
 
 For physical units, run the pipeline command below with `--um-per-px` and `--s-per-frame`.
 
-**Once, after the dev labels are done:** double-click `Adapt_Learned_To_Dev_Movie.command` (about 2.5 hours the first
+**Once, after the dev labels are done:** double-click `launchers/Adapt_Learned_To_Dev_Movie.command` (about 2.5 hours the first
 time; it can be stopped and started again). It runs the dev test on your labels, then calibrates the decoder and
 fine-tunes the network on your traces, keeping each only if its check says so. Last, it checks how well one traced
 tube per grain gives the rest of your traces ("trace once", below). `runs/learned_evidence/SUMMARY.md` then
@@ -109,7 +118,7 @@ take the dev test's thick-tube cache instead of building their own.
 
 **Only the per-bin decoder.** `--only-perbin` skips the two comparison runs: the same per-bin results, review gallery
 and curves (identical on `sample_movie.avi`, 37 of 37 grains), in 160 s instead of 355 s once the probability cache
-exists. Use it once the dev test has shown the per-bin decoder is the one to use. In `Analyze_Movie_Learned.command`,
+exists. Use it once the dev test has shown the per-bin decoder is the one to use. In `launchers/Analyze_Movie_Learned.command`,
 set `ONLY_PERBIN=1` at the top.
 
 **Any movie, no labels.** Leave out `--labels` to run all three on a new movie. The pipeline then writes each run's
@@ -160,7 +169,7 @@ evidence looks at tube ends. `calibrate.py` fits that one number on the `ld` tra
 - The check reads each third of the grains with the offset the other two thirds picked.
 - It writes `decoder.json` only if the 95% interval for the gain in lengths lies above zero and onsets are no worse.
   Picking the best of ten on the same traces flatters small gains, hence the stricter rule.
-- `pipeline.py --decoder` uses it, and `finetune.py` and `Analyze_Movie_Learned.command` pick it up by themselves.
+- `pipeline.py --decoder` uses it, and `finetune.py` and `launchers/Analyze_Movie_Learned.command` pick it up by themselves.
 - Fit it on a model that was not tuned on the same traces. It refuses a model fine-tuned on them.
 - It also tries calling germination at another length than 2 px (1–8 px), judged on onsets alone with the same kind
   of check. Your "first visible" may come at a different length. On synthetic movies this was never adopted.
@@ -188,7 +197,7 @@ traces and checks whether that helps before anything uses the result:
 - **What you get.** `report.txt` gives both models' scores and the paired difference.
   - The final model (every trace) is written as `unet_ft.pt` only if the check says it reads more right than the
     starting model. Otherwise it is written as `unet_ft_not_adopted.pt`.
-  - `Analyze_Movie_Learned.command` uses `unet_ft.pt` when it exists.
+  - `launchers/Analyze_Movie_Learned.command` uses `unet_ft.pt` when it exists.
 - It refuses any labels file with `m2` in its name.
 
 **Movie 2 stays held out.**

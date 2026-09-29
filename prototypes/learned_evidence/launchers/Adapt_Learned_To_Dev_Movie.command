@@ -7,7 +7,7 @@
 # before, it offers to switch back; the choice is kept for later runs and Analyze_Movie_Learned.command.
 # At the end runs/learned_evidence/SUMMARY.md opens: what each step found, what Analyze_Movie_Learned.command now
 # uses, and the one command that scores movie 2, once.
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/../../.." || exit 1  # the repository folder
 [ -x .venv/bin/python ] || { echo "No .venv here. In a separate worktree, link it: ln -s ../TubeTracker/.venv .venv"; read; exit 1; }
 .venv/bin/python -c "import torch" 2>/dev/null || { echo "torch is needed once: .venv/bin/pip install torch==2.13.0"; read; exit 1; }
 CACHE="runs/sparsetrack/ld"

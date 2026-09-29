@@ -8,7 +8,7 @@
 # The per-bin decoder's end offset: as calibrated on your dev movie's traces when that was adopted
 # (runs/learned_evidence/ld_cal/decoder.json), else the default. The reading: fused evidence with continuity, unless
 # adapting chose the plain one (runs/learned_evidence/reading.json).
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/../../.." || exit 1  # the repository folder
 ONLY_PERBIN=0  # 1: only the per-bin decoder (about twice as fast), once the dev test has shown it is the one to use
 MOVIE=$(osascript -e 'POSIX path of (choose file with prompt "Choose a pollen movie to analyse")' 2>/dev/null)
 [ -z "$MOVIE" ] && { echo "No movie chosen."; exit 0; }

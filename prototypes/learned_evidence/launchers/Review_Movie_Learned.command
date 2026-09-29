@@ -4,7 +4,7 @@
 # answers are saved as you go. Press Ctrl-C in this window when you stop: the reviewed results are then
 # written to runs/learned_evidence/<movie name>/ (reviewed_grains.csv, reviewed_traces.csv, population.png).
 # Run it again to carry on where you left off; answers you have not checked stay the model's.
-cd "$(dirname "$0")" || exit 1
+cd "$(dirname "$0")/../../.." || exit 1  # the repository folder
 MOVIE=$(osascript -e 'POSIX path of (choose file with prompt "Choose the movie to review")' 2>/dev/null)
 [ -z "$MOVIE" ] && { echo "No movie chosen."; exit 0; }
 NAME=$(.venv/bin/python -c 'import re, sys; from pathlib import Path; print(re.sub(r"[^A-Za-z0-9_.-]+", "_", Path(sys.argv[1]).stem).strip("_."))' "$MOVIE")

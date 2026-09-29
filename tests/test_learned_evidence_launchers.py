@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
+HERE = Path("prototypes/learned_evidence/launchers")  # where the launchers live, relative to the repository
 pytestmark = pytest.mark.skipif(shutil.which("zsh") is None, reason="the launchers are zsh scripts")
 
 FAKE_PYTHON = """#!/bin/bash
@@ -37,8 +38,9 @@ def _exe(path: Path, text: str) -> None:
 
 @pytest.fixture
 def lab(tmp_path):
+    (tmp_path / HERE).mkdir(parents=True)
     for name in ("Adapt_Learned_To_Dev_Movie.command", "Analyze_Movie_Learned.command"):
-        shutil.copy(REPO / name, tmp_path / name)
+        shutil.copy(REPO / HERE / name, tmp_path / HERE / name)
     (tmp_path / ".venv" / "bin").mkdir(parents=True)
     _exe(tmp_path / ".venv" / "bin" / "python", FAKE_PYTHON)
     (tmp_path / "bin").mkdir()
@@ -59,7 +61,7 @@ def _run(lab: Path, script: str, answer: str = "", first_summary: str = "") -> l
     import sys
     env = {**os.environ, "PATH": f"{lab / 'bin'}:{os.environ['PATH']}", "CALLS": str(lab / "calls.txt"),
            "FIRST_SUMMARY": first_summary, "REAL_PYTHON": sys.executable}
-    subprocess.run(["zsh", script], cwd=lab, input=answer, text=True, env=env, check=True, capture_output=True,
+    subprocess.run(["zsh", str(HERE / script)], cwd=lab, input=answer, text=True, env=env, check=True, capture_output=True,
                    timeout=120)
     return [c for c in (lab / "calls.txt").read_text().splitlines() if c.startswith("-m ")]
 

@@ -1,5 +1,14 @@
 # Handover
 
+> **29 Sep 2026, on the lab's movies (Part A, step 2, the dev test):** with its own network trained on the dev
+> movie's field, fused thick-tube evidence and continuity (the default), the per-bin decoder read **40/100** ld
+> lengths within tolerance and **8/28** onsets (32/100 without fusion and continuity); SparseTrack 0.6.0 reads
+> **69/104** and **15/26**. On SparseTrack's own maps it read 30/100; anchored on each grain's latest human trace
+> (trace once), 31/76 of the earlier traces against SparseTrack's 46/76. The pipeline stays here as a research
+> record; its launchers moved to `launchers/`, and the lab's review loop now lives in `sparsetrack review`
+> (the decoder-free part of this folder's prefill and export). See docs/status-2026-09-29.md.
+
+
 The work was done in a cloud session that had none of the lab's movies. It paused on 27 Sep 2026. It is written up in
 `docs/assessment-2026-09-24.md` (sections 5 and 7; appendices B and C) and in this folder's `README.md`.
 
@@ -16,8 +25,8 @@ Branch `claude/magical-maxwell-i5tpeh` adds only its own files:
 - `prototypes/learned_evidence/` (with `models/`);
 - `docs/assessment-2026-09-24.md`;
 - `tests/test_learned_evidence_*.py`;
-- three launchers at the root: `Adapt_Learned_To_Dev_Movie.command`, `Analyze_Movie_Learned.command` and
-  `Review_Movie_Learned.command`.
+- three launchers at the root: `launchers/Adapt_Learned_To_Dev_Movie.command`, `launchers/Analyze_Movie_Learned.command` and
+  `launchers/Review_Movie_Learned.command`.
 
 It does not change `sparsetrack/`, `benchmark/labels/` or the labelling tool. So merging it into the lab's branch
 should not conflict.
@@ -57,7 +66,7 @@ This step needs the prepared dev movie (`runs/sparsetrack/ld`) and the finished 
     --labels benchmark/labels/ld_v1.json
 ```
 
-Double-clicking `Adapt_Learned_To_Dev_Movie.command` does the same. It runs four steps, and skips each one once it
+Double-clicking `launchers/Adapt_Learned_To_Dev_Movie.command` does the same. It runs four steps, and skips each one once it
 is done:
 1. the dev test: it trains a model on the dev movie's field (about 1.5 hours) and scores it on the labels;
 2. calibration of the decoder;
@@ -113,8 +122,8 @@ Tune nothing after this.
 
 ## Also available
 
-- **Any movie:** `Analyze_Movie_Learned.command` analyses a chosen movie with the adapted model (about 15–25
-  minutes). `Review_Movie_Learned.command` then opens the labelling tool pre-filled with the model's answers, and
+- **Any movie:** `launchers/Analyze_Movie_Learned.command` analyses a chosen movie with the adapted model (about 15–25
+  minutes). `launchers/Review_Movie_Learned.command` then opens the labelling tool pre-filled with the model's answers, and
   exports the reviewed results.
 - **Help:** each script's `--help`, and the README's module table.
 
