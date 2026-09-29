@@ -84,6 +84,46 @@ def tip_at(pred: dict, frame: int) -> np.ndarray | None:
     return np.asarray(xy[int(np.argmin(np.abs(np.asarray(frames) - frame)))], float)
 
 
+def germination_curves(labels: dict, pred_grains: dict[str, dict], ids: list[str], n_grid: int = 600) -> dict | None:
+    """The population result the lab reports, from the human onsets and from the model's, over the same grains:
+    the Turnbull germination curves' T50 (frames), the share germinated by the end, and the largest gap between
+    the two curves. Grains either side calls unobservable are left out."""
+    from .report import onset_intervals, turnbull
+
+    if not labels.get("frames_per_bin") or not labels.get("n_bins"):
+        return None
+    fpb, nb = int(labels["frames_per_bin"]), int(labels["n_bins"])
+    first, last = fpb // 2, (nb - 1) * fpb + fpb // 2
+    hum, mod = [], []
+    for gid in ids:
+        on = (labels["labels"].get(gid) or {}).get("onset") or {}
+        v, fv, la = on.get("verdict"), on.get("first_visible_frame"), on.get("last_absent_frame")
+        h = ((la if la is not None else fv - fpb, fv) if v == "emerged_within" and fv is not None
+             else (-np.inf, first) if v == "emerged_at_start" else (last, np.inf) if v == "no_emergence_by_end" else None)
+        m = onset_intervals({"grains": [pred_grains[gid]]})
+        if h is not None and m:
+            hum.append((float(h[0]), float(h[1])))
+            mod.append(m[0])
+    if len(hum) < 3:
+        return None
+    grid = np.linspace(0.0, float(last), n_grid)
+
+    def cdf(intervals):
+        out = np.zeros(n_grid)
+        for q, p_, mass in turnbull(intervals):
+            if not np.isfinite(p_):
+                continue  # never germinated in view
+            lo = q if np.isfinite(q) else p_
+            out += mass * np.clip((grid - lo) / max(p_ - lo, 1e-9), 0.0, 1.0)
+        return out
+
+    ch, cm = cdf(hum), cdf(mod)
+    t50 = lambda c: float(grid[int(np.argmax(c >= 0.5))]) if c[-1] >= 0.5 else None
+    return {"grains": len(hum), "t50_human": t50(ch), "t50_model": t50(cm),
+            "germinated_human": round(float(ch[-1]), 3), "germinated_model": round(float(cm[-1]), 3),
+            "max_gap": round(float(np.max(np.abs(ch - cm))), 3)}
+
+
 def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2.0, len_rel: float = 0.10,
           absent_px: float = 2.0, subset: str = "isolated", tip_abs: float = 5.0, tip_rel: float = 0.10) -> dict:
     """Return a report dict; ``subset`` = "isolated" (sparse benchmark) or "all" included grains."""
@@ -164,6 +204,8 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
                  "length_and_tip": int(sum(ok and te <= max(tip_abs, tip_rel * h) for te, h, ok in tips))},
         "traces_in_contact_skipped": len(contact_n),
         "traces_burst_skipped": len(burst_n),
+        "population": germination_curves(labels, {g: p for g, p in matched.items() if p is not None},
+                                         [g for g in sorted(grains) if matched.get(g) is not None]),
         "rows": rows,
     }
 
@@ -184,6 +226,11 @@ def markdown(report: dict) -> str:
              f"- PARTIAL traces consistent: {report['length_partial']['consistent']}/{report['length_partial']['n']}; "
              f"absences correct: {a['correct']}/{a['n']}",
              f"- Germination calls (human → predicted): {json.dumps(report['germination_confusion'])}",
+             *([] if not report.get("population") else [
+                 (lambda P: f"- Germination curve ({P['grains']} grains): T50 human {fmt(P['t50_human'], 0)}, model "
+                            f"{fmt(P['t50_model'], 0)} frames; germinated by the end: human {100 * P['germinated_human']:.0f}%, "
+                            f"model {100 * P['germinated_model']:.0f}%; largest gap between the curves "
+                            f"{P['max_gap']:.2f}")(report["population"])]),
              "", "| grain | human | predicted | bracket | pred onset | onset err | FULL errors (px) |", "|---|---|---|---|---|---|---|"]
     for r in report["rows"]:
         full = ", ".join(f"{x['error']:+.1f}" for x in r.get("full", []))

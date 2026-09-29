@@ -587,3 +587,26 @@ def test_bench_length_retest_is_kept_apart_from_the_first_answer(tiny_cache):
     assert bench.doc["labels"]["g001"]["traces"]["10"]["path_xy_view"][-1] == [44.0, 22.0]  # first answer untouched
     rep = retest_report(bench.doc)["traces"]
     assert rep["both_full"] == 1 and rep["length_within"] == 1 and rep["length_and_tip"] == 1
+
+
+def test_germination_curves_compare_the_population_results():
+    from sparsetrack.evaluate import germination_curves
+    fpb, nb = 300, 40
+    frames = [b * fpb + fpb // 2 for b in range(nb)]
+    labels = {"frames_per_bin": fpb, "n_bins": nb, "labels": {}}
+    pred = {}
+    for k in range(10):  # onsets at bins 5..14; the model calls each one bin late; one grain never germinates
+        gid = f"g{k:02d}"
+        if k == 9:
+            labels["labels"][gid] = {"onset": {"verdict": "no_emergence_by_end"}}
+            pred[gid] = {"status": "no_emergence_by_end", "length": {"frames": frames}}
+            continue
+        fv = 5 + k
+        labels["labels"][gid] = {"onset": {"verdict": "emerged_within", "first_visible_frame": frames[fv],
+                                           "last_absent_frame": frames[fv - 1]}}
+        pred[gid] = {"status": "emerged_within", "onset_interval": [frames[fv], frames[fv + 1]],
+                     "length": {"frames": frames}}
+    P = germination_curves(labels, pred, sorted(pred))
+    assert P["grains"] == 10 and P["germinated_human"] == P["germinated_model"] == 0.9
+    assert abs((P["t50_model"] - P["t50_human"]) - fpb) < 20  # one bin later
+    assert 0.09 <= P["max_gap"] <= 0.11  # one grain's worth of the curve
