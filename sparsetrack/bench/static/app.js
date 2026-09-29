@@ -448,7 +448,7 @@ function renderTrace() {
   if (isModel(saved)) $("#help").insertAdjacentHTML("afterbegin", `<b>Review:</b> this is the model's answer
     (${saved.state === "full" ? `a ${saved.length_px} px tube` : saved.state.replace("_", " ")}${saved.model_confidence != null ?
     `; model confidence ${Math.round(100 * saved.model_confidence)}%` : ""}). <kbd>Enter</kbd> confirms it as it
-    stands; or fix it and save as usual.<br>`);
+    stands; ${saved.model_path ? "<kbd>-</kbd>/<kbd>=</kbd> shorten/lengthen it along the model's route (Shift: 5 px), then <kbd>F</kbd>; " : ""}or fix it and save as usual.<br>`);
   c.innerHTML = `<div class="row"><div class="wrap"><canvas id="tc" width="${size}" height="${size}"></canvas></div>
     <div class="side"><h3>Trace ${S.traceIdx + 1} of ${p.length} · frame ${b * S.st.frames_per_bin + S.st.frames_per_bin / 2} (bin ${b})</h3>
     <div class="chips" id="chips">${chips}</div>
@@ -505,6 +505,25 @@ function toggleFar() { if (S.st.layout.trace.far) { S.traceView = S.traceView ==
 function traceLen() {
   let L = 0; for (let i = 1; i < S.pts.length; i++) L += Math.hypot(S.pts[i][0] - S.pts[i - 1][0], S.pts[i][1] - S.pts[i - 1][1]);
   return L;
+}
+// review: the trace's apex slid along the model's whole route (kept with a pre-filled trace), d px at a time
+function slideTrace(d) {
+  const b = plan()[S.traceIdx], saved = (label().traces || {})[String(b)];
+  const mp = saved && saved.model_path;
+  if (!mp || mp.length < 2) return;
+  let want = Math.max(0, traceLen() + d), acc = 0;
+  const pts = [mp[0].slice()];
+  for (let i = 1; i < mp.length && want > 0; i++) {
+    const seg = Math.hypot(mp[i][0] - mp[i - 1][0], mp[i][1] - mp[i - 1][1]);
+    if (acc + seg >= want) {
+      const a = (want - acc) / Math.max(seg, 1e-9);
+      pts.push([mp[i - 1][0] + a * (mp[i][0] - mp[i - 1][0]), mp[i - 1][1] + a * (mp[i][1] - mp[i - 1][1])]);
+      want = 0; break;
+    }
+    acc += seg; pts.push(mp[i].slice());
+  }
+  S.pts = pts.map((q) => [Math.round(q[0] * 100) / 100, Math.round(q[1] * 100) / 100]);
+  drawTrace(); updateCount();
 }
 function updateCount() {
   const p = document.querySelector(".side p"); if (p) p.firstChild.textContent = `${S.pts.length} point(s), ${traceLen().toFixed(1)} px `;
@@ -695,6 +714,9 @@ document.addEventListener("keydown", (e) => {
     if (!lr && k === "b" && canBurst()) return saveTrace("burst");
     const cur = lr ? null : (label().traces || {})[String(plan()[S.traceIdx])];
     if (!lr && k === "Enter" && isModel(cur)) return saveTrace(cur.state);  // review: confirm the model's answer
+    if (!lr && (k === "=" || k === "+" || k === "-" || k === "_") && cur && cur.model_path) {
+      e.preventDefault(); return slideTrace((k === "=" || k === "+" ? 1 : -1) * (e.shiftKey ? 5 : 1));
+    }
     if (lr && k === "[") return peek(-10);
     if (lr && k === "]") return peek(+10);
     if (k === "w") return toggleWide();

@@ -192,3 +192,14 @@ def test_calibration_comes_from_the_command_line_or_calibration_json(tmp_path, m
     (tmp_path / "calibration.json").write_text('{"um_per_px": 0.65, "s_per_frame": 30}')
     assert cli.calibration() == (0.65, 30.0)
     assert cli.calibration(0.5, None) == (0.5, 30.0)  # what is given wins
+
+
+def test_a_prefilled_trace_keeps_the_models_whole_route_to_slide_along(reviewed):
+    cache, pred, out = reviewed
+    prefill(cache, pred, out, log=lambda *a: None)
+    tr = json.loads(out.read_text())["labels"]["g001"]["traces"]
+    first = tr[min(tr, key=int)]
+    route = np.asarray(first["model_path"])
+    arc = float(np.sum(np.hypot(*np.diff(route, axis=0).T)))
+    assert arc > first["length_px"] + 20  # the whole route (75 px + a little), not the trace cut at 2-40 px
+    assert np.allclose(route[0], first["path_xy_view"][0])  # the same start as the trace

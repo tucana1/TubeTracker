@@ -89,6 +89,7 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
     """Write the review labels file ``out`` (and the proposals as made, ``*.model.json``)."""
     from . import __version__
     from .bench.server import Bench, trace_bins
+    from .report import turned_path
 
     cache, out = Path(cache), Path(out)
     if out.exists():
@@ -118,10 +119,13 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
         px = res.get("length", {}).get("px") or []
         for b in trace_bins(body.get("first_visible_bin") or 0, nb):
             bench.set_trace(res["id"], trace_body(res, b, pred))
+            rec = bench.doc["labels"][res["id"]]["traces"][str(b)]
             if px:
-                conf = round(trace_confidence(px, b), 3)
-                bench.doc["labels"][res["id"]]["traces"][str(b)]["model_confidence"] = conf
-                confidence[res["id"]] = min(confidence.get(res["id"], 1.0), conf)
+                rec["model_confidence"] = round(trace_confidence(px, b), 3)
+                confidence[res["id"]] = min(confidence.get(res["id"], 1.0), rec["model_confidence"])
+            full = turned_path(res, b, pred)
+            if len(full) >= 2:  # the whole route, so a reviewer can slide the apex along it (the tool's - and = keys)
+                rec["model_path"] = to_length(full, float(np.sum(np.hypot(*np.diff(full, axis=0).T))) + 15.0).round(2).tolist()
             n_traces += 1
     doc = bench.doc
     for lab in doc["labels"].values():
