@@ -61,30 +61,32 @@ when **the movie's focus changed** (movie 2 was out of focus from about bin 13 t
 meanwhile are seen only once it is sharp again, so onsets at that time mean "visible by" (flag
 `onset_at_focus_change`).
 
-**How far to trust the model unchecked** (30 Sep 2026, SparseTrack 0.8.0, against one annotator's traces; length
-within max(2 px, 10%), onset within 2 bins). 0.8.0's tube network was fine-tuned on both labelled movies' traces, so
-the honest numbers for those movies come from the same recipe trained on the *other* movie's traces; a third,
-blind-labelled movie (movie 1) is the real test:
-- sparse movie: lengths 73/104 (70%; 0.7.0: 72), length and tip 58, onsets 14/26; growth rate per grain within
-  max(0.1 px/bin, 20%) of the annotator's for 25 of 27 grains (correlation 0.91; 0.7.0: 24/27, 0.83). The same
-  annotator repeating 15 traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
-- crowded movie 2: lengths 24/54 (44%; 0.7.0: 23), length and tip 22 (0.7.0: 17), onsets 4/18; growth rates 10 of 18
-  grains within tolerance, correlation 0.72 (0.7.0: 6/18, 0.19): the new network follows long, faint tubes the old
-  one lost, and no longer starts floods on rim noise (8 of 0.7.0's 23 movie-2 hits were such accidents). Tubes
-  that cross or touch others, and very young tubes, remain the hard cases; check those first (the gallery and the
-  review open with the model's least sure grains). Movie 2 was out of focus from about bin 13 to bin 63, so its
-  onsets there mean "visible by".
+**How far to trust the model unchecked** (30 Sep 2026, SparseTrack 0.8.1, against one annotator's traces; length
+within max(2 px, 10%), onset within 2 bins). The tube network was fine-tuned on the first two movies' traces, so the
+honest numbers for those come from the same recipe trained on the *other* movie's traces:
+- sparse movie: lengths 73/104 (70%), length and tip 58, onsets 14/26; growth rate per grain within
+  max(0.1 px/bin, 20%) of the annotator's for 25 of 27 grains (correlation 0.91). The same annotator repeating 15
+  traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
+- crowded movie 2: lengths 24/54 (44%), length and tip 22, onsets 4/18; growth rates 10 of 18 grains within
+  tolerance, correlation 0.72. Tubes that cross or touch others, and very young tubes, remain the hard cases. Movie 2
+  was out of focus from about bin 13 to bin 63, so its onsets there mean "visible by".
+- movie 1, labelled blind (30 grains, 50 traces; its grains drift and get knocked, and some tubes grow over their
+  grain from a pore facing the camera): the version fixed beforehand (0.8.0) read 8/50 lengths and 3/12 onsets. The
+  cause was one rule: on a noisy background the change reader's "no tube yet" overrode the tube network's reading.
+  0.8.1 keeps the network's own call there: 15/50 lengths (18/50 measured from the grain's edge), onsets 8/26, T50
+  9304 vs 8602 frames, growth rates 7/18 (correlation 0.31); on the other movies lengths +0 and +1. This fix came
+  from movie 1's scores, so these numbers are no longer blind (`benchmark/reports/m1_v1_frozen.md` has the blind
+  ones). Movie 1 is a hard movie; check its grains in the app.
 - the germination curve holds up better than single onsets, whose errors partly cancel: T50 within about one bin
-  of the annotator's on the sparse movie and 2.3 bins on movie 2. `sparsetrack eval` reports it and the
+  of the annotator's on the sparse movie and 2.3 bins on movies 2 and 1. `sparsetrack eval` reports it and the
   growth-rate agreement.
 
-**Status (30 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.0 (below) is the
-tracker. The cloud session's learned-evidence pipeline (`prototypes/learned_evidence/`, merged
-29 Sep) was tested on the lab's movies and read fewer lengths than SparseTrack (ld 40/100 vs
-69/104); it is kept as a research record. Work concentrated on isolated grains before crossings and
-clumps (sparse-first reset, 23 Sep). The research record up to 22 Sep 2026 is in
-`prototypes/LEDGER.md`; the complete pre-reset tree is preserved at the git tag
-`snapshot-2026-09-23`.
+**Status (30 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.1 (below) is the
+tracker, and the TubeTracker app (above) is its desktop front end. The cloud session's learned-evidence pipeline
+(`prototypes/learned_evidence/`, merged 29 Sep) was tested on the lab's movies and read fewer lengths than
+SparseTrack (ld 40/100 vs 69/104); it is kept as a research record. Work concentrated on isolated grains before
+crossings and clumps (sparse-first reset, 23 Sep). The research record up to 22 Sep 2026 is in
+`prototypes/LEDGER.md`; the complete pre-reset tree is preserved at the git tag `snapshot-2026-09-23`.
 
 ## SparseTrack (active development)
 

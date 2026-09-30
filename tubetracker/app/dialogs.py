@@ -243,6 +243,7 @@ class ResultsFrame(wx.Frame):
         self.rows = []
         for g in ctl.grains:
             grown = g["status"] in EMERGED and not g["excluded"]
+            in_curve = g["isolated"] and not g["excluded"] and g["status"] in (*EMERGED, "no_emergence_by_end")
             state = (f"excluded ({g['excluded'].replace('_', ' ')})" if g["excluded"] else
                      {"emerged_within": "germinated", "emerged_at_start": "before start",
                       "no_emergence_by_end": "lost, not germinated" if g["lost"] is not None else "not germinated",
@@ -251,7 +252,7 @@ class ResultsFrame(wx.Frame):
             self.rows.append((g["id"], state, onset, u.length(g["final"]) if grown else None,
                               u.rate(g["rate"]) if grown and g["rate"] else None, g["conf"],
                               {"model": "", "partly checked": "partly", "checked": "yes", "corrected": "corrected",
-                               "excluded": "excluded"}[g["review"]["state"]], "yes" if g["isolated"] else "no"))
+                               "excluded": "excluded"}[g["review"]["state"]], "yes" if in_curve else "no"))
         self.units = (tl, u.length_unit, u.rate_unit)
         self._fill()
         self.note.SetLabel(str(d.folder.results))
