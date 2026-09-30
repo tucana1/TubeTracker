@@ -215,3 +215,10 @@ def test_the_gallery_warns_when_many_grains_could_not_be_followed(tmp_path):
     assert not movie_warnings({"grains": grains[2:]})  # 2 of 8: no warning
     page = write_gallery({"grains": grains, "frames_per_bin": FPB}, tmp_path).read_text()
     assert "class='warn'" in page and "could not be followed" in page
+
+
+def test_census_warns_when_the_grains_are_not_the_expected_size():
+    from sparsetrack.cli import census_warnings
+    assert census_warnings([]) and "no grains" in census_warnings([])[0]
+    assert not census_warnings([{"r": 12.0 + 0.2 * k} for k in range(10)])
+    assert census_warnings([{"r": 17.8} for _ in range(8)] + [{"r": 12.0}])  # most at the top of the range

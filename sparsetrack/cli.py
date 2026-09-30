@@ -45,6 +45,24 @@ def write_census(out: Path, n_ref: int, flatfield: bool) -> None:
     isolated = sum(g["isolated"] for g in found)
     print(f"grains: {len(found)} detected ({isolated} isolated, "
           f"{sum(g['clump_size'] > 1 for g in found)} in clumps, {sum(g['border'] for g in found)} near the edge)")
+    for w in census_warnings(found):
+        print(f"WARNING: {w}")
+
+
+def census_warnings(found: list[dict], r_min: float = 9.0, r_max: float = 18.0) -> list[str]:
+    """A census that suggests the movie is not like the ones SparseTrack was built on (grains 9-18 px in radius:
+    the lab's 1280 x 1024 movies, radius median 12-13 px): none found, or many at the edge of the radius range
+    (grains larger or smaller than expected, e.g. another magnification)."""
+    if not found:
+        return ["no grains found. SparseTrack looks for grains 9-18 px in radius (as in the lab's movies so far); "
+                "a movie at another magnification needs other settings."]
+    r = [g["r"] for g in found]
+    at_edge = sum(x <= r_min + 0.5 or x >= r_max - 0.5 for x in r) / len(r)
+    if len(r) >= 5 and at_edge > 0.5:
+        return [f"{100 * at_edge:.0f}% of the grains found are at the edge of the 9-18 px radius range: grains in this "
+                f"movie may be larger or smaller than SparseTrack expects (another magnification?); check the census "
+                f"(field_early.png) before trusting the analysis."]
+    return []
 
 
 def cmd_census(args) -> None:
