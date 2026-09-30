@@ -141,9 +141,10 @@ def _registered(bins: np.ndarray, shifts: np.ndarray, b: int) -> np.ndarray:
                           flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
-def prob_cache(cache_dir: str | Path, model: str | Path = MODEL, log=print) -> Path:
+def prob_cache(cache_dir: str | Path, model: str | Path = MODEL, log=print, progress=None) -> Path:
     """The movie's tube-probability cache (built once, next to the image cache): a SparseTrack
-    cache in reference coordinates whose bins are uint8 P(tube) x P_SCALE."""
+    cache in reference coordinates whose bins are uint8 P(tube) x P_SCALE. ``progress(done, total)``, if given,
+    is called after every bin built."""
     import hashlib
     cache_dir = Path(cache_dir)
     out = cache_dir / f"prob_{Path(model).stem}"
@@ -165,6 +166,8 @@ def prob_cache(cache_dir: str | Path, model: str | Path = MODEL, log=print) -> P
     started = time.time()
     for b in range(nb):
         arr[b] = np.round(tube_probability(net, _registered(bins, shifts, b), early, late) * P_SCALE).astype(np.uint8)
+        if progress is not None:
+            progress(b + 1, nb)
     arr.flush()
     del arr
     m = {**meta, "shifts": [[0.0, 0.0]] * nb, "raw_shifts": [[0.0, 0.0]] * nb,

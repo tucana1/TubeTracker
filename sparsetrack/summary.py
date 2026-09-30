@@ -97,25 +97,32 @@ def fmt(v) -> str:
     return f"{v:.3f}" if isinstance(v, float) and abs(v) < 10 else (f"{v:.1f}" if isinstance(v, float) else str(v))
 
 
-def write_summary(folders: list[Path], out: Path, units: tuple[float, float] | None = None, log=print) -> list[dict]:
+def write_summary(folders: list[Path], out: Path, units: tuple[float, float] | list | None = None, log=print,
+                  extra: list[dict] | None = None) -> list[dict]:
+    """``units``: (um per px, s per frame) for every movie, or a list with one (or None) per movie (the TubeTracker
+    app keeps each movie's own); the figure is in minutes and um/min only when every movie has them. ``extra``: per
+    movie, columns written before the results (e.g. sample id, genotype, replicate)."""
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
     out.mkdir(parents=True, exist_ok=True)
-    rows = [movie_row(f, units) for f in folders]
+    per_movie = list(units) if isinstance(units, list) else [units] * len(folders)
+    rows = [movie_row(f, u) for f, u in zip(folders, per_movie)]
+    extra = extra or [{} for _ in rows]
+    extra_cols = list(dict.fromkeys(k for e in extra for k in e))
     with open(out / "summary.csv", "w", newline="") as fh:
         w = csv.writer(fh)
-        w.writerow(COLUMNS)
-        for r in rows:
-            w.writerow([fmt(r.get(c)) for c in COLUMNS])
-    spf = units[1] if units else None
-    scale = (lambda f: f * spf / 60.0) if spf else (lambda f: f)
+        w.writerow(COLUMNS[:1] + tuple(extra_cols) + COLUMNS[1:])
+        for r, e in zip(rows, extra):
+            w.writerow([fmt(r.get(COLUMNS[0]))] + [e.get(c, "") for c in extra_cols] + [fmt(r.get(c)) for c in COLUMNS[1:]])
+    physical = bool(per_movie) and all(per_movie)  # minutes and um/min only when every movie has its units
+    scales = [(lambda f, s=u[1]: f * s / 60.0) if physical else (lambda f: f) for u in per_movie]
     fig, (a1, a2) = plt.subplots(1, 2, figsize=(11.0, 4.2), dpi=150, gridspec_kw={"width_ratios": [1.6, 1.0]})
     fig.patch.set_facecolor(report.SURFACE)
     for ax in (a1, a2):
         report._axes_style(ax)
-    for i, r in enumerate(rows):
+    for i, (r, u, scale) in enumerate(zip(rows, per_movie, scales)):
         c = PALETTE[i % len(PALETTE)]
         if r["_intervals"] and r["last_frame"]:
             t, y = envelope(r["_intervals"], r["last_frame"])
@@ -126,25 +133,25 @@ def write_summary(folders: list[Path], out: Path, units: tuple[float, float] | N
             t, y = envelope(r["_reviewed_intervals"], r["last_frame"])
             a1.step([scale(x) for x in t], y, where="post", color=c, linewidth=1.2, linestyle="--")
         rates = np.asarray(r["_rates"], float)
-        if units:
-            rates = rates * units[0] / (r["frames_per_bin"] * units[1] / 60.0)
+        if physical:
+            rates = rates * u[0] / (r["frames_per_bin"] * u[1] / 60.0)
         if len(rates):
             jitter = np.random.default_rng(i).uniform(-0.18, 0.18, len(rates))
             a2.plot(i + jitter, rates, "o", color=c, markersize=3, alpha=0.6)
             a2.plot([i - 0.3, i + 0.3], [np.median(rates)] * 2, color=report.INK, linewidth=2)
     a1.set_ylim(0, 1.02)
-    a1.set_xlabel("Minutes" if spf else "Source frame", fontsize=9, color=report.INK2)
+    a1.set_xlabel("Minutes" if physical else "Source frame", fontsize=9, color=report.INK2)
     a1.set_ylabel("Fraction germinated", fontsize=9, color=report.INK2)
     a1.set_title("Germination (model; dashed: after review), dots = T50", fontsize=10, color=report.INK, loc="left")
     a1.legend(fontsize=7.5, frameon=False, loc="lower right")
     a2.set_xticks(range(len(rows)))
     a2.set_xticklabels([r["movie"] for r in rows], fontsize=7.5, rotation=20, ha="right")
-    a2.set_ylabel("Growth rate (um/min)" if units else "Growth rate (px per bin)", fontsize=9, color=report.INK2)
+    a2.set_ylabel("Growth rate (um/min)" if physical else "Growth rate (px per bin)", fontsize=9, color=report.INK2)
     a2.set_title("Growth rate per tube (bar = median)", fontsize=10, color=report.INK, loc="left")
     fig.tight_layout()
     fig.savefig(out / "summary.png", facecolor=report.SURFACE)
     plt.close(fig)
-    for r in rows:
+    for r, scale in zip(rows, scales):
         t50 = (f"{r['t50_min']:.0f} min" if r.get("t50_min") is not None else
                f"frame {r['t50_frame']:.0f}" if r["t50_frame"] is not None else "not reached")
         g = "" if r["germinated"] is None else f"{100 * r['germinated']:.0f}% germinated"
