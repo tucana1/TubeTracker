@@ -131,7 +131,10 @@ class Params:
     flood_lookback: float = 0.25  # walk the onset back while P at the tube's exit stays above this (0 = off)
     flood_compete: bool = False  # flood every tube in view at once: new material goes to the tube growing there
     flood_fallback: bool = False  # hybrid: where the flood finds no tube but the change reader saw one, keep it (no gain)
-    hybrid_onset: str = "change"  # flooded grains on a noisy background: whose germination call and onset count -
+    hybrid_onset: str = "flood"   # 0.8.1 (was "change"; vs 0.8.0: m1 lengths +7, 95% CI +2 to +13, onsets +5; m2 +1;
+                                  # ld unchanged; "change_unless_missed": m1 +4, others +0). The old maps marked rims
+                                  # before a tube existed, the BatchNorm maps rarely do. Flooded grains on a noisy
+                                  # background: whose germination call counts -
                                   # "change" (0.5.1-0.8.0: the change reader's, the flood's lengths from it; its "no
                                   # tube" zeroes the flood's), "change_unless_missed" (the flood's where the change
                                   # reader saw no tube but the flood read one of hybrid_min_px), or "flood"
