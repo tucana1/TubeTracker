@@ -143,8 +143,8 @@ class Params:
     flood_min_len: float = 8.0   # a tube that stops for flood_give_up bins before reaching this far beyond the rim...
     flood_give_up: int = 40      # ...was rim noise: forgotten, and the flood starts again
     flood_tip: str = "dist"      # the tip its length is read to: the pixel of greatest rim distance ("dist"), or also
-                                 # the one farthest from the grain where that reads longer ("radial": a young blob;
-                                 # "radial_zone": only while the first is within the start zone)
+                                 # the one farthest from the grain where that reads longer ("radial": a young blob
+                                 # widening along the rim; with BatchNorm maps m2 +1, ld +1 lengths, old maps m2 -4)
     flood_exit_edge: bool = False  # flood lengths from the grain's visible edge along the exit (as exit_edge)
     exit_edge: bool = True       # change reader: lengths from the grain's visible edge along the exit, where an
                                  # annotator starts a trace, not from the census circle

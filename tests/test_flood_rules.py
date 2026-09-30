@@ -115,8 +115,7 @@ def test_lengths_from_the_visible_edge():
     assert census["onset_frame"] == edge["onset_frame"]
 
 
-@pytest.mark.parametrize("tip", ["radial", "radial_zone"])
-def test_the_radial_tip_reads_a_young_blob_widening_along_the_rim(tip):
+def test_the_radial_tip_reads_a_young_blob_widening_along_the_rim():
     """The flood starts on one piece at the halo, pieces joining along the rim get ever greater rim distances, and
     the stub's own pixels out to 7 px arrive later: the pixel of greatest rim distance is on the rim."""
     along_rim = []
@@ -127,7 +126,7 @@ def test_the_radial_tip_reads_a_young_blob_widening_along_the_rim(tip):
     grain = {"id": "g001", "x": 60.0, "y": 60.0, "r": 10.0}
     p = dict(grain_track="phase", flood_half=50, flood_lookback=0.0, min_tube_px=0.0)
     dist_tip = read_grain(renderer, prob, meta, grain, [], Params(**p))
-    radial = read_grain(renderer, prob, meta, grain, [], Params(**p, flood_tip=tip))
+    radial = read_grain(renderer, prob, meta, grain, [], Params(**p, flood_tip="radial"))
     assert dist_tip["length"]["px"][-1] < 5.0                                  # the rim piece's own distance out
     assert abs(radial["length"]["px"][-1] - 7.0) < 1.0
     assert radial["tip"]["xy"][-1][0] > 66.0                                  # the tip is the stub's end, not the rim

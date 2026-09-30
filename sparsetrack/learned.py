@@ -512,12 +512,11 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
         if p.flood_from_exit and sel.any() and length[t] > 0:
             exit_len[t] = from_exit(centreline(sel, dist, (int(y), int(x)), centre, gr, p.flood_bridge + 0.5),
                                     centre, gr, zone)[1]
-            if p.flood_tip in ("radial", "radial_zone"):
+            if p.flood_tip == "radial":
                 # a young tube's blob widens along the rim, where pieces joining late get the greatest rim distance:
                 # the farthest pixel from the grain is then the tip, if its length from the exit is the longer
-                # ("radial_zone": only while that rim-distance tip is still within the start zone, a young tube)
                 yr, xr = np.unravel_index(int(np.argmax(np.where(sel, rg, -1.0))), dist.shape)
-                if (yr, xr) != (y, x) and (p.flood_tip == "radial" or rg[y, x] <= zone):
+                if (yr, xr) != (y, x):
                     er = from_exit(centreline(sel, dist, (int(yr), int(xr)), centre, gr, p.flood_bridge + 0.5),
                                    centre, gr, zone)[1]
                     if er > exit_len[t]:
