@@ -420,6 +420,14 @@ class Bench:
         return self.doc["retest"]["traces"]
 
     # ---- images ---------------------------------------------------------------------
+    def set_follow(self, gid: str, offsets) -> None:
+        """Use these (n_bins, 2) offsets as ``gid``'s grain-following view instead of measuring them (``follow``
+        takes seconds per grain): e.g. the analysis' own drift, as the TubeTracker app draws the grain."""
+        offsets = np.asarray(offsets, dtype=np.float64).reshape(-1, 2)
+        if len(offsets) != self.n_bins:
+            raise ValueError(f"{gid}: {len(offsets)} offsets for {self.n_bins} bins")
+        self._follow[gid] = offsets
+
     def follow(self, gid: str) -> np.ndarray:
         """(n_bins, 2) offsets that keep a grain centred in its views (grain registration on top of the field
         registration; the first reference bin's before the reference bins). How, depends on ``follow_mode`` (module

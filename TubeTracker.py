@@ -1,30 +1,12 @@
 #!/usr/bin/env python3
-"""Backward-compatible entry point for the modular TubeTracker package."""
+"""Open TubeTracker (``python TubeTracker.py [MOVIE_OR_ANALYSIS_FOLDER]``; ``--legacy`` for the old manual pipeline)."""
 
-from tubetracker import (
-    Detections,
-    Point,
-    ROI,
-    Track,
-    Tracker,
-    bbox_center_squared_distance,
-    bbox_iou_distance,
-)
-from tubetracker.gui import Screen, Screen_Control, Tracker_GUI, main
+import sys
+from pathlib import Path
 
-__all__ = [
-    "Detections",
-    "Point",
-    "ROI",
-    "Screen",
-    "Screen_Control",
-    "Track",
-    "Tracker",
-    "Tracker_GUI",
-    "bbox_center_squared_distance",
-    "bbox_iou_distance",
-    "main",
-]
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from tubetracker.app.window import main  # noqa: E402
 
 
 if __name__ == "__main__":

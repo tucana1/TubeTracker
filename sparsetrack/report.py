@@ -288,10 +288,10 @@ def grain_confidence(res: dict, fpb: int) -> float | None:
     """The model's confidence in a germinated grain's readings: the lowest ``review.trace_confidence`` at the
     times an annotator traces it (``bench.server.trace_bins`` after the model's onset); None without a tube."""
     from .bench.server import trace_bins
-    from .review import trace_confidence
-    px = (res.get("length") or {}).get("px") or []
-    if res.get("status") not in ("emerged_within", "emerged_at_start") or not px:
+    from .review import lengths_by_bin, trace_confidence
+    if res.get("status") not in ("emerged_within", "emerged_at_start") or not (res.get("length") or {}).get("px"):
         return None
+    px = lengths_by_bin(res, fpb)  # by bin from bin 0: the series start at the movie's reference bin
     fv = int(res["onset_frame"]) // fpb if res.get("status") == "emerged_within" and res.get("onset_frame") else 0
     plan = trace_bins(fv, len(px)) or [len(px) - 1]
     return min(trace_confidence(px, b) for b in plan)

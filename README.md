@@ -3,7 +3,7 @@
 TubeTracker is a research prototype for pollen germination time-lapse movies:
 per grain, detect when a tube emerges and measure the tube's length over time.
 
-## For the lab: analyse a movie, then check it
+## For the lab: the TubeTracker app
 
 **Setup, once per Mac** (Python 3.10-3.14 and Homebrew):
 
@@ -13,44 +13,39 @@ python3 -m venv .venv
 .venv/bin/pip install -e ".[cnn]"      # SparseTrack and its tube network (torch)
 ```
 
-1. **Analyse.** Double-click `Analyze_Movie_SparseTrack.command` and choose a movie, or
-   several (Cmd-click; they are analysed in turn), or run `.venv/bin/python -m sparsetrack run MOVIE`.
-   The first run prepares a movie (a few minutes); the analysis takes 5-20 minutes on a
-   laptop, longer for long, crowded movies. A review gallery opens with the movie's result
-   in one sentence (germinated share, T50, median growth rate), then one card per grain,
-   the model's least sure grains first. Results are in `runs/sparsetrack/<movie name>/analysis/`:
-   `grains.csv` (per grain: germinated or not, onset interval, final length, growth rate,
-   the model's confidence), `growth.csv` (every grain's length at every time),
-   `population.png` (germination curve with T50) and `growth_curves.png`. The first time,
-   the launcher asks for the pixel size and frame interval (Enter skips) and keeps them in
-   `calibration.json`; with them the tables also give onsets in minutes, lengths in um and
-   growth in um/min (`sparsetrack run MOVIE --um-per-px 0.65 --s-per-frame 30` does the same
-   for one run). With several movies (conditions, genotypes, repeats) the launcher also puts
-   them side by side: `runs/sparsetrack/summary/summary.csv` (per movie: grains, germinated share,
-   T50, median growth rate and final length, grains lost partway, and the checked T50 once a
-   movie has been reviewed) and `summary.png` (germination curves and growth rates together);
-   `sparsetrack summary MOVIE [MOVIE ...]` redoes it for any set.
-2. **Check and correct.** Double-click `Review_Movie_SparseTrack.command` and choose the
-   same movie (or `.venv/bin/python -m sparsetrack review MOVIE`). The labelling tool
-   opens with the model's answers already filled in: each grain's onset bracket, and its
-   tube traced at a few times. **Enter** confirms an answer as it stands; **-** and **=**
-   shorten or lengthen a traced tube along the model's route (Shift: 5 px); otherwise fix it
-   as you would label it (click the first bin where the tube is visible; click along the
-   tube from the grain to its tip; **C** cycles the view: normal, high contrast, and growth, which shows
-   the bin minus the bin 6 bins earlier, so a growing tip stands out as a blob). The bar at the top counts
-   what you have checked, and
-   "next unfinished" goes to the next answer still the model's. Grains come least sure
-   first: the model's confidence in a reading rises with the tube's length and falls the
-   longer the reading has stood still (fitted on one labelled movie, checked on the other).
-   Checking in that order brought both movies to 79% of traces within tolerance (the
-   annotator's own repeatability) after checking 28% and 41% of the traces, against 48%
-   and 65% in random order. Confident answers can still be wrong: check them too when
-   the numbers matter. Answers are saved as you
-   go; press Ctrl-C in the window when you stop. `runs/sparsetrack/<movie name>/review/`
-   then holds `reviewed_grains.csv`, `reviewed_traces.csv` and `population.png`, saying
-   which answers you checked and which you changed, and `reviewed_growth.csv` /
-   `growth_curves.png`: every grain's length at every time, the model's curve pinned to the
-   lengths you checked, in um and minutes too with `calibration.json`. Run it again to carry on.
+**Open it** by double-clicking `TubeTracker.command` (or `./Start_TubeTracker_local`, or
+`.venv/bin/python -m tubetracker`). Everything happens in its window:
+
+1. **Open** a movie (File > Open Movie; .mp4 or .avi), or one analysed before from the start screen.
+2. **Settings** (asked the first time, Movie > Settings later): how long the movie ran (the time per frame
+   follows from its frame count), the pixel size in um (optional), sample ID, genotype, replicate. Times are then
+   in minutes and lengths in um throughout.
+3. **Analyse.** SparseTrack runs in the background, step by step with a progress bar and Cancel: a few minutes
+   the first time a movie is read, then roughly 10-30 s per grain. The movie opens when it is done.
+4. **Look.** Every grain is outlined by its state at the time shown (germinated, not yet, never, lost partway,
+   excluded), with its tube drawn to its length then, the tip and the exit. Play, scrub, scroll to zoom, drag to
+   pan; View > Growth shows the time minus 6 bins earlier, where growing tips stand out. The timeline under the
+   movie holds the germination curve with T50, germinations, grains lost partway, tubes that stop growing, the
+   least sure readings and focus changes; click one to go there.
+5. **Check.** N goes to the next grain to check, the model's least sure first (short reasons in the side panel,
+   details on hover), zoomed in at the time to look at. Enter confirms; O sets the onset at the time shown; T and
+   a click set the tip (its length is read along the tube); D draws the tube; B marks a burst; X or K excludes a
+   grain (not a grain, clump); Cmd-Z undoes. Help > Keyboard Shortcuts lists the rest. Answers are saved at once.
+6. **Export** (File > Export Results): `results/grains.csv` (per grain: onset, final length, growth rate, the
+   model's confidence, whether you checked it, the sample's metadata), `results/growth.csv` (length at every
+   time), `germination.png` (with T50) and `growth_curves.png`. File > Results shows the same in the app;
+   File > Compare Movies puts several movies side by side (`runs/sparsetrack/summary/`).
+
+Each movie has a folder `runs/sparsetrack/<movie name>/`: `setup.json`, `cache/` (keyframe bins, grain census),
+`analysis/` (SparseTrack's `predictions.json` and tables), `review/review_labels.json` (your checks, in the
+labelling tool's format; `reviewed_*.csv` after an export) and `results/`. A folder made on the command line
+(`sparsetrack run MOVIE`) opens the same way. Reviewing least sure first brought both labelled movies to 79% of
+traces within tolerance (the annotator's own repeatability) after checking 28% and 41% of the traces, against 48%
+and 65% in random order; confident readings can still be wrong.
+
+The command-line tools remain for batch work and research: `sparsetrack run MOVIE` (or
+`Analyze_Movie_SparseTrack.command`, several movies in turn) writes the same `analysis/` with an HTML gallery,
+`sparsetrack review MOVIE` opens the web labelling tool on it, `sparsetrack summary` compares movies.
 
 **Grains that move** are followed (SparseTrack 0.7.0): each grain is tracked by its own look from bin
 to bin, and one that moves further than its own diameter is read where it is. A grain that is knocked (it jumps and
@@ -214,8 +209,9 @@ off, and it withholds automatic lengths.
 
 ## Legacy desktop engine (upstream TubeTracker)
 
-`./Start_TubeTracker_local` opens the original wxPython application (Hough grains,
-LapTrack linking, tip templates, CSV export). A command-line pilot run:
+The original wxPython application (Hough grains, LapTrack linking, tip templates, CSV export) opens from
+TubeTracker's Tools > Legacy Manual Pipeline (or `.venv/bin/python -m tubetracker --legacy`). A command-line
+pilot run:
 
 ```bash
 .venv/bin/python scripts/run_pilot.py MOVIE --sample-id ID --genotype WT \
@@ -228,6 +224,7 @@ LapTrack linking, tip templates, CSV export). A command-line pilot run:
 |---|---|
 | `sparsetrack/` | Keyframe-bin cache, registration, grain census, benchmark labelling tool |
 | `benchmark/labels/` | Human benchmark labels (tracked) |
+| `tubetracker/app/` | The TubeTracker app (window, data layer, corrections, exports) |
 | `tubetracker/` | Upstream engine (`gui.py`, `analysis.py`, `models.py`, `views.py`) and the frozen v30 app modules |
 | `prototypes/v30_video_apex/` | Model and solver modules used by the frozen app |
 | `prototypes/timesfm_tip_forecast/grain_detect.py` | Radial grain detector used by the frozen app |

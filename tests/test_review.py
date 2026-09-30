@@ -313,3 +313,99 @@ def test_an_excluded_sample_grain_is_replaced_from_a_fixed_reserve(tmp_path):
     again.doc["sample"]["closed"] = True
     member = next(g for g in again.doc["sample"]["grains"] if not again.doc["grains"][g].get("excluded"))
     assert again.set_exclusion(member, {"excluded": True, "reason": "other"})["replaced_by"] is None
+
+
+def test_the_review_reads_the_models_series_by_bin_when_the_movie_settled_first(tmp_path):
+    """A movie whose first bins were settling (reference from bin 3, as movie 2's from bin 9): its series start at
+    the reference bin, so bin b is series index b - 3. The pre-fill and the confidence must read them by bin."""
+    from sparsetrack.report import grain_confidence
+    from sparsetrack.review import lengths_by_bin, series_index
+
+    rs = 3
+    cache = tmp_path / "cache"
+    _cache(cache, [{"id": "g001", "x": 60.0, "y": 60.0, "r": 10.0, "isolated": True}])
+    pred = _pred()
+    g = pred["grains"][0]
+    by_bin = list(g["length"]["px"])
+    g["length"] = {"frames": g["length"]["frames"][rs:], "px": by_bin[rs:]}
+    g["rotation_deg"] = g["rotation_deg"][rs:]
+    assert series_index(g, rs, FPB) == 0 and series_index(g, rs - 1, FPB) is None
+    assert np.allclose(lengths_by_bin(g, FPB, N_BINS), by_bin)
+    prefill(cache, pred, tmp_path / "review_labels.json", log=lambda *a: None)
+    traces = json.loads((tmp_path / "review_labels.json").read_text())["labels"]["g001"]["traces"]
+    for b, t in traces.items():  # the model's own length at that bin (the last one too, not "no tube")
+        assert t["state"] == "full" and abs(t["length_px"] - by_bin[int(b)]) < 0.05
+    padded = {**g, "length": {"frames": [b * FPB + FPB // 2 for b in range(N_BINS)], "px": by_bin}}
+    assert grain_confidence(g, FPB) == pytest.approx(grain_confidence(padded, FPB))
+
+
+def test_a_reviewers_answer_at_any_time_counts_in_the_export(reviewed):
+    """The TubeTracker app lets a reviewer fix a tube at the time they see it, not only at the tool's trace times."""
+    from sparsetrack.review import reviewed_series
+
+    cache, pred, out = reviewed
+    prefill(cache, pred, out, log=lambda *a: None)
+    bench = Bench(cache, out, annotator="reviewer")
+    plan = bench.state()["trace_plan"]["g001"]
+    extra = plan[0] + 3
+    assert extra not in plan
+    bench.set_trace("g001", {"bin": extra, "state": "full", "points": [[60.0, 70.0], [60.0, 100.0]]})  # 30 px
+    doc = json.loads(out.read_text())
+    rv = reviewed_series(doc, "g001", _pred()["grains"][0])
+    assert (extra, 30.0) in rv["anchors"] and rv["px"][extra] == pytest.approx(30.0)
+    export(out, log=lambda *a: None)
+    rows = {int(r["bin"]): r for r in csv.DictReader(open(out.parent / "reviewed_traces.csv")) if r["grain"] == "g001"}
+    assert rows[extra]["checked"] == "yes" and float(rows[extra]["length_px"]) == pytest.approx(30.0)
+    growth = {int(r["bin"]): float(r["length_px"]) for r in csv.DictReader(open(out.parent / "reviewed_growth.csv"))
+              if r["grain"] == "g001"}
+    assert growth[extra] == pytest.approx(30.0, abs=0.01)
+    bench.set_trace("g001", {"bin": extra + 2, "state": "burst"})  # burst there: nothing measured after it
+    rv = reviewed_series(json.loads(out.read_text()), "g001", _pred()["grains"][0])
+    assert rv["burst"] == extra + 2 and len(rv["px"]) == extra + 2
+
+
+def test_an_ungerminated_grain_lost_partway_is_censored_where_it_was_lost(reviewed):
+    from sparsetrack.report import onset_intervals
+    from sparsetrack.review import population_input
+
+    cache, pred, out = reviewed
+    doc_pred = _pred()
+    doc_pred["grains"][1]["observed_until_frame"] = 20 * FPB + FPB // 2  # the model lost g002 at bin 20
+    doc_pred["grains"][1]["flags"] = ["grain_lost_after:6150"]
+    pred.write_text(json.dumps(doc_pred))
+    prefill(cache, pred, out, log=lambda *a: None)
+    doc = json.loads(out.read_text())
+    assert doc["prefill"]["observed_until"] == {"g002": 20 * FPB + FPB // 2}
+    iv = dict(zip(["g001", "g002"], onset_intervals(population_input(doc))))
+    assert iv["g002"] == (20 * FPB + FPB // 2, float("inf"))
+    bench = Bench(cache, out, annotator="reviewer")
+    bench.set_trace("g002", {"bin": 15, "state": "burst"})  # a person saw it burst earlier
+    iv = dict(zip(["g001", "g002"], onset_intervals(population_input(json.loads(out.read_text())))))
+    assert iv["g002"] == (15 * FPB + FPB // 2, float("inf"))
+
+
+def test_summary_keeps_each_movies_own_units_and_sample_columns(tmp_path):
+    from sparsetrack.summary import write_summary
+    fpb, nb = 300, 30
+    frames = [b * fpb + fpb // 2 for b in range(nb)]
+    folders = []
+    for name in ("a", "b"):
+        f = tmp_path / name
+        (f / "analysis").mkdir(parents=True)
+        grains = [{"id": f"g{k}", "status": "emerged_within", "onset_interval": [frames[4 + k], frames[5 + k]],
+                   "length": {"frames": frames, "px": [0.0 if b < 5 + k else 1.0 * (b - 5 - k) for b in range(nb)]},
+                   "flags": []} for k in range(4)]
+        (f / "analysis" / "predictions.json").write_text(json.dumps({"frames_per_bin": fpb, "grains": grains}))
+        folders.append(f)
+    rows = write_summary(folders, tmp_path / "s", units=[(0.5, 2.0), (0.5, 4.0)], log=lambda *a: None,
+                         extra=[{"genotype": "WT"}, {"genotype": "mut"}])
+    assert rows[1]["t50_min"] == pytest.approx(2 * rows[0]["t50_min"])  # same frames, twice the seconds per frame
+    lines = (tmp_path / "s" / "summary.csv").read_text().splitlines()
+    assert lines[0].startswith("movie,genotype,grains") and lines[1].startswith("a,WT,") and lines[2].startswith("b,mut,")
+
+
+def test_prepare_reports_its_progress_keyframe_by_keyframe():
+    from sparsetrack.stack import _counted
+    seen = []
+    assert list(_counted(iter("abc"), 3, lambda d, n: seen.append((d, n)))) == ["a", "b", "c"]
+    assert seen == [(1, 3), (2, 3), (3, 3)]

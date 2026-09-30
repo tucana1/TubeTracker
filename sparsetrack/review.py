@@ -58,14 +58,39 @@ def onset_body(res: dict, fpb: int) -> dict:
     return {"verdict": "no_emergence_by_end"}
 
 
+def series_index(res: dict, b: int, fpb: int) -> int | None:
+    """Index of bin ``b`` in a grain's per-bin series (length, tip, rotation, drift): the series start at the
+    movie's reference bin (``frames[0] // fpb``, bin 9 on movie 2, whose first bins were settling), not at bin 0.
+    None for a bin the series do not cover."""
+    frames = (res.get("length") or {}).get("frames") or []
+    if not frames:
+        return None
+    t = int(b) - int(frames[0]) // int(fpb)
+    return t if 0 <= t < len(frames) else None
+
+
+def lengths_by_bin(res: dict, fpb: int, n_bins: int | None = None) -> np.ndarray:
+    """The model's length at every bin from bin 0 (zero before the movie's reference bin), ``n_bins`` long
+    (default: to the series' last bin)."""
+    frames = (res.get("length") or {}).get("frames") or []
+    px = (res.get("length") or {}).get("px") or []
+    start = int(frames[0]) // int(fpb) if frames else 0
+    n = int(n_bins) if n_bins is not None else start + len(px)
+    out = np.zeros(n)
+    seg = np.asarray(px[: max(n - start, 0)], float)
+    out[start:start + len(seg)] = seg
+    return out
+
+
 def trace_body(res: dict, b: int, pred: dict, min_px: float = 2.0) -> dict:
     """The model's reading at bin ``b`` as the tool's trace answer. SparseTrack's paths are in the grain's
     own frame (its drift removed), which is the tool's grain-following view."""
     from .report import turned_path
 
     px = res.get("length", {}).get("px") or []
-    length = float(px[b]) if b < len(px) else 0.0
-    path = turned_path(res, b, pred)
+    t = series_index(res, b, int(pred.get("frames_per_bin", 300)))
+    length = float(px[t]) if t is not None and t < len(px) else 0.0
+    path = turned_path(res, t or 0, pred)
     if length < min_px or len(path) < 2:
         return {"bin": b, "state": "no_tube", "points": [], "view": "model"}
     return {"bin": b, "state": "full", "points": to_length(path, length).round(2).tolist(), "view": "model"}
@@ -86,8 +111,11 @@ def trace_confidence(px, i: int) -> float:
     return 1.0 / (1.0 + math.exp(-z))
 
 
-def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=print) -> Path:
-    """Write the review labels file ``out`` (and the proposals as made, ``*.model.json``)."""
+def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=print,
+            follow: dict | None = None) -> Path:
+    """Write the review labels file ``out`` (and the proposals as made, ``*.model.json``). ``follow``: per grain id,
+    the (n_bins, 2) offsets of its grain-following view if already known (the TubeTracker app passes the analysis'
+    own drift); others are measured as the labelling tool does (seconds per grain)."""
     from . import __version__
     from .bench.server import Bench, trace_bins
     from .report import turned_path
@@ -104,8 +132,10 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
     model_name = f"SparseTrack {pred.get('params', {}).get('version') or __version__}"
     bench = Bench(cache, building, annotator=model_name, follow_mode="review")  # the analysis' own frame
     bench.save = lambda *a, **k: None  # the answers go through the tool's own code; the file is written once, below
+    for gid, offsets in (follow or {}).items():
+        bench.set_follow(gid, offsets)
     census, fpb, nb = bench.doc["grains"], bench.fpb, bench.n_bins
-    n_traces, check_first, confidence = 0, {}, {}
+    n_traces, check_first, confidence, observed_until = 0, {}, {}, {}
     for res in pred.get("grains", []):
         g = census.get(res["id"])
         if g is None or g.get("excluded"):
@@ -113,18 +143,20 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
         hints = [f for f in res.get("flags", []) if f.startswith(REVIEW_HINTS)]
         if hints:
             check_first[res["id"]] = hints
+        if res.get("observed_until_frame") is not None:  # lost partway: not known to stay ungerminated after that
+            observed_until[res["id"]] = int(res["observed_until_frame"])
         body = onset_body(res, fpb)
         bench.set_onset(res["id"], body)
         if body["verdict"] not in ("emerged_within", "emerged_at_start"):
             continue
-        px = res.get("length", {}).get("px") or []
+        px = lengths_by_bin(res, fpb, nb)  # by bin: the series start at the reference bin, not bin 0
         for b in trace_bins(body.get("first_visible_bin") or 0, nb):
             bench.set_trace(res["id"], trace_body(res, b, pred))
             rec = bench.doc["labels"][res["id"]]["traces"][str(b)]
-            if px:
+            if px.any():
                 rec["model_confidence"] = round(trace_confidence(px, b), 3)
                 confidence[res["id"]] = min(confidence.get(res["id"], 1.0), rec["model_confidence"])
-            full = turned_path(res, b, pred)
+            full = turned_path(res, series_index(res, b, fpb) or 0, pred)
             if len(full) >= 2:  # the whole route, so a reviewer can slide the apex along it (the tool's - and = keys)
                 rec["model_path"] = to_length(full, float(np.sum(np.hypot(*np.diff(full, axis=0).T))) + 15.0).round(2).tolist()
             n_traces += 1
@@ -136,7 +168,7 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
         lab.pop("time_spent_s", None)
     info = {"source": source, "field": str(cache), "method": pred.get("method"), "model": model_name,
             "created": time.strftime("%Y-%m-%dT%H:%M:%S"), "grains": len(doc["labels"]), "traces": n_traces,
-            "check_first": check_first, "confidence": confidence}
+            "check_first": check_first, "confidence": confidence, "observed_until": observed_until}
     doc["prefill"] = info
     doc["updated"] = info["created"]
     out.write_text(json.dumps(doc, indent=1))
@@ -177,30 +209,47 @@ def _yn(checked: bool, changed: bool | None) -> str:
 def asked_bins(onset: dict, saved: dict, n_bins: int) -> list[int]:
     """The bins the tool asks this grain's traces at now: its own plan for the current onset (a moved onset
     moves the first one), ending at a burst. The tool keeps listing answers given after a burst; the
-    model's there were proposed before the burst was found, so only a person's are kept."""
+    model's there were proposed before the burst was found, so only a person's are kept. A person's answer
+    at a bin outside the plan (the TubeTracker app lets a reviewer fix a tube at any time) counts too."""
     from .bench.server import grain_trace_plan
 
     if onset.get("verdict") not in ("emerged_within", "emerged_at_start"):
         return []
+    human = lambda b: (saved.get(str(b)) or {}).get("review_origin") == "human"
     plan = grain_trace_plan(onset.get("first_visible_bin") or 0, n_bins, saved)
+    plan = sorted(set(plan) | {int(b) for b in saved if human(b) and 0 <= int(b) < n_bins})
     burst = next((b for b in plan if (saved.get(str(b)) or {}).get("state") == "burst"), None)
-    return [b for b in plan
-            if burst is None or b <= burst or (saved.get(str(b)) or {}).get("review_origin") == "human"]
+    return [b for b in plan if burst is None or b <= burst or human(b)]
+
+
+def human_burst_bin(lab: dict) -> int | None:
+    """The first bin at which a person said the grain had burst (or was gone), if any."""
+    bins = [int(b) for b, t in (lab.get("traces") or {}).items()
+            if t.get("state") == "burst" and t.get("review_origin", "human") == "human"]
+    return min(bins) if bins else None
 
 
 def population_input(doc: dict, checked_only: bool = False) -> dict:
     """The reviewed onsets in the form ``report.write_population`` reads (with ``checked_only``, only the
-    onsets answered in the tool, not the model's still unchecked)."""
+    onsets answered in the tool, not the model's still unchecked). A grain that did not germinate but was lost
+    partway (a person marked it burst, or the model lost it: the pre-fill's ``observed_until``) is known not to
+    have germinated only until then, as in the model's own germination curve."""
     fpb, nb = int(doc["frames_per_bin"]), int(doc["n_bins"])
     frames = [fpb // 2, (nb - 1) * fpb + fpb // 2]
+    lost = (doc.get("prefill") or {}).get("observed_until") or {}
     grains = []
     for gid, lab in doc.get("labels", {}).items():
         on = lab.get("onset") or {}
         if doc["grains"].get(gid, {}).get("excluded") or not on or (checked_only and on.get("review_origin") != "human"):
             continue
         la, fv = on.get("last_absent_frame"), on.get("first_visible_frame")
-        grains.append({"id": gid, "status": on.get("verdict"), "length": {"frames": frames},
-                       "onset_interval": [la if la is not None else fv - fpb, fv] if fv is not None else None})
+        rec = {"id": gid, "status": on.get("verdict"), "length": {"frames": frames},
+               "onset_interval": [la if la is not None else fv - fpb, fv] if fv is not None else None}
+        burst = human_burst_bin(lab)
+        until = burst * fpb + fpb // 2 if burst is not None else lost.get(gid)
+        if on.get("verdict") == "no_emergence_by_end" and until is not None:
+            rec["observed_until_frame"] = int(until)
+        grains.append(rec)
     return {"grains": grains}
 
 
@@ -233,25 +282,38 @@ def reviewed_curve(model_px, fv: int | None, anchors: list[tuple[int, float]]) -
     return np.maximum.accumulate(np.maximum(out, 0.0))
 
 
+def reviewed_series(doc: dict, gid: str, model_res: dict | None) -> dict | None:
+    """One germinated grain after review: ``px``, its length at every bin (``reviewed_curve`` through the lengths a
+    person checked, cut at a burst: nothing is measured after it), ``anchors`` [(bin, px)] and ``burst`` (bin or
+    None). None for a grain that is excluded or did not germinate."""
+    fpb, nb = int(doc["frames_per_bin"]), int(doc["n_bins"])
+    lab = doc.get("labels", {}).get(gid) or {}
+    on = lab.get("onset") or {}
+    if doc["grains"].get(gid, {}).get("excluded") or on.get("verdict") not in ("emerged_within", "emerged_at_start"):
+        return None
+    saved = lab.get("traces") or {}
+    plan = asked_bins(on, saved, nb)
+    checked = [saved[str(b)] for b in plan if str(b) in saved and saved[str(b)].get("review_origin") == "human"]
+    anchors = [(t["bin"], float(t.get("length_px") or 0.0) if t["state"] in ("full", "partial") else 0.0)
+               for t in checked if t["state"] in ("full", "partial", "no_tube")]
+    burst = next((t["bin"] for t in checked if t["state"] == "burst"), None)
+    px = lengths_by_bin(model_res, fpb, nb) if model_res else np.zeros(nb)  # by bin, from bin 0
+    return {"px": reviewed_curve(px, on.get("first_visible_bin") or 0, anchors)[:burst], "anchors": anchors,
+            "burst": burst}
+
+
 def write_reviewed_growth(doc: dict, pred: dict, out: Path, um: float | None, spf: float | None) -> int:
     """``reviewed_growth.csv`` and ``growth_curves.png``: every germinated grain's reviewed curve."""
     from .report import write_growth_curves
 
-    fpb, nb = int(doc["frames_per_bin"]), int(doc["n_bins"])
+    fpb = int(doc["frames_per_bin"])
     model = {g["id"]: g for g in pred.get("grains", [])}
     curves, rows = [], []
     for gid, lab in sorted(doc.get("labels", {}).items()):
-        on = lab.get("onset") or {}
-        if doc["grains"].get(gid, {}).get("excluded") or on.get("verdict") not in ("emerged_within", "emerged_at_start"):
+        rv = reviewed_series(doc, gid, model.get(gid))
+        if rv is None:
             continue
-        saved = lab.get("traces") or {}
-        plan = asked_bins(on, saved, nb)
-        checked = [saved[str(b)] for b in plan if str(b) in saved and saved[str(b)].get("review_origin") == "human"]
-        anchors = [(t["bin"], float(t.get("length_px") or 0.0) if t["state"] in ("full", "partial") else 0.0)
-                   for t in checked if t["state"] in ("full", "partial", "no_tube")]
-        burst = next((t["bin"] for t in checked if t["state"] == "burst"), None)
-        px = (model.get(gid) or {}).get("length", {}).get("px") or [0.0] * nb
-        L = reviewed_curve(px, on.get("first_visible_bin") or 0, anchors)[:burst]  # nothing is measured after a burst
+        on, L, anchors = lab["onset"], rv["px"], rv["anchors"]
         frames = [b * fpb + fpb // 2 for b in range(len(L))]
         curves.append({"id": gid, "status": on["verdict"], "onset_frame": on.get("first_visible_frame"),
                        "length": {"frames": frames, "px": L.round(2).tolist()}, "flags": [],

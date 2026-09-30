@@ -113,11 +113,19 @@ def movie_identity(path: str | Path) -> dict:
             "mtime": int(stat.st_mtime)}
 
 
+def _counted(items: Iterable, total: int, progress) -> Iterable:
+    """``items``, calling ``progress(done, total)`` after each."""
+    for done, item in enumerate(items, 1):
+        yield item
+        progress(done, total)
+
+
 def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, ref_bins: int = 3,
-            ref_start: int | str = "auto", log=print) -> dict:
+            ref_start: int | str = "auto", log=print, progress=None) -> dict:
     """Build the cache for ``movie`` in ``out_dir`` and return its metadata.
 
-    ``ref_start`` = first bin of the "before" reference, or "auto" (first settled bin).
+    ``ref_start`` = first bin of the "before" reference, or "auto" (first settled bin). ``progress(done, total)``,
+    if given, is called after every keyframe read (the TubeTracker app shows it).
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -125,8 +133,10 @@ def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, r
     info: MovieInfo = probe(movie)
     log(f"{info.path}: {info.n_frames} frames, {len(info.keyframes)} keyframes "
         f"(interval {info.keyframe_interval}), {info.width}x{info.height} @ {info.fps:g} fps")
-    counts = build_bins(iter_keyframes(info), info.n_frames, frames_per_bin,
-                        (info.height, info.width), out_dir / "bins.npy")
+    frames = iter_keyframes(info)
+    if progress is not None:
+        frames = _counted(frames, len(info.keyframes), progress)
+    counts = build_bins(frames, info.n_frames, frames_per_bin, (info.height, info.width), out_dir / "bins.npy")
     log(f"binned into {len(counts)} bins of {frames_per_bin} frames in {time.time() - started:.0f} s")
     per_bin = float(np.median(counts)) if len(counts) else 0.0
     if per_bin < 8:  # SparseTrack was built on ~25 keyframes averaged per bin (a keyframe every 12 frames)
