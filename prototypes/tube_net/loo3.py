@@ -7,10 +7,11 @@ the third (30 Sep 2026).
 The recipe is 0.8.0's (``prototypes/learned_flood/models/tubes_bn_real_ld_m2.recipe.sh``): BatchNorm base
 ``tn_bn_syn``, 3000 steps at lr 1e-3, each batch of 32 a quarter v5 shards, a quarter v6 shards and half trace crops
 (v3, flat caps) of the training movies - their crops pooled, so each movie counts by its number of crops - and
-``bg_px`` 96 stored in the checkpoint. Movie 1's crops are ``realdata.py m1 ... --flat-cap --over-grain 0.6 --follow``; ``--real real4``: every movie's crops
-with ``--rim-bg 4`` too (the grain's rim scored as background away from the tube).
-Trains ``runs/tube_net/NAME_<movies>.pt`` (e.g. tn3_ldm1 = ld + m1 traces, judged on m2) unless it exists, then runs
-the pixel check on the held-out movie (``pixels.py``, in memory) into ``runs/tube_net/pix_NAME_<movies>.json``.
+``bg_px`` 96 stored in the checkpoint. Movie 1's crops are ``realdata.py m1 ... --flat-cap --over-grain 0.6
+--follow``; with ``--real real4`` every movie's crops also have ``--rim-bg 4`` (the grain's rim scored as background
+away from the tube). Trains ``runs/tube_net/NAME_<movies>.pt`` (e.g. tn3_ldm1 = ld + m1 traces, judged on m2) unless
+it exists, then runs the pixel check on the held-out movie (``pixels.py``, in memory) into
+``runs/tube_net/pix_NAME_<movies>_on_<held>.json``.
 The fold that trains on ld + m2 is 0.8.0's own network (the same recipe and crops): judge movie 1 with it.
 """
 
@@ -25,7 +26,7 @@ REPO = Path(__file__).resolve().parents[2]
 OUT = REPO / "runs/tube_net"
 V5 = "runs/learned_flood/shards/train_v5s[0-2].npz,runs/learned_flood/shards/train_v5m2s1[0-2].npz"
 V6 = "runs/synth_v6/shards/train_v6*.npz"
-REAL = "runs/tube_net/shards/{}_{}.npz"  # crop version (real3: flat caps; real4: + the grain's rim as background), movie
+REAL = "runs/tube_net/shards/{}_{}.npz"  # crop version (real3: flat caps; real4: + rim as background), movie
 MOVIES = ("ld", "m2", "m1")
 
 

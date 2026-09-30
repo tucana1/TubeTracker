@@ -31,7 +31,8 @@ FEATURES = ("ring_rel", "body_rel", "disc_dark", "fill", "rim_cov", "rim_cv", "o
 
 def reference_image(bins: np.ndarray, meta: dict, census: dict) -> np.ndarray:
     """The census's reference: the registered mean of its reference bins, flat-fielded if the census was."""
-    which = census.get("reference_bins") or list(range(int(meta.get("ref_start", 0)), int(meta.get("ref_start", 0)) + 3))
+    rs = int(meta.get("ref_start", 0))
+    which = census.get("reference_bins") or list(range(rs, rs + 3))
     h, w = bins.shape[1:]
     acc = np.zeros((h, w), np.float64)
     for b in which:

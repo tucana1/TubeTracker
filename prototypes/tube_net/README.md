@@ -252,3 +252,118 @@ analyze('../TubeTracker/runs/sparsetrack/m1', '../TubeTracker/runs/sparsetrack/m
 cd ../TubeTracker && .venv/bin/python -m sparsetrack eval --labels benchmark/labels/m1_v1.json \
     --pred runs/sparsetrack/m1_frozen_0.7.0_bn/predictions.json --out benchmark/reports/m1_v1_scores_0.7.0_bn.md
 ```
+
+## Three movies (30 Sep 2026, after movie 1's one-time frozen scoring)
+
+**Status: movie 1's traces do not help the other movies; 0.8.0's network stays the default.** Judged on movie 2, the
+recipe with ld + m1 traces marks more of its long tubes (+6 points) but fewer young stubs and more grain rims before
+any tube, and reads it worse end to end (lengths 17 vs 24/54, paired -7, 95% CI -12 to -2). On movie 1, 0.8.0's network
+(ld + m2 traces) marks 75% of the traced tubes, far above 0.7.0's 46%, and movie 2's traces alone 80%. A network
+trained on all three movies is saved (below) but not recommended.
+
+Movie 1 (m1: 30 grains labelled blind, benchmark/labels/m1_v1.json; frozen scores of five versions in
+benchmark/reports/m1_v1_frozen.md) makes three labelled movies. The recipe above (tn_bn_r3v6, 0.8.0's) was judged
+leave one movie out over all three, each movie read with networks that never saw its traces.
+
+**Movie 1's trace crops** (`realdata.py m1 runs/tube_net/shards/real3_m1.npz --flat-cap --over-grain 0.6 --follow`;
+1143 crops: 516 along traces, 172 at exits, 287 at neighbouring bins, 168 negatives, from 58 FULL and 28 PARTIAL
+traces). Two things are new in movie 1 and handled by options that leave ld's and m2's crops bit-identical:
+- 6 of its 86 traced tubes start inside their grain (a pore facing the camera; g005, g015, g023, g030, g062): for those
+  the grain's inside is left unscored rather than called background;
+- its grains move (a median 33 px by the end; 8% of traced bins +/- 1-2 lie more than 2 px from the traced bin's place,
+  against 0.7% on ld and 3% on m2): a neighbouring-bin crop is skipped where the grain moved more than 1.5 px (29
+  skipped), and the negatives before onset are placed where the grain is at that bin (the labelling tool's own grain
+  offsets, which gave every trace's view offset).
+
+**Folds** (`loo3.py`; 0.8.0's recipe, the two training movies' crops pooled in the trace half of each batch):
+- movie 1 held out: 0.8.0's own network (ld + m2 traces; same recipe and crops);
+- movie 2 held out: tn3_ldm1 (ld + m1) against tn_bn_r3v6_ld (ld only: the two-movie fold);
+- dev movie held out: tn3_m2m1 (m2 + m1) against tn_bn_r3v6_m2 (m2 only).
+
+**Pixel checks on the movie each network did not see** (`pixels.py`, maps in memory; movie 1's rim check follows each
+grain bin by bin; `pixpair.py` pairs two networks over grains with a 95% bootstrap):
+
+Movie 1 (50 FULL traces not touching anything; young <= 8 px: 27):
+
+| network | traced | long | stubs, tips seen | young stubs, tips | beside | rim before onset | marks end vs apex: median (IQR), within 2 px |
+|---|---|---|---|---|---|---|---|
+| tubes_synth_v1 (0.7.0; no traces) | 46% | 38% | 31/50, 29 | 14/27, 14 | 1.2% | 18.4% | +0.2 (-7.3..+2.0), 15/32 |
+| tn_bn_r3v6_ld (ld traces) | 69% | 66% | 37/50, 32 | 16/27, 17 | 2.9% | 26.3% | +0.0 (-6.7..+2.0), 18/32 |
+| tn_bn_r3v6_m2 (m2 traces) | 80% | 75% | 43/50, 43 | 22/27, 24 | 3.1% | 28.1% | +1.0 (+0.0..+2.5), 18/32 |
+| **0.8.0: tubes_bn_real_ld_m2 (ld + m2 traces)** | 75% | 71% | 39/50, 39 | 19/27, 20 | 3.5% | 29.3% | +0.8 (-0.1..+2.1), 19/32 |
+
+Paired over movie 1's 29 grains: 0.8.0's network against ld's traces alone +6.1 points of traced tube (95% CI -0.1 to
++13.0), tips +7 (+2 to +13), young stubs +3 (+0 to +6); against movie 2's traces alone -4.5 (-9.8 to +0.2), stubs -4
+(-8 to -1), young stubs -3 (-7 to +0); against 0.7.0's synthetic-only network +29.7 (+15.5 to +40.7). Movie 1 is
+marked much like movie 2 (both filmed on 14 Jul): movie 2's traces alone did best there.
+
+Movie 2 (54 FULL traces; young: 20):
+
+| network | traced | long | stubs, tips seen | young stubs, tips | beside | rim before onset | marks end vs apex: median (IQR), within 2 px |
+|---|---|---|---|---|---|---|---|
+| tn_bn_r3v6_ld (ld traces; the two-movie fold) | 84% | 84% | 49/54, 42 | 16/20, 13 | 4.0% | 8.7% | +0.0 (-1.1..+1.6), 27/40 |
+| tn3_ldm1 (ld + m1 traces) | 90% | 92% | 45/54, 38 | 11/20, 8 | 5.0% | 14.8% | +0.8 (-1.1..+2.6), 22/40 |
+
+Paired over 18 grains: traced +6.0 points (+0.6 to +11.4), stubs -4 (-8 to +1), tips -4 (-8 to +0), young stubs -5
+(-9 to -1); rim marks before onset in 97 of 655 grain-bins (13 grains) against 57 (9 grains).
+
+Dev movie (116 FULL traces; young: 22):
+
+| network | traced | long | stubs, tips seen | young stubs, tips | beside | rim before onset | marks end vs apex: median (IQR), within 2 px |
+|---|---|---|---|---|---|---|---|
+| tn_bn_r3v6_m2 (m2 traces; the two-movie fold) | 98% | 100% | 109/116, 106 | 20/22, 21 | 5.4% | 11.1% | +1.5 (+0.5..+3.0), 63/104 |
+| tn3_m2m1 (m2 + m1 traces) | 98% | 100% | 111/116, 107 | 20/22, 21 | 4.2% | 16.3% | +1.5 (+0.5..+3.5), 56/104 |
+
+Paired over 31 grains: traced +0.2 points (-0.8 to +1.1), stubs +2 (+0 to +5); rim marks before onset in 41 of 252
+grain-bins (12 grains) against 28 (10 grains).
+
+So adding movie 1's traces marks more of movie 2's long tubes but fewer of its young stubs, changes nothing on the dev
+movie's tubes, and on both movies marks more grain rims before any tube exists - where the flood can start a false
+tube.
+
+**End to end** (SparseTrack's defaults, only the network changed; maps in memory, `bench.py`; paired over grains with
+a 95% bootstrap). Movie 2, the movie the flood reads:
+
+| network | lengths | onsets | length and tip | paired: lengths | onsets | length and tip |
+|---|---|---|---|---|---|---|
+| tn_bn_r3v6_ld (ld traces; the two-movie fold, runs/tube_net/e2e_tn_bn_r3v6_ld_bg96_on_m2.json) | 24/54 | 4/18 | 22 | | | |
+| tn3_ldm1 (ld + m1 traces; runs/tube_net/e2e3_tn3_ldm1_on_m2.json) | 17/54 | 4/18 | 14 | **-7 (-12 to -2)** | +0 (+0 to +0) | **-8 (-14 to -3)** |
+
+Adding movie 1's traces reads movie 2 worse: young stubs read long or short (g005 +5 px at bins 130-140, g016 -6,
+g033 -4), long tubes lost (g005@73350 -67 px, g043@73350 -28), six grains losing hits and none gaining. Each network
+is one training draw (MPS training is not bit-reproducible and a second seed was not run), but the loss agrees with
+the pixel checks (young stubs -5, rim marks up). The dev movie (hybrid: only 3 of its grains are flood-read) was not
+benched (its maps did not change: traced +0.2 points). On movie 1 the three-movie fold is 0.8.0 itself: frozen, 8/50
+lengths, 3/12 onsets, length and tip 8 (secondary score, tubes over the grain measured from its edge: 10/50);
+0.7.0's network 8/50. Its lengths are held down by the reader, not the maps: the hybrid's germination veto
+(`Params.hybrid_onset`) reads 16 of 28 germinated grains as never germinating, 9 of them with their traced tube
+marked at 93-100%; the comparison of networks on movie 1 with the veto lifted was not run.
+
+**The network trained on all three movies** (`prototypes/learned_flood/models/tubes_bn_real_ld_m2_m1.pt`, sha1
+e2bcf871827ac996bcbf15d4d3110f860206054d; recipe `tubes_bn_real_ld_m2_m1.recipe.sh`: 0.8.0's recipe with movie 1's
+crops pooled into the trace half; synthetic validation at the end v5 loss 0.237, recall 76.1%; v6 0.168, 85.2%). Not
+recommended as the default: the only end-to-end judgement of its recipe with movie 1's traces in it (movie 2 held
+out) lost 7 lengths. 0.8.0's network (ld + m2) stays.
+
+**A fifth recipe tried (rim_bg; decided after the pixel checks above showed rim marks rising, before any of its
+results):** with movie 1's traces added, rim marks before onset rose on both other movies (ld 11.1% -> 16.3%, m2 8.7%
+-> 14.8%), and on movie 1 every network marks its rims in 26-29% of grain-bins before onset. The flood starts tubes on
+such marks: on movie 1 g065, a start on rim noise at bin 30 (forgotten 40 bins later) held the flood while the real
+tube's base arrived (bins 46-49), so the flood never started the real tube (its maps mark all 126 points of the bin-140
+trace, arriving in order outwards). The crops never say that a grain's rim is not tube: only its inside and a band
+6-14 px from the traced tube are scored background. `realdata.py --rim-bg 4` scores the rim (r - 1 to r + 4 px) as
+background except within 5 px of the traced tube (all of it on the negatives before onset), on traces not touching
+anything; crops `real4_*`. Rule fixed before its results: it replaces real3 only if, judged leave one movie out, it
+lowers rim marks before onset without losing traced-point marking or young stubs, and end to end it is at least level.
+
+**Not done (stopped for the demo, 30 Sep):** the dev movie end to end with the m2 + m1 fold (its maps did not change);
+movie 1 end to end for the single-movie folds with the germination veto lifted (`hybrid_onset`); a second training seed
+of the movie-2 fold (`seeds3.sh`: how much of the -7 is training noise); the rim_bg recipe's other two folds and its
+end-to-end benches; the radial flood tip on the three-movie maps (`bench3.sh` has them all queued). Worth doing before
+movie 1's traces go into a network: find out why they hurt movie 2 (its moving grains - 8% of neighbouring-bin crops
+shifted more than 2 px, 29 dropped - or its rims, marked before onset in 26-29% of grain-bins by every network).
+
+Files (three movies): `loo3.py`, `pixpair.py`, `rescore.py`, `bench3.sh`, `pix_m1.sh`, `seeds3.sh`; pixel checks
+`runs/tube_net/pix3_*.json`; benches `runs/tube_net/e2e3_*.json` (the frozen movie-1 predictions rescored:
+`e2e3_v0*frozen_on_m1*.json`); networks `runs/tube_net/tn3_*.pt`, `tn4_*.pt`; crops `runs/tube_net/shards/real3_m1.npz`,
+`real4_*.npz`.
