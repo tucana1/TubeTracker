@@ -187,6 +187,16 @@ def cmd_eval(args) -> None:
         Path(args.out).write_text(text)
 
 
+def cmd_summary(args) -> None:
+    """Several analysed movies side by side: one table and one figure."""
+    from .summary import write_summary
+    folders = [run_folder(m) for m in args.movies]
+    missing = [str(f) for f in folders if not (f / "analysis" / "predictions.json").exists()]
+    if missing:
+        raise SystemExit(f"not analysed yet (run `sparsetrack run` first): {', '.join(missing)}")
+    write_summary(folders, Path(args.out), calibration(args.um_per_px, args.s_per_frame))
+
+
 def cmd_retest(args) -> None:
     from .evaluate import load, retest_report
     r = retest_report(load(args.labels))
@@ -264,6 +274,13 @@ def main(argv=None) -> None:
     r.add_argument("--s-per-frame", type=float, help="frame interval: onsets in minutes, growth in um/min")
     r.add_argument("--no-browser", action="store_true")
     r.set_defaults(func=cmd_run)
+    y = sub.add_parser("summary", help="several analysed movies side by side: germinated share, T50, growth rate "
+                                       "(summary.csv, summary.png)")
+    y.add_argument("movies", nargs="+", help="movies (as given to run) or their run folders")
+    y.add_argument("--out", default="runs/sparsetrack/summary", help="default runs/sparsetrack/summary")
+    y.add_argument("--um-per-px", type=float)
+    y.add_argument("--s-per-frame", type=float)
+    y.set_defaults(func=cmd_summary)
     v = sub.add_parser("review", help="check and correct an analysis in the labelling tool, pre-filled with the "
                                       "model's answers; exports the reviewed results when you stop")
     v.add_argument("movie", help="the movie, as given to run (or its output folder)")

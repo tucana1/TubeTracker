@@ -235,3 +235,33 @@ def test_the_growth_view_shows_what_changed_over_the_last_bins():
     assert at(12) == -50.0 and at(12 + GROWTH_LAG - 1) == -50.0  # while the lag still reaches back before bin 12
     assert at(12 + GROWTH_LAG) == 0.0 and at(5) == 0.0  # still material cancels; nothing new before bin 12
     assert R.contrast("k", 20.0, 20.0, 10, "g") == (-30.0, 30.0)
+
+
+def test_summary_puts_movies_side_by_side(tmp_path):
+    from sparsetrack.summary import write_summary
+    fpb, nb = 300, 40
+    frames = [b * fpb + fpb // 2 for b in range(nb)]
+    folders = []
+    for name, first in (("early", 5), ("late", 20)):  # onsets from bin `first` on, one grain per bin; growth 0.5 px/bin
+        f = tmp_path / name
+        (f / "analysis").mkdir(parents=True)
+        (f / "cache").mkdir()
+        grains = []
+        for k in range(8):
+            fv = first + k if k < 6 else None  # 6 of 8 germinate
+            px = [0.0 if fv is None or b < fv else 0.5 * (b - fv) for b in range(nb)]
+            grains.append({"id": f"g{k}", "status": "emerged_within" if fv is not None else "no_emergence_by_end",
+                           "onset_interval": [frames[fv - 1], frames[fv]] if fv is not None else None,
+                           "length": {"frames": frames, "px": px}, "flags": []})
+        (f / "analysis" / "predictions.json").write_text(json.dumps({"frames_per_bin": fpb, "grains": grains}))
+        (f / "cache" / "grains.json").write_text(json.dumps({"grains": [{"id": g["id"], "isolated": True} for g in grains]}))
+        folders.append(f)
+    rows = write_summary(folders, tmp_path / "summary", units=(0.5, 2.0), log=lambda *a: None)
+    early, late = rows
+    assert early["grains"] == late["grains"] == 8 and abs(early["germinated"] - 0.75) < 1e-6
+    assert late["t50_frame"] - early["t50_frame"] == 15 * fpb  # the late movie's onsets are 15 bins later
+    assert abs(early["growth_px_per_bin"] - 0.5) < 0.05
+    assert abs(early["growth_um_per_min"] - 0.5 * 0.5 / (fpb * 2.0 / 60.0)) < 0.01  # px/bin -> um/min
+    assert (tmp_path / "summary" / "summary.png").exists()
+    text = (tmp_path / "summary" / "summary.csv").read_text()
+    assert text.splitlines()[0].startswith("movie,grains,germinated") and "late" in text

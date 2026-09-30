@@ -25,7 +25,11 @@ python3 -m venv .venv
    the launcher asks for the pixel size and frame interval (Enter skips) and keeps them in
    `calibration.json`; with them the tables also give onsets in minutes, lengths in um and
    growth in um/min (`sparsetrack run MOVIE --um-per-px 0.65 --s-per-frame 30` does the same
-   for one run).
+   for one run). With several movies (conditions, genotypes, repeats) the launcher also puts
+   them side by side: `runs/sparsetrack/summary/summary.csv` (per movie: grains, germinated share,
+   T50, median growth rate and final length, grains lost partway, and the checked T50 once a
+   movie has been reviewed) and `summary.png` (germination curves and growth rates together);
+   `sparsetrack summary MOVIE [MOVIE ...]` redoes it for any set.
 2. **Check and correct.** Double-click `Review_Movie_SparseTrack.command` and choose the
    same movie (or `.venv/bin/python -m sparsetrack review MOVIE`). The labelling tool
    opens with the model's answers already filled in: each grain's onset bracket, and its

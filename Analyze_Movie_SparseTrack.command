@@ -21,5 +21,9 @@ for MOVIE in "${MOVIES[@]}"; do
   echo "Analysing $MOVIE (5-10 minutes)..."
   .venv/bin/python -m sparsetrack run "$MOVIE" || { echo "Analysis of $MOVIE failed."; FAILED+=("$MOVIE"); }
 done
+if [ $(( ${#MOVIES} - ${#FAILED} )) -ge 2 ]; then  # several movies: side by side too
+  OK=(${MOVIES:|FAILED})
+  .venv/bin/python -m sparsetrack summary "${OK[@]}" && open runs/sparsetrack/summary/summary.png
+fi
 [ ${#FAILED} -gt 0 ] && { echo "Failed: ${FAILED[*]}"; read; exit 1; }
 echo "Done. To check and correct the answers, double-click Review_Movie_SparseTrack.command. You can close this window."
