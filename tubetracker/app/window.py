@@ -64,12 +64,20 @@ class Legend(Drawn):
         gc.StrokeLine(x, y, x + 14, y)
         gc.DrawText("tube", x + 18, y - gc.GetTextExtent("tube")[1] / 2)
         x += 18 + gc.GetTextExtent("tube")[0] + 10
-        for rgb, name in ((theme.TIP, "tip"), (theme.CHECK, "to check")):
-            gc.SetPen(wx.TRANSPARENT_PEN)
-            gc.SetBrush(wx.Brush(theme.colour(rgb)))
-            gc.DrawEllipse(x, y - 4, 8, 8)
-            gc.DrawText(name, x + 12, y - gc.GetTextExtent(name)[1] / 2)
-            x += 12 + gc.GetTextExtent(name)[0] + 10
+        gc.SetPen(wx.TRANSPARENT_PEN)
+        gc.SetBrush(wx.Brush(theme.colour(theme.TIP)))
+        gc.DrawEllipse(x, y - 4, 8, 8)
+        gc.DrawText("tip", x + 12, y - gc.GetTextExtent("tip")[1] / 2)
+        x += 12 + gc.GetTextExtent("tip")[0] + 10
+        mark = gc.CreatePath()  # the canvas' to-check diamond
+        mark.MoveToPoint(x + 5, y - 5)
+        mark.AddLineToPoint(x + 10, y)
+        mark.AddLineToPoint(x + 5, y + 5)
+        mark.AddLineToPoint(x, y)
+        mark.CloseSubpath()
+        gc.SetBrush(wx.Brush(theme.colour(theme.CHECK)))
+        gc.FillPath(mark)
+        gc.DrawText("to check", x + 14, y - gc.GetTextExtent("to check")[1] / 2)
 
 
 class MainFrame(wx.Frame):

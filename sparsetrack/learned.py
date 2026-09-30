@@ -483,6 +483,11 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     pstack = np.stack([np.clip(warp(prob.crop(b, gx, gy, half, off_abs), s), 0, 255).astype(np.uint8)
                        for b, s in zip(range(rs, rs + n_bins), resid)])
     present = pstack >= p.flood_p * P_SCALE
+    # beyond the movie frame the crops repeat its edge row or column (registration and cropping both do), so a tube
+    # that reaches the edge would run on along that streak (m2 g089: 260 px past the edge): nothing grows there
+    outside = np.stack([warp(renderer.outside(b, gx, gy, half, off_abs).astype(np.float32), s) > 0.5
+                        for b, s in zip(range(rs, rs + n_bins), resid)])
+    present &= ~outside
     yy, xx = np.mgrid[0:2 * half, 0:2 * half].astype(np.float32)
     rg, ang = np.hypot(xx - centre, yy - centre), np.arctan2(yy - centre, xx - centre)
     blocked = rg < gr - 1.0
@@ -512,6 +517,8 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
         res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), fl["tube"], None, None, None, centre)
         return res
     tube, t_in, dist = fl["tube"], fl["t_in"], fl["dist"]
+    if outside.any() and (tube & cv2.dilate(outside.any(axis=0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0).any():
+        flags.append("tube_at_frame_edge")  # its length is known only up to the edge
     tips = []
     zone = gr + p.flood_halo + p.flood_start_band
     exit_len = np.zeros(n_bins)

@@ -61,7 +61,7 @@ when **the movie's focus changed** (movie 2 was out of focus from about bin 13 t
 meanwhile are seen only once it is sharp again, so onsets at that time mean "visible by" (flag
 `onset_at_focus_change`).
 
-**How far to trust the model unchecked** (30 Sep 2026, SparseTrack 0.8.1, against one annotator's traces; length
+**How far to trust the model unchecked** (30 Sep 2026, SparseTrack 0.8.1-0.8.2, against one annotator's traces; length
 within max(2 px, 10%), onset within 2 bins). The tube network was fine-tuned on the first two movies' traces, so the
 honest numbers for those come from the same recipe trained on the *other* movie's traces:
 - sparse movie: lengths 73/104 (70%), length and tip 58, onsets 14/26; growth rate per grain within
@@ -81,7 +81,7 @@ honest numbers for those come from the same recipe trained on the *other* movie'
   of the annotator's on the sparse movie and 2.3 bins on movies 2 and 1. `sparsetrack eval` reports it and the
   growth-rate agreement.
 
-**Status (30 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.1 (below) is the
+**Status (30 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.2 (below) is the
 tracker, and the TubeTracker app (above) is its desktop front end. The cloud session's learned-evidence pipeline
 (`prototypes/learned_evidence/`, merged 29 Sep) was tested on the lab's movies and read fewer lengths than
 SparseTrack (ld 40/100 vs 69/104); it is kept as a research record. Work concentrated on isolated grains before

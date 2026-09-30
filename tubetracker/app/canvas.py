@@ -47,6 +47,19 @@ def disc(gc, x, y, r, rgb, edge=theme.HALO):
     gc.DrawEllipse(x - r, y - r, 2 * r, 2 * r)
 
 
+def diamond(gc, x, y, r, rgb, edge=theme.HALO):
+    """The mark of a reading to check (the timeline marks unsure readings the same way)."""
+    path = gc.CreatePath()
+    path.MoveToPoint(x, y - r)
+    path.AddLineToPoint(x + r, y)
+    path.AddLineToPoint(x, y + r)
+    path.AddLineToPoint(x - r, y)
+    path.CloseSubpath()
+    gc.SetPen(wx.Pen(theme.colour(edge), 1))
+    gc.SetBrush(wx.Brush(theme.colour(rgb)))
+    gc.DrawPath(path)
+
+
 def label(gc, text, x, y, rgb=(241, 245, 249), bold=False, size=10.5):
     gc.SetFont(theme.font(size, bold), theme.colour(rgb))
     tw, th = gc.GetTextExtent(text)[:2]
@@ -107,7 +120,7 @@ def draw_grains(gc, ctl, to_c, scale: float, w: float, h: float, zoomed: bool = 
                 stroke(gc, ring, theme.SELECTED, 2.2)
             if needs_check(g):
                 a = math.radians(-45)
-                disc(gc, cx + rr * math.cos(a), cy + rr * math.sin(a), 5.0 if zoomed else 3.8, theme.CHECK)
+                diamond(gc, cx + rr * math.cos(a), cy + rr * math.sin(a), 6.5 if zoomed else 5.0, theme.CHECK)
         if is_sel or (ov.get("names", True) and (scale >= 0.42 or needs_check(g))):
             label(gc, g["id"], cx + rr * 0.78 + 2, cy + rr * 0.55, theme.SELECTED if is_sel else (241, 245, 249),
                   bold=is_sel, size=11.0 if is_sel else 9.5)
