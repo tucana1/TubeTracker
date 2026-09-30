@@ -222,3 +222,16 @@ def test_census_warns_when_the_grains_are_not_the_expected_size():
     assert census_warnings([]) and "no grains" in census_warnings([])[0]
     assert not census_warnings([{"r": 12.0 + 0.2 * k} for k in range(10)])
     assert census_warnings([{"r": 17.8} for _ in range(8)] + [{"r": 12.0}])  # most at the top of the range
+
+
+def test_the_growth_view_shows_what_changed_over_the_last_bins():
+    from sparsetrack.render import GROWTH_LAG, Renderer
+    n = 30
+    bins = np.full((n, 40, 40), 150.0, np.float32)
+    bins[12:, 20, 20] = 100.0  # new dark material at bin 12, there from then on
+    meta = {"shifts": [[0.0, 0.0]] * n, "n_bins": n, "frames_per_bin": 300}
+    R = Renderer(bins, meta)
+    at = lambda b: R.growth_crop(b, b, 20.0, 20.0, 10)[10, 10]  # crop pixel (10, 10) = reference pixel (20, 20)
+    assert at(12) == -50.0 and at(12 + GROWTH_LAG - 1) == -50.0  # while the lag still reaches back before bin 12
+    assert at(12 + GROWTH_LAG) == 0.0 and at(5) == 0.0  # still material cancels; nothing new before bin 12
+    assert R.contrast("k", 20.0, 20.0, 10, "g") == (-30.0, 30.0)

@@ -32,7 +32,9 @@ python3 -m venv .venv
    tube traced at a few times. **Enter** confirms an answer as it stands; **-** and **=**
    shorten or lengthen a traced tube along the model's route (Shift: 5 px); otherwise fix it
    as you would label it (click the first bin where the tube is visible; click along the
-   tube from the grain to its tip). The bar at the top counts what you have checked, and
+   tube from the grain to its tip; **C** cycles the view: normal, high contrast, and growth, which shows
+   the bin minus the bin 6 bins earlier, so a growing tip stands out as a blob). The bar at the top counts
+   what you have checked, and
    "next unfinished" goes to the next answer still the model's. Grains come least sure
    first: the model's confidence in a reading rises with the tube's length and falls the
    longer the reading has stood still (fitted on one labelled movie, checked on the other).

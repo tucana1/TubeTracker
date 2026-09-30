@@ -388,7 +388,8 @@ class Bench:
         cx = g["x"] if cx is None else float(cx)
         cy = g["y"] if cy is None else float(cy)
         b0, b1 = int(b) - smooth, int(b) + smooth
-        img = self.renderer.mean_crop(b0, b1, cx, cy, v["half"], self.follow(gid), mark_outside=True)
+        crop = self.renderer.growth_crop if mode == "g" else self.renderer.mean_crop
+        img = crop(b0, b1, cx, cy, v["half"], self.follow(gid), mark_outside=True)
         window = self.renderer.contrast((gid, cx, cy), cx, cy, v["half"], mode, self.follow(gid))
         return png(self.renderer.to_display(img, window, v["zoom"]))
 

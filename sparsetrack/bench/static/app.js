@@ -1,6 +1,10 @@
 "use strict";
 // TubeTracker benchmark labelling UI. All judgements are made on registered bin averages.
 const $ = (sel) => document.querySelector(sel);
+// C cycles the views: normal, high contrast, growth (this bin minus 6 bins earlier: a growing tip stands
+// out, still material cancels)
+const NEXT_CONTRAST = { n: "h", h: "g", g: "n" };
+const CONTRAST_NAMES = { n: "normal", h: "high contrast", g: "growth" };
 const S = {
   st: null, view: "census", gid: null,
   step: "coarse", fineStart: 0, fv: null, la: null, coarseTile: null, consulted: new Set(),
@@ -337,7 +341,7 @@ function renderOnset(retest) {
       ${bpt * S.st.frames_per_bin} frames (label = first frame). <b>Click the first tile where a tube is
       clearly visible growing out of this grain.</b> Or: <kbd>N</kbd> no emergence by the end ·
       <kbd>S</kbd> already emerged at the start · <kbd>U</kbd> can't tell · <kbd>X</kbd> exclude ·
-      <kbd>C</kbd> contrast (${S.contrast === "h" ? "high" : "normal"}) · <kbd>←</kbd>/<kbd>→</kbd> grain.`);
+      <kbd>C</kbd> view (${CONTRAST_NAMES[S.contrast]}) · <kbd>←</kbd>/<kbd>→</kbd> grain.`);
     let boxes = "";
     if (prior && prior.first_visible_bin != null && prior.verdict === "emerged_within")
       boxes = boxAt(Math.floor(prior.first_visible_bin / bpt), L.coarse, "prior");
@@ -460,7 +464,7 @@ function renderTrace() {
     <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
     <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
     ${S.st.layout.trace.far ? `<button class="act ${S.traceView === "far" ? "on" : ""}" id="tX">X · extra wide</button>` : ""}
-    <button class="act ${S.contrast === "h" ? "on" : ""}" id="tC">C · high contrast</button>
+    <button class="act ${S.contrast !== "n" ? "on" : ""}" id="tC" title="normal, high contrast, or growth: this bin minus 6 bins earlier (a growing tip stands out)">C · ${CONTRAST_NAMES[S.contrast]}</button>
     <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button>
     <p class="muted">Onset: ${on ? VERDICT_TEXT[on.verdict] : "—"} ${on && on.first_visible_frame != null ? "· first visible f" + on.first_visible_frame : ""}</p></div></div>`;
   mountTraceCanvas(b);
@@ -489,7 +493,7 @@ function wireTraceControls(save) {
   $("#tT").onclick = () => { S.contact = !S.contact; render(); };
   $("#tW").onclick = toggleWide;
   if ($("#tX")) $("#tX").onclick = toggleFar;
-  $("#tC").onclick = () => { S.contrast = S.contrast === "h" ? "n" : "h"; render(); };
+  $("#tC").onclick = () => { S.contrast = NEXT_CONTRAST[S.contrast] || "n"; render(); };
   $("#tA").onclick = () => { S.smooth = S.smooth ? 0 : 1; render(); };
 }
 // clicked points are in movie coordinates, so a trace can be continued in another view
@@ -661,7 +665,7 @@ async function renderLengthRetest() {
     <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
     <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
     ${S.st.layout.trace.far ? `<button class="act ${S.traceView === "far" ? "on" : ""}" id="tX">X · extra wide</button>` : ""}
-    <button class="act ${S.contrast === "h" ? "on" : ""}" id="tC">C · high contrast</button>
+    <button class="act ${S.contrast !== "n" ? "on" : ""}" id="tC" title="normal, high contrast, or growth: this bin minus 6 bins earlier (a growing tip stands out)">C · ${CONTRAST_NAMES[S.contrast]}</button>
     <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button></div></div>`;
   S._img = null;
   mountTraceCanvas(shown, !peeking);
@@ -725,7 +729,7 @@ document.addEventListener("keydown", (e) => {
     if (k === "m") { S.marker = !S.marker; return drawTrace(); }
     if (k === "a") { S.smooth = S.smooth ? 0 : 1; return render(); }
   }
-  if (k === "c") { S.contrast = S.contrast === "h" ? "n" : "h"; return render(); }
+  if (k === "c") { S.contrast = NEXT_CONTRAST[S.contrast] || "n"; return render(); }
   if (S.view === "census" && k === "e") { S.fieldWhich = S.fieldWhich === "early" ? "late" : "early"; return render(); }
   if (S.view === "onset" || S.view === "retest") {
     const retest = S.view === "retest";

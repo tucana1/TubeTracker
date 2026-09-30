@@ -12,6 +12,10 @@ import cv2
 import numpy as np
 
 
+GROWTH_LAG = 6         # bins: the growth view shows what changed over this long
+GROWTH_WINDOW = 30.0   # grey levels either side of no change
+
+
 class Renderer:
     def __init__(self, bins: np.ndarray, meta: dict):
         self.bins = bins
@@ -66,9 +70,21 @@ class Renderer:
             img = np.where(out, np.nan, img)
         return img
 
+    def growth_crop(self, b0: int, b1: int, cx: float, cy: float, half: int, offsets: np.ndarray | None = None,
+                    mark_outside: bool = False) -> np.ndarray:
+        """Recent growth: the mean of bins b0..b1 minus the mean of the same bins ``GROWTH_LAG`` bins earlier. A tube
+        grows only at its tip, so its tip stands out here far more than in the frame itself (29 Sep 2026: the
+        annotator's apex was the strongest point within 50 px in 60% of the dev movie's growing traces, 13% in the
+        change from the first bins); still material cancels."""
+        now = self.mean_crop(b0, b1, cx, cy, half, offsets, mark_outside)
+        lag = min(GROWTH_LAG, max(b0, 0))
+        return now - self.mean_crop(b0 - lag, b1 - lag, cx, cy, half, offsets, mark_outside) if lag else now * 0.0
+
     def contrast(self, key, cx: float, cy: float, half: int, mode: str = "n",
                  offsets: np.ndarray | None = None) -> tuple[float, float]:
         """Display window for one grain, fixed across all its tiles."""
+        if mode == "g":  # growth view: new dark material shows dark, new light material light
+            return (-GROWTH_WINDOW, GROWTH_WINDOW)
         cache_key = (key, half, mode)
         if cache_key not in self._contrast:
             early = self.mean_crop(self.ref_start, self.ref_start + 2, cx, cy, half, offsets)
@@ -109,7 +125,8 @@ class Renderer:
         for i, ((b0, b1), label) in enumerate(zip(ranges, labels)):
             r, c = divmod(i, cols)
             top, left = r * (side + header + gap), c * (side + gap)
-            tile = self.to_display(self.mean_crop(b0, b1, cx, cy, half, offsets, mark_outside), window, zoom)
+            crop = (self.growth_crop if mode == "g" else self.mean_crop)(b0, b1, cx, cy, half, offsets, mark_outside)
+            tile = self.to_display(crop, window, zoom)
             sheet[top + header:top + header + side, left:left + side] = tile[:side, :side]
             cv2.putText(sheet, label, (left + 3, top + header - 4), cv2.FONT_HERSHEY_SIMPLEX, 0.38, 0, 1,
                         cv2.LINE_AA)
