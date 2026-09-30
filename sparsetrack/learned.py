@@ -470,13 +470,14 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
         res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), fl["tube"], None, None, None, centre)
         return res
     tube, t_in, dist = fl["tube"], fl["t_in"], fl["dist"]
-    tips = []
+    tips, tip_xy = [], []
     zone = gr + HALO + p.flood_start_band
     exit_len = np.zeros(n_bins)
     for t in range(n_bins):  # tip = the farthest tube pixel claimed by then
         sel = tube & (t_in <= t) & np.isfinite(dist)
         y, x = np.unravel_index(int(np.argmax(np.where(sel, dist, -1.0))), dist.shape) if sel.any() else (centre, centre)
         tips.append(to_ref(y, x))
+        tip_xy.append((float(x), float(y)))
         if p.flood_from_exit and sel.any() and length[t] > 0:
             exit_len[t] = from_exit(centreline(sel, dist, (int(y), int(x)), centre, gr, p.flood_bridge + 0.5),
                                     centre, gr, zone)[1]
@@ -502,6 +503,18 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
             length[t:b] = np.linspace(0.0, length[b], b - t, endpoint=False)
             flags.append(f"onset_lookback:{b - t}")
             b = t
+    if getattr(p, "flood_tip_track", False):
+        # where the flood stopped and the tube's tip went on (sparsetrack/tiptrack.py)
+        from . import tiptrack
+        crops_at = tiptrack.Frames(renderer, gx, gy, half, rs, n_bins, off_abs, resid)
+        cont = tiptrack.continue_flood(crops_at, pstack, blocked, fl, length, np.array(tip_xy), line, fl["emerge"],
+                                       p.vmax_px, p)
+        if cont is not None:
+            length = cont["length"]
+            for t in np.nonzero(np.isfinite(cont["tips"][:, 0]))[0]:
+                tips[t] = to_ref(cont["tips"][t, 1], cont["tips"][t, 0])
+            flags.append(f"tip_tracked_{cont['mode']}:{cont['start']}+{cont['gain']:.0f}px")
+        del crops_at
     status = "emerged_at_start" if b == 0 else "emerged_within"
     res.update(status=status, onset_frame=frames[b], onset_interval=None if b == 0 else [frames[b - 1], frames[b]],
                length={"frames": frames, "px": [round(float(v), 2) for v in length]},

@@ -132,6 +132,20 @@ class Params:
     flood_compete: bool = False  # flood every tube in view at once: new material goes to the tube growing there
     flood_fallback: bool = False  # hybrid: where the flood finds no tube but the change reader saw one, keep it (no gain)
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
+    # a stalled flood carried on by a tip tracker through the short-interval difference (sparsetrack/tiptrack.py):
+    # tubes can fade from the tube map as they grow long (movie 2's faint light-cored ones) and the flood stops there,
+    # while the growing tip still shows as new material. Kept only where the tracker was on the flood's tube when it
+    # stopped (tt_agree_px), adds tt_min_gain_px by the end, and its path was laid down tip first: the change from
+    # "before" came to stay along at least tt_support of it, in order outwards (cont_order), never a stretch longer
+    # than 3 bins of growth at once. Off: synthetic movie-2 field (seed 20) +8/629 lengths (95% CI +0 to +23; 2 grains
+    # up, none down); ld and m2 unchanged (m2's tracked continuations run mostly over change that never stayed).
+    flood_tip_track: bool = False
+    tt_bins: int = 6               # the short-interval difference: 3-bin means this many bins apart
+    tt_floor: float = 2.5          # the tip steps only onto new material above this (robust units)
+    tt_stall_bins: int = 20        # the flood must have stopped growing at least this many bins before the end
+    tt_agree_px: float = 10.0
+    tt_min_gain_px: float = 10.0
+    tt_support: float = 0.5
     exit_edge: bool = True       # change reader: lengths from the grain's visible edge along the exit, where an
                                  # annotator starts a trace, not from the census circle
     exit_edge_onset: bool = False  # ...and its onset stub there too (ld: fixes 2 onsets, loses 3: off)
