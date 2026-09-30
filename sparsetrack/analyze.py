@@ -193,8 +193,8 @@ class Params:
     lost_min_bins: int = 15      # a grain followed for fewer bins than this is unobservable
     # census check (sparsetrack/census_check.py): census "grains" that look like debris, clumps or passing things are
     # flagged likely_not_a_grain:<P> and left out of the population statistics (they are still read and reported).
-    # Off: judged leave one movie out on the three labelled movies it did not move every movie's germination share
-    # and T50 towards the annotator's (prototypes/census_check/README.md)
+    # Off: judged leave one movie out on the three labelled movies it finds dark debris well but does not bring every
+    # movie's germinated share and T50 closer to the annotator's (prototypes/census_check/README.md)
     census_check: bool = False
 
 
