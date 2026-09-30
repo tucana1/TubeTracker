@@ -102,7 +102,7 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
     for f in (building, building.with_suffix(".journal.jsonl")):
         f.unlink(missing_ok=True)
     model_name = f"SparseTrack {pred.get('params', {}).get('version') or __version__}"
-    bench = Bench(cache, building, annotator=model_name)
+    bench = Bench(cache, building, annotator=model_name, follow_mode="review")  # the analysis' own frame
     bench.save = lambda *a, **k: None  # the answers go through the tool's own code; the file is written once, below
     census, fpb, nb = bench.doc["grains"], bench.fpb, bench.n_bins
     n_traces, check_first, confidence = 0, {}, {}

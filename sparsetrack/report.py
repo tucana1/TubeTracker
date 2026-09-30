@@ -409,19 +409,16 @@ def write_comparison(labels: dict, pred: dict, renderer, out_dir: str | Path, ha
                      zoom: float = 3.0) -> Path:
     """compare.html: every human FULL trace next to the model's path and tip at that bin.
 
-    Each tile is the grain-following view the labelling tool showed (so both traces are drawn
-    in the frame they were made in): human trace green, model path red (turned by the model's
-    rotation at that bin), model tip red ring. Grains with the most traces out of tolerance
-    come first.
+    Each tile is the grain-following view the labelling tool showed when the trace was made (its ``view_offset``),
+    so the human trace is drawn where it was clicked: human trace green, model path red (turned by the model's
+    rotation at that bin, and moved by the model's own drift where it gives one), model tip red ring. Grains with the
+    most traces out of tolerance come first.
     """
     import html
     import cv2
-    from .bench.server import Bench
     from .evaluate import match_grains
     out_dir = Path(out_dir)
     (out_dir / "compare").mkdir(parents=True, exist_ok=True)
-    bench = Bench.__new__(Bench)
-    bench.renderer, bench.n_bins, bench.doc, bench._follow = renderer, renderer.n_bins, labels, {}
     grains = {g: v for g, v in labels["grains"].items() if not v.get("excluded")}
     matched = match_grains({"grains": grains}, pred["grains"])
     fpb = int(pred.get("frames_per_bin", 300))
@@ -440,17 +437,23 @@ def write_comparison(labels: dict, pred: dict, renderer, out_dir: str | Path, ha
             ours, human = float(p["length"]["px"][i]), float(t["length_px"])
             ok = abs(ours - human) <= max(2.0, 0.1 * human)
             bad += not ok
-            img = renderer.mean_crop(b, b, g["x"], g["y"], half, bench.follow(gid), mark_outside=True)
+            view = np.asarray(t.get("view_offset") or [0.0, 0.0], float)
+            offs = np.zeros((renderer.n_bins, 2))
+            offs[b] = view
+            img = renderer.mean_crop(b, b, g["x"], g["y"], half, offs, mark_outside=True)
             fin = img[np.isfinite(img)]
             lo, hi = (np.percentile(fin, [0.5, 99.5]) if fin.size else (0.0, 255.0))
             u = cv2.cvtColor(renderer.to_display(img, (float(lo), float(hi)), zoom), cv2.COLOR_GRAY2BGR)
             to_c = lambda q: ((np.asarray(q, float) - [g["x"] - half, g["y"] - half]) * zoom).astype(np.int32)
             if p.get("path"):
-                rp = turned_path(p, i, pred)
+                # the model's path is in its own grain frame: in the field it is moved by the model's drift
+                shift = (np.asarray(p["drift"]["xy"][i], float) if p.get("drift") else np.zeros(2)) - view
+                rp = turned_path(p, i, pred) + shift
                 cv2.polylines(u, [to_c(rp).reshape(-1, 1, 2)], False, (40, 40, 230), 1, cv2.LINE_AA)
                 if ours > 0 and p.get("tip"):
-                    cv2.circle(u, tuple(int(v) for v in to_c(p["tip"]["xy"][i])), 5, (40, 40, 230), 2, cv2.LINE_AA)
-            hp = t.get("path_xy_view") or t["path_xy_ref"]
+                    cv2.circle(u, tuple(int(v) for v in to_c(np.asarray(p["tip"]["xy"][i], float) + shift)), 5,
+                               (40, 40, 230), 2, cv2.LINE_AA)
+            hp = (np.asarray(t["path_xy_ref"], float) - view).tolist() if t.get("path_xy_ref") else t["path_xy_view"]
             cv2.polylines(u, [to_c(hp).reshape(-1, 1, 2)], False, (40, 200, 40), 2, cv2.LINE_AA)
             cv2.circle(u, tuple(int(v) for v in to_c(hp[-1])), 3, (40, 200, 40), -1, cv2.LINE_AA)
             name = f"{gid}_{b}.png"

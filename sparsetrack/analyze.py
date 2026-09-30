@@ -186,11 +186,24 @@ class Params:
     track_min_score: float = 0.5  # follow/auto: a match scoring below this is a missed bin...
     track_max_gap: int = 8       # ...and more missed bins in a row than this lose the grain
     track_tol_px: float = 4.0    # follow/auto: the phase track is kept where it is within this of the grain's track
+    track_refind: bool = False   # follow/auto: a grain the bank misses is searched for by its last look, turned
+                                 # (track.FollowConfig.refind: a knocked grain that jumps and turns is found again)
     track_recentre_px: float = 25.0  # a grain read in its own frame that moves further than this is cropped where it
                                      # is (a fixed crop warped that far brings in that much replicated border)
     lost_policy: str = "hold"    # a lost grain: "hold" its readings from the loss on (flag grain_lost_after:<frame>),
                                  # or "read" on at its last place
     lost_min_bins: int = 15      # a grain followed for fewer bins than this is unobservable
+    # a tube over its grain (over_grain(): movie 1's tubes from a pore facing the camera): "off"; "flag" (flagged
+    # tube_over_grain, its onset over the grain kept apart in result["over_grain"]); "onset" (the onset is read over
+    # the grain); "length" (and lengths from the pore, as the annotator traced such tubes, not from the rim)
+    over_grain: str = "off"
+    over_k: float = 5.0          # change over the grain: above this many times the disc's own noise...
+    over_floor: float = 6.0      # ...and at least this
+    over_min_px: float = 4.0     # the strip from the pore to the exit is at least this long...
+    over_max_width: float = 7.0  # ...and on average at most this wide (px)...
+    over_order: float = 0.4      # ...its change arrives in order towards the exit...
+    over_lead_bins: int = 2      # ...at the pore at least this many bins before the rim onset
+    over_join_px: float = 3.0    # the strip meets the exit within this
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -279,7 +292,8 @@ def followed_drift(renderer: Renderer, meta: dict, grain: dict, others: list[dic
     gx, gy, gr = float(grain["x"]), float(grain["y"]), float(grain["r"])
     near = tuple((round(float(o["x"]), 2), round(float(o["y"]), 2), round(float(o["r"]), 2)) for o in others
                  if math.hypot(o["x"] - gx, o["y"] - gy) < 120)
-    cfg = track.FollowConfig(step_px=p.track_step_px, min_score=p.track_min_score, max_gap=p.track_max_gap)
+    cfg = track.FollowConfig(step_px=p.track_step_px, min_score=p.track_min_score, max_gap=p.track_max_gap,
+                             refind=p.track_refind)
     key = (id(renderer.bins), round(gx, 2), round(gy, 2), round(gr, 2), rs, nb, near, astuple(cfg), p.reg_pad,
            p.ref_bins, p.track_tol_px)
     hit = _FOLLOWED.get(key)
@@ -321,7 +335,8 @@ def followed_drift(renderer: Renderer, meta: dict, grain: dict, others: list[dic
         drift[:n_fol] = g + corr
     elif n_fol > 0:
         drift[:n_fol] = guide[:n_fol]
-    out = {"drift": drift, "lost_from": tr["lost_from"], "lost_reason": tr["lost_reason"], "score": tr["score"]}
+    out = {"drift": drift, "lost_from": tr["lost_from"], "lost_reason": tr["lost_reason"], "score": tr["score"],
+           "angle": tr["angle"], "refound": tr["refound"]}
     if len(_FOLLOWED) > 512:
         _FOLLOWED.clear()
     _FOLLOWED[key] = (renderer.bins, out)  # keeps the (memory-mapped) movie alive, so its id is not reused
@@ -982,6 +997,93 @@ def continue_read(ctx: dict, read: dict, p: "Params") -> dict | None:
     return merged
 
 
+def over_grain(ctx: dict, exit_xy: np.ndarray, b_rim: int, p: "Params") -> dict | None:
+    """Tube material that grew over the grain before the tube left it at ``exit_xy`` (crop (x, y)), or None.
+
+    In movie 1 some tubes emerge from a pore facing the camera: they appear inside the grain's disc and grow over it
+    to the rim (g015, g030: a dark curl inside the disc bins before anything shows outside). Both readers block the
+    disc, so such a tube is seen only once it crosses the rim. Here, the pixels inside the disc whose change comes to
+    stay (``arrival_map`` at ``over_k`` times the disc's own noise in the bins after the reference) by the rim onset
+    ``b_rim`` and connect to the exit are the tube over the grain when they form a strip from a pore (the point
+    farthest from the exit through them) to the exit, at least ``over_min_px`` long and at most ``over_max_width``
+    wide on average, whose change arrived in order towards the exit (rank correlation ``over_order``) and, at the
+    pore, ``over_lead_bins`` or more before the rim onset. A grain whose interior changes all at once (it turns or
+    tumbles, its cytoplasm moves) fails the order or the width.
+
+    Returns {"b_in": the bin the change came to stay at the pore, "inner_px": the strip's length from the pore to
+    the exit, "grown": (n_bins,) its length grown by each bin, "route_yx": the strip's centreline from the pore,
+    "order", "thr"}."""
+    diffs, centre, gr, rg, n = ctx["diffs"], ctx["centre"], ctx["gr"], ctx["rg"], ctx["n_bins"]
+    inside = rg < gr - 1.0
+    k0 = min(p.ref_bins, n - 1)
+    k1 = int(np.clip(b_rim - p.over_lead_bins, k0 + 1, k0 + 10))
+    if k1 <= k0 or not inside.any():
+        return None
+    # each pixel's own noise over the quiet bins after the reference (the rim flickers more than the body), and the
+    # disc's as a floor
+    quiet = np.stack([cv2.GaussianBlur(np.asarray(d, np.float32), (0, 0), p.map_sigma) for d in diffs[k0:k1]])
+    level = np.median(quiet, axis=0)
+    spread = 1.4826 * np.median(np.abs(quiet - level), axis=0)
+    sigma = 1.4826 * float(np.median(np.abs(quiet[:, inside] - np.median(quiet[:, inside]))))
+    thr_px = np.maximum(p.over_floor, level + p.over_k * np.maximum(spread, sigma))
+    thr = float(np.median(thr_px[inside]))
+    arr = arrival_map(diffs, thr_px, p.map_sigma)
+    cand = inside & (arr >= 0) & (arr <= b_rim)
+    h, w = inside.shape
+    yy, xx = np.mgrid[0:h, 0:w]
+    near_exit = inside & (np.hypot(xx - exit_xy[0], yy - exit_xy[1]) <= p.over_join_px)
+    if not near_exit.any():
+        return None
+    _, lab = cv2.connectedComponents((cand | near_exit).astype(np.uint8), connectivity=8)
+    keep = np.unique(lab[near_exit])
+    part = np.isin(lab, keep[keep > 0]) & (cand | near_exit)
+    if not (part & cand & ~near_exit).any():
+        return None
+    far, dist = _geodesic_far(part, near_exit)
+    route = _cheapest_path(1.0 / (ctx["change"] + 1.0), part, near_exit, far)[::-1]  # from the pore to the exit
+    seg = np.hypot(*np.diff(route, axis=0).T) if len(route) > 1 else np.zeros(0)
+    inner = float(seg.sum() + np.hypot(route[-1][1] - exit_xy[0], route[-1][0] - exit_xy[1]))
+    area = float((part & cand).sum())
+    if inner < p.over_min_px or area > p.over_max_width * max(inner, 1.0):
+        return None
+    a = arr[route[:, 0].astype(int), route[:, 1].astype(int)].astype(float)
+    ok = a >= 0
+    order = _rank_corr(np.nonzero(ok)[0].astype(float), a[ok]) if ok.sum() >= 3 else 0.0
+    if order < p.over_order:
+        return None
+    head = a[ok][:max(2, int(ok.sum()) // 4)]
+    b_in = int(np.median(head))
+    if b_in > b_rim - p.over_lead_bins:
+        return None
+    # its length by each bin: as far along the strip as its change had come (every point up to there arrived)
+    s = np.concatenate([[0.0], np.cumsum(seg)])
+    reached = np.maximum.accumulate(np.where(ok, a, np.inf))
+    grown = np.array([float(s[reached <= t].max()) if (reached <= t).any() else 0.0 for t in range(n)])
+    grown[b_rim:] = inner
+    return {"b_in": b_in, "inner_px": inner, "grown": grown, "route_yx": route, "order": round(order, 2),
+            "thr": round(thr, 2)}
+
+
+def with_over_grain(flood_res: dict, change_res: dict, p: "Params") -> dict:
+    """The flood's reading (under the change reader's onset) with the change reader's tube over the grain: its flag
+    and, with ``over_grain="length"``, lengths from the pore (the strip over the grain as far as it had grown, then
+    all of it and the flood's tube beyond the rim)."""
+    og = change_res["over_grain"]
+    out = dict(flood_res)
+    out["over_grain"] = og
+    out["flags"] = list(flood_res["flags"]) + [f for f in change_res["flags"] if f.startswith("tube_over_grain")]
+    if p.over_grain == "length" and out.get("onset_frame") is not None:
+        frames, px = out["length"]["frames"], out["length"]["px"]
+        grown = og["grown_px"]
+        px = [round(v + og["inner_px"], 2) if v > 0 else
+              (grown[min(i, len(grown) - 1)] if f >= out["onset_frame"] else 0.0)
+              for i, (f, v) in enumerate(zip(frames, px))]
+        out["length"] = {"frames": frames, "px": px}
+        out["final_length_px"] = round(float(px[-1]), 2) if px else 0.0
+        out["flags"].append("length_from_pore")
+    return out
+
+
 def grain_settling(crops: np.ndarray, centre: float, gr: float, p: "Params") -> dict:
     """Is there a settled grain here, and from which bin?
 
@@ -1015,6 +1117,8 @@ def _pad_front(res: dict, frames: list, b0: int) -> dict:
         res["wedge"]["signal"] = [0.0] * b0 + list(res["wedge"]["signal"])
     if res.get("drift"):
         res["drift"] = {"frames": frames, "xy": [res["drift"]["xy"][0]] * b0 + list(res["drift"]["xy"])}
+    if res.get("over_grain"):
+        res["over_grain"]["grown_px"] = [0.0] * b0 + list(res["over_grain"]["grown_px"])
     return res
 
 
@@ -1348,6 +1452,16 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
         if t < b:
             b = t
             result["flags"].append("onset_moved_to_front")
+    og = over_grain(ctx, pts[0], b, p) if p.over_grain != "off" and b is not None and b > p.ref_bins else None
+    if og is not None:
+        result["flags"].append(f"tube_over_grain:{og['inner_px']:.0f}px")
+        pore = og["route_yx"][0]
+        result["over_grain"] = {"onset_frame": frames[og["b_in"]], "rim_onset_frame": frames[b],
+                                "inner_px": round(og["inner_px"], 1), "order": og["order"],
+                                "pore_xy": [round(float(pore[1] - centre + gx), 2), round(float(pore[0] - centre + gy), 2)],
+                                "grown_px": [round(float(v), 2) for v in og["grown"]]}
+        if p.over_grain in ("onset", "length"):
+            b = og["b_in"]  # the tube was there, over its grain, before it reached the rim
     if b is None:
         status, onset, interval = "no_emergence_by_end", None, None
         result["flags"].append("tube_map_without_onset")
@@ -1375,7 +1489,14 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     to_ref = lambda xy: [round(float(xy[0] - centre + gx), 2), round(float(xy[1] - centre + gy), 2)]
     drawn = list(pts[:: max(1, int(2 / p.step))]) + [pts[-1]]
     path_len = float(ss[-1])
-    if p.exit_edge and (length > 0).any():
+    if og is not None and p.over_grain == "length" and b is not None:
+        # lengths from the pore: over the grain as far as it had grown, then that strip and the tube beyond the exit
+        grown = np.where(np.arange(n_bins) >= b, og["grown"], 0.0)
+        length = np.where(length > 0, length + og["inner_px"], grown)
+        drawn = [q[::-1] for q in og["route_yx"][::2]] + drawn
+        path_len += og["inner_px"]
+        result["flags"].append("length_from_pore")
+    elif p.exit_edge and (length > 0).any():
         # measure from where the tube leaves the grain's visible edge; the path starts there too
         u, e = u_exit, e_exit
         length = np.where(length > 0, np.maximum(length - e, 0.0), 0.0)
@@ -1531,6 +1652,8 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
                     # a clean rim still gives the better onset: keep the change reader's germination call,
                     # and the flood's lengths from that onset on
                     fl = learned.with_onset(fl, res)
+                    if res.get("over_grain"):
+                        fl = with_over_grain(fl, res, p)
                 elif missed:
                     fl["flags"].append("onset:flood_over_change")
                 res = fl
