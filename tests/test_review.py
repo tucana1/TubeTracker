@@ -309,3 +309,7 @@ def test_an_excluded_sample_grain_is_replaced_from_a_fixed_reserve(tmp_path):
     # kept in the labels file: reopening gives the same reserve and the recorded swaps
     again = Bench(tmp_path / "c", tmp_path / "labels.json")
     assert again.doc["sample"]["reserve"] == reserve and len(again.doc["sample"]["replacements"]) == 2
+    # a closed sample (the annotator has finished it) takes no more replacements
+    again.doc["sample"]["closed"] = True
+    member = next(g for g in again.doc["sample"]["grains"] if not again.doc["grains"][g].get("excluded"))
+    assert again.set_exclusion(member, {"excluded": True, "reason": "other"})["replaced_by"] is None

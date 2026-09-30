@@ -310,8 +310,8 @@ class Bench:
         """The reserve grain that joins the sample in place of ``gid`` (None: not a sampled grain, the sample is
         still full, or the reserve is used up)."""
         smp = self.doc.get("sample")
-        if not smp or gid not in smp["grains"] or reason == "not_sampled":
-            return None
+        if not smp or smp.get("closed") or gid not in smp["grains"] or reason == "not_sampled":
+            return None  # "closed": the annotator finished the sample; exclusions from then on only shrink it
         if sum(not self.doc["grains"][s].get("excluded") for s in smp["grains"]) >= int(smp["n"]):
             return None  # e.g. a grain excluded, included again and excluded again: its replacement already came
         for cand in self._reserve():
