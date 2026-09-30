@@ -53,7 +53,11 @@ python3 -m venv .venv
    lengths you checked, in um and minutes too with `calibration.json`. Run it again to carry on.
 
 **Grains that move** are followed (SparseTrack 0.7.0): each grain is tracked by its own look from bin
-to bin, and one that moves further than its own diameter is read where it is. A grain that can no longer be
+to bin, and one that moves further than its own diameter is read where it is. A grain that is knocked (it jumps and
+turns over in a bin, as in movie 1) can be searched for again by its last look, turned (`--set track_refind=true`;
+off until measured on all three movies, docs/status-2026-09-29.md). When labelling, the views follow the tracker
+wherever it has the grain; where it lost one, the tool says so, and **G** then a click on the grain says where it is
+now (the views follow it from there; Shift+G takes it back). A grain that can no longer be
 found (it burst, drifted out of view or was swept off) is read until then and its numbers are held from
 there, flagged `grain_lost_after`. **If the gallery opens with a red warning** that many grains were lost
 partway, their final lengths and growth are only known up to that time; check them in the review. Tubes that

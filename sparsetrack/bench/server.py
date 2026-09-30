@@ -101,6 +101,7 @@ class Bench:
         self.fpb = int(self.meta["frames_per_bin"])
         self.n_bins = int(self.meta["n_bins"])
         self._follow: dict[str, dict] = {}
+        self._track_lock = threading.Lock()
         self.labels_path = Path(labels_path)
         self.journal_path = self.labels_path.with_suffix(".journal.jsonl")
         self.annotator = annotator
@@ -440,9 +441,10 @@ class Bench:
                                   key=lambda r: r["bin"])}
 
     def _track(self, gid: str) -> dict:
-        if gid not in self._follow:
-            self._follow[gid] = self._label_track(gid) if self.follow_mode == "label" else self._review_track(gid)
-        return self._follow[gid]
+        with self._track_lock:  # the page asks for a grain's views and images at once: follow it once
+            if gid not in self._follow:
+                self._follow[gid] = self._label_track(gid) if self.follow_mode == "label" else self._review_track(gid)
+            return self._follow[gid]
 
     def _others(self, gid: str) -> list[dict]:
         return [o for oid, o in self.doc["grains"].items() if oid != gid and o.get("exclude_reason") != "not_a_grain"]

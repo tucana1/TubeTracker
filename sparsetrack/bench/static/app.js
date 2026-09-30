@@ -77,6 +77,7 @@ function resetGrainState() {
   loadTrace();
 }
 function loadTrace() {
+  S.touched = false;  // the points are the saved answer's until the annotator clicks
   const b = plan()[S.traceIdx];
   const saved = b === undefined ? null : (label().traces || {})[String(b)];
   S.pts = saved ? viewPts(saved, b) : [];
@@ -86,9 +87,17 @@ async function openGrain(gid, view) {
   if (S.gid) S.timers[S.gid] = spent();
   S.gid = gid; S.openedAt = Date.now(); S.refindArm = false;
   if (view) S.view = view;
-  await ensureFollow(gid);
-  if (S.gid !== gid) return;  // another grain was opened meanwhile
   resetGrainState(); render();
+  await followed(gid);
+}
+// the first time a grain is opened the server follows it through the movie (seconds on a long movie): the page shows
+// it at once and, once the views' offsets are known, draws its saved traces in them (unless points were clicked)
+async function followed(gid) {
+  if (S.follow[gid]) return;
+  await ensureFollow(gid);
+  if (S.gid !== gid) return;
+  if (!S.touched && S.view === "trace") loadTrace();  // never in a blind retest
+  render();
 }
 function stepGrain(dir) {
   const list = S.view === "census" ? S.st.order : included();
@@ -176,14 +185,15 @@ function censusCentre() {
   if (!S.zoomAt || S.zoomAt.gid !== S.gid) { const g = grain(); S.zoomAt = { x: g.x, y: g.y, gid: S.gid }; }
   return S.zoomAt;
 }
-async function focusGrain(gid, keepView) {
-  if (S.gid !== gid) {
+function focusGrain(gid, keepView) {
+  const changed = S.gid !== gid;
+  if (changed) {
     S.timers[S.gid] = spent(); S.gid = gid; S.openedAt = Date.now(); S.refindArm = false;
-    await ensureFollow(gid);
     resetGrainState();
   }
   if (keepView && S.zoomAt) S.zoomAt.gid = gid;
   render();
+  if (changed) followed(gid);
 }
 function renderCensus() {
   help(`<b>Click any grain</b> on the map, or step with <kbd>←</kbd>/<kbd>→</kbd>, to bring it into focus: the close-up
@@ -519,6 +529,7 @@ function renderTrace() {
 // "the grain is here": its centre clicked in this bin's view; the tool follows it from there (labelling only)
 async function placeGrain(b, x, y, clear = false) {
   const before = viewOffset(b);
+  flash("following the grain from here…");
   const f = await post(`/api/refind/${S.gid}`, clear ? { bin: b, clear: true } : { bin: b, x, y });
   S.follow[S.gid] = f;
   const after = viewOffset(b);
@@ -536,7 +547,7 @@ function mountTraceCanvas(b, clickable = true) {  // bin b in the current view; 
     if (!clickable) { flash("Viewing another time: go back to the trace frame to click.", true); return; }
     const x = cx - V.half + e.offsetX / V.zoom, y = cy - V.half + e.offsetY / V.zoom;
     if (S.refindArm && S.view === "trace") { S.refindArm = false; placeGrain(b, x, y); return; }
-    S.pts.push([x, y]); drawTrace(); updateCount();
+    S.pts.push([x, y]); S.touched = true; drawTrace(); updateCount();
   };
 }
 function wireTraceControls(save) {
@@ -545,8 +556,8 @@ function wireTraceControls(save) {
   $("#s0").onclick = () => save("no_tube");
   $("#sU").onclick = () => save("unsure");
   if ($("#sB")) $("#sB").onclick = () => save("burst");
-  $("#undo").onclick = () => { S.pts.pop(); drawTrace(); updateCount(); };
-  $("#clr").onclick = () => { S.pts = []; drawTrace(); updateCount(); };
+  $("#undo").onclick = () => { S.pts.pop(); S.touched = true; drawTrace(); updateCount(); };
+  $("#clr").onclick = () => { S.pts = []; S.touched = true; drawTrace(); updateCount(); };
   $("#tT").onclick = () => { S.contact = !S.contact; render(); };
   $("#tW").onclick = toggleWide;
   if ($("#tX")) $("#tX").onclick = toggleFar;
@@ -583,7 +594,7 @@ function slideTrace(d) {
     }
     acc += seg; pts.push(mp[i].slice());
   }
-  S.pts = pts.map((q) => [Math.round(q[0] * 100) / 100, Math.round(q[1] * 100) / 100]);
+  S.pts = pts.map((q) => [Math.round(q[0] * 100) / 100, Math.round(q[1] * 100) / 100]); S.touched = true;
   drawTrace(); updateCount();
 }
 function updateCount() {
@@ -770,7 +781,7 @@ document.addEventListener("keydown", (e) => {
     if (!lr && k === "ArrowRight" && !e.shiftKey) { S.traceIdx = Math.min(plan().length - 1, S.traceIdx + 1); loadTrace(); return render(); }
     const map = { f: "full", p: "partial", 0: "no_tube", u: "unsure" };
     if (map[k.toLowerCase()]) return save(map[k.toLowerCase()]);
-    if (k === "Backspace") { e.preventDefault(); S.pts.pop(); drawTrace(); return updateCount(); }
+    if (k === "Backspace") { e.preventDefault(); S.pts.pop(); S.touched = true; drawTrace(); return updateCount(); }
     if (k === "t") { S.contact = !S.contact; return render(); }
     if (!lr && (k === "g" || k === "G") && S.st.follow_mode !== "review") {
       const b = plan()[S.traceIdx];
@@ -830,6 +841,6 @@ document.querySelectorAll("nav button").forEach((b) => b.onclick = () => {
   const list = included();
   S.gid = list.find((g) => needsOnset(g) || needsTrace(g)) || list[0] || S.st.order[0];
   S.view = Object.keys(S.st.labels).length ? (needsOnset(S.gid) ? "onset" : "trace") : "census";
-  await ensureFollow(S.gid);
   resetGrainState(); render();
+  followed(S.gid);
 })();
