@@ -282,3 +282,30 @@ def test_a_refocus_is_found_and_warned_about():
     assert focus_changes(np.stack([sharp] * nb), meta) == []  # steady focus: nothing
     w = movie_warnings({"grains": [], "focus_changes": found})
     assert len(w) == 1 and "focus changed" in w[0] and "sharper" in w[0]
+
+
+def test_an_excluded_sample_grain_is_replaced_from_a_fixed_reserve(tmp_path):
+    grains = [{"id": f"g{k:03d}", "x": 20.0 + 15 * k, "y": 40.0, "r": 5.0, "isolated": True, "border": False}
+              for k in range(8)]
+    _cache(tmp_path / "c", grains)
+    bench = Bench(tmp_path / "c", tmp_path / "labels.json", sample=4)
+    sample = list(bench.doc["sample"]["grains"])
+    in_sample = lambda: [g for g in bench.doc["sample"]["grains"] if not bench.doc["grains"][g].get("excluded")]
+    out = bench.set_exclusion(sample[0], {"excluded": True, "reason": "not_a_grain"})
+    first = out["replaced_by"]
+    assert first and first not in sample and len(in_sample()) == 4
+    assert bench.doc["sample"]["replacements"][0] == {**bench.doc["sample"]["replacements"][0], "out": sample[0],
+                                                      "in": first, "reason": "not_a_grain"}
+    # the next exclusion takes the next grain of the same fixed reserve
+    second = bench.set_exclusion(sample[1], {"excluded": True, "reason": "clump"})["replaced_by"]
+    reserve = bench.doc["sample"]["reserve"]
+    assert [first, second] == reserve[:2]
+    # a grain outside the sample brings nobody in; including a grain again and excluding it again does not overfill
+    outside = next(g for g in bench.doc["grains"] if g not in bench.doc["sample"]["grains"])
+    assert bench.set_exclusion(outside, {"excluded": True, "reason": "not_a_grain"})["replaced_by"] is None
+    bench.set_exclusion(sample[0], {"excluded": False})
+    assert len(in_sample()) == 5
+    assert bench.set_exclusion(sample[0], {"excluded": True, "reason": "not_a_grain"})["replaced_by"] is None
+    # kept in the labels file: reopening gives the same reserve and the recorded swaps
+    again = Bench(tmp_path / "c", tmp_path / "labels.json")
+    assert again.doc["sample"]["reserve"] == reserve and len(again.doc["sample"]["replacements"]) == 2

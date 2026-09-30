@@ -285,8 +285,10 @@ function renderZoomControls() {
     const b = e.target.closest("button"); if (!b) return;
     if (b.dataset.open) return openGrain(gid, "onset");
     if (b.dataset.inc) await post(`/api/exclude/${gid}`, { excluded: false });
-    if (b.dataset.r) await post(`/api/exclude/${gid}`, { excluded: true, reason: b.dataset.r });
+    let j = null;
+    if (b.dataset.r) j = await post(`/api/exclude/${gid}`, { excluded: true, reason: b.dataset.r });
     await refresh(); render();
+    if (j && j.replaced_by) flash(`saved ✓ ${j.replaced_by} joins the random sample in ${gid}'s place`);
   };
 }
 function grainMenu(px, py, gid) {
@@ -303,8 +305,10 @@ function grainMenu(px, py, gid) {
     if (b.dataset.open) return openGrain(gid, "onset");
     if (b.dataset.close) return m.classList.add("hidden");
     if (b.dataset.inc) await post(`/api/exclude/${gid}`, { excluded: false });
-    if (b.dataset.r) await post(`/api/exclude/${gid}`, { excluded: true, reason: b.dataset.r });
+    let j = null;
+    if (b.dataset.r) j = await post(`/api/exclude/${gid}`, { excluded: true, reason: b.dataset.r });
     await refresh(); render();
+    if (j && j.replaced_by) flash(`saved ✓ ${j.replaced_by} joins the random sample in ${gid}'s place`);
   };
 }
 

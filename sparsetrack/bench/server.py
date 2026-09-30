@@ -282,6 +282,8 @@ class Bench:
         return record
 
     def set_exclusion(self, gid: str, body: dict) -> dict:
+        """Exclude a grain (or include it again). A grain of the random sample excluded for any reason (not a grain,
+        a clump, ...) is replaced by the next grain of the sample's reserve, so the sample keeps its size."""
         excluded = bool(body.get("excluded"))
         reason = body.get("reason") if excluded else None
         if excluded and reason not in EXCLUDE_REASONS:
@@ -289,8 +291,39 @@ class Bench:
         with self.lock:
             g = self.grain(gid)
             g["excluded"], g["exclude_reason"] = excluded, reason
-            self.save("exclude", {"grain": gid, "excluded": excluded, "reason": reason})
-        return g
+            replaced_by = self._replace(gid, reason) if excluded else None
+            self.save("exclude", {"grain": gid, "excluded": excluded, "reason": reason, "replaced_by": replaced_by})
+        return {**g, "replaced_by": replaced_by}
+
+    def _reserve(self) -> list[str]:
+        """The sample's replacements in a random order fixed by its seed, drawn once from the rest of its pool
+        (isolated grains away from the edge) and kept in the labels file: who replaces whom is chosen by neither
+        the annotator nor the model."""
+        smp = self.doc["sample"]
+        if "reserve" not in smp:
+            pool = sorted(gid for gid, g in self.doc["grains"].items()
+                          if g.get("isolated") and not g.get("border") and gid not in smp["grains"])
+            smp["reserve"] = random.Random(int(smp["seed"]) + 1).sample(pool, len(pool))
+        return smp["reserve"]
+
+    def _replace(self, gid: str, reason: str) -> str | None:
+        """The reserve grain that joins the sample in place of ``gid`` (None: not a sampled grain, the sample is
+        still full, or the reserve is used up)."""
+        smp = self.doc.get("sample")
+        if not smp or gid not in smp["grains"] or reason == "not_sampled":
+            return None
+        if sum(not self.doc["grains"][s].get("excluded") for s in smp["grains"]) >= int(smp["n"]):
+            return None  # e.g. a grain excluded, included again and excluded again: its replacement already came
+        for cand in self._reserve():
+            c = self.doc["grains"].get(cand)
+            if c is None or cand in smp["grains"] or (c.get("excluded") and c.get("exclude_reason") != "not_sampled"):
+                continue
+            c["excluded"], c["exclude_reason"] = False, None
+            smp["grains"].append(cand)
+            smp.setdefault("replacements", []).append({"out": gid, "in": cand, "reason": reason,
+                                                       "time": time.strftime("%Y-%m-%dT%H:%M:%S")})
+            return cand
+        return None
 
     def add_grain(self, body: dict) -> dict:
         x, y = float(body["x"]), float(body["y"])
