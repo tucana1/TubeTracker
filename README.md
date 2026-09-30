@@ -57,7 +57,10 @@ to bin, and one that moves further than its own diameter is read where it is. A 
 found (it burst, drifted out of view or was swept off) is read until then and its numbers are held from
 there, flagged `grain_lost_after`. **If the gallery opens with a red warning** that many grains were lost
 partway, their final lengths and growth are only known up to that time; check them in the review. Tubes that
-swing or turn on their own while their grain stays put are still read in a fixed place.
+swing or turn on their own while their grain stays put are still read in a fixed place. The gallery also warns
+when **the movie's focus changed** (movie 2 was out of focus from about bin 13 to bin 63): tubes that emerged
+meanwhile are seen only once it is sharp again, so onsets at that time mean "visible by" (flag
+`onset_at_focus_change`).
 
 **How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.7.0, against one
 annotator's traces; length within max(2 px, 10%), onset within 2 bins; both movies were

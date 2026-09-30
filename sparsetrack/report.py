@@ -253,7 +253,8 @@ def write_video(renderer, meta: dict, pred: dict, out_path: str | Path, fps: int
 # every grain carrying one of these was wrong somewhere (base rate 70%)
 REVIEW_FLAGS = ("settled_from_bin", "onset_moved_to_front", "onset_from_front", "contact_censored", "no_grain",
                 "front_too_short", "degenerate_path", "tube_map_without_onset",
-                "grain_lost_after")  # Params.grain_track "follow": readings held from where the grain was lost
+                "grain_lost_after",  # Params.grain_track "follow": readings held from where the grain was lost
+                "onset_at_focus_change")  # the movie refocused then: "visible by", not "emerged at"
 # a path that accounts for less than half of its own change region: the tube curls, turns back,
 # wraps round its grain or is shared. On the dev benchmark (ld_v1, 0.4.1) all 11 grains below
 # this had a gross error (a trace off by > max(5 px, 20%) or onset off by > 2400 frames); the
@@ -307,6 +308,11 @@ def movie_warnings(pred: dict, isolated: set[str] | None = None, share: float = 
         out.append(f"{len(unfollowed)} of {len(grains)} grains could not be followed as they moved: they were read at "
                    f"their first place, so their onsets and lengths are unreliable once they moved. Check these grains "
                    f"(flag drift_rejected) before using their numbers.")
+    for f in pred.get("focus_changes") or []:
+        out.append(f"The movie's focus changed at frame {f['frame']} (bin {f['bin']}; images {f['ratio']:.1f}x "
+                   f"{'sharper' if f['ratio'] > 1 else 'blurrier'} after it). Tubes that emerged while it was out of "
+                   f"focus are seen only from then: onsets at that time mean \"visible by\", not \"emerged at\" "
+                   f"(flag onset_at_focus_change), and readings across it are less sure.")
     if grains and len(lost) / len(grains) > share:
         out.append(f"{len(lost)} of {len(grains)} grains were lost partway through the movie (they burst, drifted out of "
                    f"view or were swept off): each is read until it was lost and its numbers are held from there (flag "

@@ -27,7 +27,8 @@ from pathlib import Path
 
 import numpy as np
 
-REVIEW_HINTS = ("touches:", "shared_change_split", "reader:flood", "drift_rejected", "rotates:", "grain_lost_after")
+REVIEW_HINTS = ("touches:", "shared_change_split", "reader:flood", "drift_rejected", "rotates:", "grain_lost_after",
+                "onset_at_focus_change")
 
 
 # ---------------------------------------------------------------------------- pre-fill

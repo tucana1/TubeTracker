@@ -265,3 +265,20 @@ def test_summary_puts_movies_side_by_side(tmp_path):
     assert (tmp_path / "summary" / "summary.png").exists()
     text = (tmp_path / "summary" / "summary.csv").read_text()
     assert text.splitlines()[0].startswith("movie,grains,germinated") and "late" in text
+
+
+def test_a_refocus_is_found_and_warned_about():
+    import cv2
+    from sparsetrack.analyze import focus_changes
+    from sparsetrack.report import movie_warnings
+    rng = np.random.default_rng(0)
+    sharp = cv2.GaussianBlur(rng.normal(150, 25, (120, 160)).astype(np.float32), (0, 0), 0.8)
+    blurred = cv2.GaussianBlur(sharp, (0, 0), 3.0)
+    nb, fpb = 60, 300
+    bins = np.stack([blurred if b < 30 else sharp for b in range(nb)]) + rng.normal(0, 0.5, (nb, 120, 160)).astype(np.float32)
+    meta = {"n_bins": nb, "frames_per_bin": fpb}
+    found = focus_changes(bins, meta)
+    assert len(found) == 1 and abs(found[0]["bin"] - 30) <= 1 and found[0]["ratio"] > 2
+    assert focus_changes(np.stack([sharp] * nb), meta) == []  # steady focus: nothing
+    w = movie_warnings({"grains": [], "focus_changes": found})
+    assert len(w) == 1 and "focus changed" in w[0] and "sharper" in w[0]

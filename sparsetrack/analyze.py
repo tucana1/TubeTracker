@@ -1427,6 +1427,34 @@ def growth_scale(renderer: Renderer, meta: dict, grains: list[dict], p: "Params"
     return float(np.median(rates))
 
 
+def focus_changes(bins: np.ndarray, meta: dict, window: int = 10, factor: float = 2.0) -> list[dict]:
+    """Bins where the movie's focus changes: the median sharpness (variance of the Laplacian of the frame's
+    centre) over the next ``window`` bins differs from the median over the previous ``window`` by more than
+    ``factor`` either way. Movie 2 refocused at bin 63 (6.3x sharper after): tubes that emerged while it was out of
+    focus became visible only then, so onsets there say "visible by", not "emerged at". Returns [{"bin", "frame",
+    "ratio"}], the strongest bin of each change."""
+    nb, fpb = int(meta["n_bins"]), int(meta["frames_per_bin"])
+    h, w = bins.shape[1:]
+    y0, y1, x0, x1 = h // 5, h - h // 5, w // 6, w - w // 6
+    sharp = np.array([float(cv2.Laplacian(np.asarray(bins[b][y0:y1, x0:x1], np.float32), cv2.CV_32F).var())
+                      for b in range(nb)])
+    lr = np.zeros(nb)
+    for b in range(window, nb - window + 1):
+        lr[b] = math.log(max(np.median(sharp[b:b + window]), 1e-6) / max(np.median(sharp[b - window:b]), 1e-6))
+    out, b = [], 0
+    while b < nb:
+        if abs(lr[b]) > math.log(factor):
+            run = b
+            while run + 1 < nb and abs(lr[run + 1]) > math.log(factor) and np.sign(lr[run + 1]) == np.sign(lr[b]):
+                run += 1
+            k = b + int(np.argmax(np.abs(lr[b:run + 1])))
+            out.append({"bin": int(k), "frame": int(k * fpb + fpb // 2), "ratio": round(float(math.exp(lr[k])), 2)})
+            b = run + 1
+        else:
+            b += 1
+    return out
+
+
 def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path | None = None,
             params: Params | None = None, only: list[str] | None = None, video: bool = False, log=print,
             units: tuple[float, float] | None = None) -> dict:
@@ -1487,9 +1515,15 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         results.append(res)
         log(f"{g['id']}: {res['status']:<20} onset {str(res.get('onset_frame')):>6}  "
             f"final {res.get('final_length_px', 0):6.1f} px  {' '.join(res['flags'])}")
+    focus = focus_changes(bins, meta)
+    fpb = int(meta["frames_per_bin"])
+    for res in results:  # an onset at a refocus says "visible by", not "emerged at"
+        of = res.get("onset_frame")
+        if of is not None and any(abs(of // fpb - f["bin"]) <= 3 for f in focus):
+            res["flags"].append("onset_at_focus_change")
     pred = {"schema": PRED_SCHEMA, "method": f"sparsetrack-v1 {__version__}", "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "cache": str(cache_dir), "grains_source": str(src), "params": asdict(p),
-            "frames_per_bin": meta["frames_per_bin"], "movie": meta["movie"], "grains": results}
+            "frames_per_bin": meta["frames_per_bin"], "movie": meta["movie"], "focus_changes": focus, "grains": results}
     (out_dir / "predictions.json").write_text(json.dumps(pred))
     from . import report
     um, spf = units or (None, None)  # (um per px, s per frame): physical units in the tables when both are known
