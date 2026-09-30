@@ -4,9 +4,12 @@ movie (how many grains are followed, and for how long).
     python -m prototypes.grain_tracking.evaluate_tracks synth runs/grain_tracking/synth/moves_m2_s31_cache \
         runs/grain_tracking/synth/moves_m2_s31_truth.json
     python -m prototypes.grain_tracking.evaluate_tracks real runs/sparsetrack/m1
+    python -m prototypes.grain_tracking.evaluate_tracks synth ... --set track_refind=true   # a tracker variant
 
 Trackers: "phase" (0.6.0: ``local_shifts`` on the analysis crop, then ``checked_drift``, which drops an implausible
-track for zero drift) and "follow" (``analyze.followed_drift``, Params.grain_track "follow").
+track for zero drift) and "follow" (``analyze.followed_drift``, Params.grain_track "follow", with ``--set`` options).
+Knocked grains (``synth_moves --knock-frac``) are also scored on their turn: the tracker's angle against the truth's
+where both are known.
 """
 
 from __future__ import annotations
@@ -18,9 +21,21 @@ from pathlib import Path
 
 import numpy as np
 
+from dataclasses import replace
+
 from sparsetrack import stack
 from sparsetrack.analyze import Params, checked_drift, followed_drift, local_shifts
 from sparsetrack.render import Renderer
+
+
+def params(spec: list[str] | None) -> Params:
+    """Params(grain_track="follow") with key=value overrides."""
+    over = {}
+    for kv in spec or []:
+        k, v = kv.split("=", 1)
+        cur = getattr(Params(), k)
+        over[k] = (v.lower() == "true") if isinstance(cur, bool) else type(cur)(v)
+    return replace(Params(grain_track="follow"), **over)
 
 
 def phase_drift(renderer: Renderer, meta: dict, g: dict, p: Params) -> tuple[np.ndarray, str | None]:
@@ -32,7 +47,7 @@ def phase_drift(renderer: Renderer, meta: dict, g: dict, p: Params) -> tuple[np.
     return checked_drift(ls, p)
 
 
-def synth(cache: Path, truth_path: Path, n_static: int = 12, seed: int = 0) -> dict:
+def synth(cache: Path, truth_path: Path, n_static: int = 12, seed: int = 0, pf: Params | None = None) -> dict:
     bins, meta = stack.load(cache)
     r = Renderer(bins, meta)
     census = json.loads((cache / "grains.json").read_text())["grains"]
@@ -42,11 +57,11 @@ def synth(cache: Path, truth_path: Path, n_static: int = 12, seed: int = 0) -> d
     for tid, tg in truth["grains"].items():
         by_census.setdefault(tg["census_id"], tg)
     p = Params()
-    pf = Params(grain_track="follow")
+    pf = pf or Params(grain_track="follow")
     rows = []
     rng = np.random.default_rng(seed)
     static = [cid for cid in by_census if cid not in tracks]
-    chosen = [cid for cid, tr in tracks.items() if tr["kind"] in ("drift", "push")] + \
+    chosen = [cid for cid, tr in tracks.items() if tr["kind"] in ("drift", "push", "knock")] + \
         list(rng.choice(static, min(n_static, len(static)), replace=False))
     for cid in chosen:
         tg = by_census.get(cid)
@@ -59,9 +74,12 @@ def synth(cache: Path, truth_path: Path, n_static: int = 12, seed: int = 0) -> d
         g = census[k]
         others = [o for o in census if o["id"] != g["id"]]
         nb = int(meta["n_bins"])
+        t_rot = None
         if cid in tracks:
             t_xy = np.asarray(tracks[cid]["xy"], float)[:nb]
             kind, vanish = tracks[cid]["kind"], tracks[cid]["vanish_bin"]
+            if tracks[cid].get("rot") is not None:
+                t_rot = np.asarray(tracks[cid]["rot"], float)[:nb]
         else:
             t_xy, kind, vanish = np.zeros((nb, 2)), "static", None
         t_rel = t_xy - t_xy[:3].mean(axis=0)
@@ -77,6 +95,12 @@ def synth(cache: Path, truth_path: Path, n_static: int = 12, seed: int = 0) -> d
         e_ph = np.hypot(*(ph - t_rel).T)[seen]
         fin = np.isfinite(fo[:, 0])
         e_fo = np.hypot(*(np.where(fin[:, None], fo, 0.0) - t_rel).T)[seen & fin]
+        rot_err = None
+        if t_rot is not None:
+            ang = np.asarray(fd.get("angle", np.full(nb, np.nan)), float)[:nb]
+            ok = np.isfinite(ang) & seen & (np.abs(t_rot) > 0)
+            if ok.any():
+                rot_err = float(np.median(np.abs((ang[ok] - (t_rot[ok] - t_rot[:3].mean()) + 180) % 360 - 180)))
         rows.append({"grain": g["id"], "truth": tg["id"], "kind": kind, "reach": float(np.hypot(*t_rel.T).max()),
                      "vanish_bin": vanish, "phase_flag": flag, "follow_lost_from": fd["lost_from"],
                      "follow_lost_reason": fd["lost_reason"], "followed_bins": int(fin.sum()),
@@ -86,15 +110,16 @@ def synth(cache: Path, truth_path: Path, n_static: int = 12, seed: int = 0) -> d
                      "follow_err_median": float(np.median(e_fo)) if len(e_fo) else None,
                      "follow_err_p90": float(np.percentile(e_fo, 90)) if len(e_fo) else None,
                      "follow_within2_of_seen": float(np.sum(e_fo <= 2.0) / max(seen.sum(), 1)),
-                     "t_phase_s": round(t_phase, 2), "t_follow_s": round(t_follow, 2)})
+                     "t_phase_s": round(t_phase, 2), "t_follow_s": round(t_follow, 2),
+                     "refound": len(fd.get("refound") or []), "turn_err_deg": rot_err})
         print(json.dumps(rows[-1]), flush=True)
     return {"cache": str(cache), "rows": rows}
 
 
 def summary(rows: list[dict]) -> str:
     out = []
-    for kind in ("static", "drift", "push", "all moving"):
-        sel = [x for x in rows if (x["kind"] == kind if kind != "all moving" else x["kind"] in ("drift", "push"))]
+    for kind in ("static", "drift", "push", "knock", "all moving"):
+        sel = [x for x in rows if (x["kind"] == kind if kind != "all moving" else x["kind"] in ("drift", "push", "knock"))]
         if not sel:
             continue
         seen = sum(x["seen_bins"] for x in sel)
@@ -103,7 +128,12 @@ def summary(rows: list[dict]) -> str:
         out.append(f"{kind:12s} grains {len(sel):3d}: bins within 2 px of the truth: phase {100 * ph:5.1f}%  follow "
                    f"{100 * fo:5.1f}% | median error phase {np.median([x['phase_err_median'] for x in sel]):.2f} "
                    f"follow {np.median([x['follow_err_median'] or 0 for x in sel]):.2f} px | phase drift_rejected "
-                   f"{sum(x['phase_flag'] == 'drift_rejected' for x in sel)}")
+                   f"{sum(x['phase_flag'] == 'drift_rejected' for x in sel)} | followed to the end (or to vanishing) "
+                   f"{sum(x['followed_bins'] >= x['seen_bins'] for x in sel)}/{len(sel)}")
+        te = [x["turn_err_deg"] for x in sel if x.get("turn_err_deg") is not None]
+        if te:
+            out.append(f"{'':12s} turn: median error {np.median(te):.0f} deg over {len(te)} grains (per grain: "
+                       f"{sorted(round(v) for v in te)})")
     van = [x for x in rows if x["vanish_bin"] is not None]
     if van:
         lag = [x["follow_lost_from"] - x["vanish_bin"] for x in van if x["follow_lost_from"] is not None]
@@ -118,13 +148,13 @@ def summary(rows: list[dict]) -> str:
     return "\n".join(out)
 
 
-def real(cache: Path, only: list[str] | None = None) -> dict:
+def real(cache: Path, only: list[str] | None = None, pf: Params | None = None) -> dict:
     """Label-free: every census grain followed; how long, how far, where lost."""
     bins, meta = stack.load(cache)
     r = Renderer(bins, meta)
     census = json.loads((cache / "grains.json").read_text())["grains"]
     rs, nb = int(meta.get("ref_start", 0)), int(meta["n_bins"])
-    pf, p = Params(grain_track="follow"), Params()
+    pf, p = pf or Params(grain_track="follow"), Params()
     rows = []
     for g in census:
         if only and g["id"] not in only:
@@ -137,12 +167,13 @@ def real(cache: Path, only: list[str] | None = None) -> dict:
                      "isolated": g.get("isolated"), "lost_from": fd["lost_from"], "lost_reason": fd["lost_reason"],
                      "followed_bins": int(fin.sum()), "n_bins": nb - rs,
                      "reach_px": round(float(np.nanmax(np.hypot(*fd["drift"].T))) if fin.any() else 0.0, 1),
-                     "phase_flag": flag,
+                     "phase_flag": flag, "refound": fd.get("refound") or [],
+                     "angle": [None if not np.isfinite(v) else round(float(v), 1) for v in fd.get("angle", [])],
                      "drift": [[None if not np.isfinite(v) else round(float(v), 2) for v in row]
                                for row in fd["drift"]]})
         x = rows[-1]
         print(f"{x['grain']} lost_from {x['lost_from']} ({x['lost_reason']}) followed {x['followed_bins']}/"
-              f"{x['n_bins']} reach {x['reach_px']} phase {flag}", flush=True)
+              f"{x['n_bins']} reach {x['reach_px']} phase {flag} refound {x['refound']}", flush=True)
     return {"cache": str(cache), "rows": rows}
 
 
@@ -159,7 +190,9 @@ def summary_real(rows: list[dict]) -> str:
            f"loss bins: {sorted(x['lost_from'] for x in lost)}",
            f"how far grains move (px, while followed): median {np.median(reach):.1f}, > 10 px {int((reach > 10).sum())}, "
            f"> 30 px {int((reach > 30).sum())}, > 60 px {int((reach > 60).sum())}, max {reach.max():.0f}",
-           f"0.6.0 phase track: drift_rejected for {sum(x['phase_flag'] == 'drift_rejected' for x in rows)}/{n}"]
+           f"0.6.0 phase track: drift_rejected for {sum(x['phase_flag'] == 'drift_rejected' for x in rows)}/{n}",
+           f"found again after a knock: {sum(bool(x.get('refound')) for x in rows)} grains, "
+           f"{sum(len(x.get('refound') or []) for x in rows)} times"]
     return "\n".join(out)
 
 
@@ -169,12 +202,14 @@ if __name__ == "__main__":
     ap.add_argument("cache")
     ap.add_argument("truth", nargs="?")
     ap.add_argument("--out")
+    ap.add_argument("--set", nargs="*", default=[], help="Params overrides for the follow tracker: key=value ...")
+    ap.add_argument("--only", nargs="*", default=None)
     args = ap.parse_args()
     if args.mode == "synth":
-        res = synth(Path(args.cache), Path(args.truth))
+        res = synth(Path(args.cache), Path(args.truth), pf=params(args.set))
         print(summary(res["rows"]))
     else:
-        res = real(Path(args.cache))
+        res = real(Path(args.cache), only=args.only, pf=params(args.set))
         print(summary_real(res["rows"]))
     if args.out:
         Path(args.out).write_text(json.dumps(res))

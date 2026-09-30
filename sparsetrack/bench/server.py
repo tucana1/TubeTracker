@@ -7,9 +7,19 @@ and of the centerline observations (``path_xy``, ``path_complete``, ``direct_sta
 so answers can later be imported into an annotation project.
 
 Every judgement is made on a registered bin average; a bin decision is stored both
-as the bin index and as the bin-centre source frame. Grain views follow the grain's own
-drift (the per-grain registration SparseTrack uses); traces are clicked in that
-grain-following view and stored in reference coordinates.
+as the bin index and as the bin-centre source frame. Grain views follow the grain (``Bench.follow``); traces are
+clicked in that grain-following view and stored in reference coordinates (``path_xy_ref``), with the view's offset
+at that bin (``view_offset``) and the clicked points (``path_xy_view``). The page draws a saved trace from its
+reference coordinates less the view's current offset, so it stays on the tube when the way the tool follows a grain
+changes.
+
+How views follow a grain (30 Sep 2026):
+- labelling (a file the tool made): wherever ``track.follow`` has the grain (knocked grains found again,
+  ``Params.track_refind``), however little it moved; once the tracker has lost it, where it was last seen. The
+  annotator can say where the grain is at a trace time (G, then a click on its centre): the tool keeps it in the
+  labels file (``labels[gid]["refinds"]``) and follows the grain from there;
+- review (a file pre-filled with a model's answers, ``sparsetrack review``): the analysis' own frame, so the model's
+  drawn paths stay on its tubes (as before: the followed drift once a grain is off its place, the phase track nearer).
 """
 
 from __future__ import annotations
@@ -51,6 +61,7 @@ RETEST_SIZE = 8
 TRACE_RETEST_SIZE = 15
 FOLLOW_HALF = 60        # crop used to measure a grain's own drift
 FOLLOW_MAX_STEP = 10.0  # a jump bigger than this between bins means the tracking is unreliable
+LABEL_TRACK = {"track_refind": True}  # the tracker's options for labelling views (Params overrides)
 
 
 def trace_bins(first_visible_bin: int, n_bins: int) -> list[int]:
@@ -81,13 +92,15 @@ def grain_trace_plan(first_visible_bin: int, n_bins: int, saved: dict) -> list[i
 
 class Bench:
     def __init__(self, cache_dir: str | Path, labels_path: str | Path, annotator: str = "investigator",
-                 sample: int = 0, seed: int = 20260923):
+                 sample: int = 0, seed: int = 20260923, follow_mode: str | None = None):
+        """``follow_mode``: how the views follow a grain (module docstring), "label" or "review"; by default
+        "review" for a file pre-filled with a model's answers, else "label"."""
         self.cache_dir = Path(cache_dir)
         self.bins, self.meta = stack.load(self.cache_dir)
         self.renderer = Renderer(self.bins, self.meta)
         self.fpb = int(self.meta["frames_per_bin"])
         self.n_bins = int(self.meta["n_bins"])
-        self._follow: dict[str, np.ndarray] = {}
+        self._follow: dict[str, dict] = {}
         self.labels_path = Path(labels_path)
         self.journal_path = self.labels_path.with_suffix(".journal.jsonl")
         self.annotator = annotator
@@ -100,6 +113,9 @@ class Bench:
             if sample:
                 self._sample(sample, seed)
             self.save("create")
+        if follow_mode not in (None, "label", "review"):
+            raise ValueError(f"follow_mode {follow_mode!r}: label or review")
+        self.follow_mode = follow_mode or ("review" if self.doc.get("prefill") else "label")
 
     # ---- document -----------------------------------------------------------------
     def _new_doc(self) -> dict:
@@ -197,6 +213,7 @@ class Bench:
             "labels_path": str(self.labels_path),
             # a file pre-filled with a model's answers (sparsetrack review): the tool asks until each is checked
             "review": self.doc.get("prefill"),
+            "follow_mode": self.follow_mode,
         }
 
     # ---- updates --------------------------------------------------------------------
@@ -339,6 +356,39 @@ class Bench:
             self.save("add_grain", {"grain": gid, "x": x, "y": y, "r": r})
         return self.doc["grains"][gid]
 
+    def set_refind(self, gid: str, body: dict) -> dict:
+        """"The grain is here" at bin ``body["bin"]``: its centre clicked at (``x``, ``y``) in that bin's view (the
+        grain-following view, as trace points are), or ``clear`` to take back the answer given at that bin. Kept in
+        the labels file (``labels[gid]["refinds"]``, reference coordinates) and followed from there. Labelling only:
+        a review shows the analysis' own frame. Returns the grain's ``follow_info``."""
+        if self.follow_mode != "label":
+            raise ValueError("saying where a grain is belongs to labelling; a review shows the analysis' own frame")
+        b = int(body["bin"])
+        if not 0 <= b < self.n_bins:
+            raise ValueError(f"bin {b} is outside the movie")
+        g = self.grain(gid)
+        fx, fy = (float(v) for v in self.follow(gid)[b])  # the view the click was made in
+        with self.lock:
+            refinds = self.doc["labels"].setdefault(gid, {}).setdefault("refinds", {})
+            if body.get("clear"):
+                gone = refinds.pop(str(b), None)
+                if not refinds:
+                    self.doc["labels"][gid].pop("refinds")
+                self.save("refind_clear", {"grain": gid, "bin": b, "was": gone})
+            else:
+                x, y = float(body["x"]) + fx, float(body["y"]) + fy
+                record = {"bin": b, "source_frame": self.bin_centre(b), "xy_ref": [round(x, 2), round(y, 2)],
+                          "offset": [round(x - float(g["x"]), 2), round(y - float(g["y"]), 2)],
+                          "clicked_view": [round(float(body["x"]), 2), round(float(body["y"]), 2)],
+                          "view_offset": [round(fx, 2), round(fy, 2)], "annotator": self.annotator,
+                          "updated": time.strftime("%Y-%m-%dT%H:%M:%S")}
+                refinds[str(b)] = record
+                self.save("refind", {"grain": gid, **record})
+            self._follow.pop(gid, None)
+            self.renderer._contrast = {k: v for k, v in self.renderer._contrast.items()
+                                       if not (k[0] == gid or (isinstance(k[0], tuple) and k[0][0] == gid))}
+        return self.follow_info(gid)
+
     def pick_retest(self) -> list[str]:
         with self.lock:
             if not self.doc["retest"]["grains"]:
@@ -370,31 +420,93 @@ class Bench:
 
     # ---- images ---------------------------------------------------------------------
     def follow(self, gid: str) -> np.ndarray:
-        """(n_bins, 2) offsets that keep a drifting grain centred in its views (grain registration
-        on top of the field registration; zero before the reference bins). Where the analysis' default
-        ``Params.grain_track`` reads the grain in its own frame ("follow"; "auto" once it moves off its place) these
-        are the analysis' own drift (``analyze.followed_drift``; after a loss the view stays where the grain was last
-        seen); otherwise the phase-correlation track, zero if it is erratic."""
+        """(n_bins, 2) offsets that keep a grain centred in its views (grain registration on top of the field
+        registration; the first reference bin's before the reference bins). How, depends on ``follow_mode`` (module
+        docstring): labelling follows the tracker wherever it has the grain and from wherever the annotator said the
+        grain is; a review shows the analysis' own frame."""
+        return self._track(gid)["offsets"]
+
+    def follow_info(self, gid: str) -> dict:
+        """What the page needs to follow a grain: the view offsets per bin; ``lost``, the stretches [from, to, why]
+        where the tool does not know where the grain is (from a loss by the tracker to the annotator's next "the grain
+        is here", or to the end: the view stays where the grain was last seen) and ``lost_from``, the start of such
+        a stretch that runs to the end (None: the grain is followed to the end); the bins the tracker found it again
+        at by its look after a knock; and the annotator's own answers."""
+        tr = self._track(gid)
+        return {"grain": gid, "mode": self.follow_mode, "offsets": np.round(tr["offsets"], 2).tolist(),
+                "lost": tr["lost"], "lost_from": tr["lost_from"], "lost_reason": tr["lost_reason"],
+                "refound": tr["refound"],
+                "refinds": sorted((self.doc["labels"].get(gid) or {}).get("refinds", {}).values(),
+                                  key=lambda r: r["bin"])}
+
+    def _track(self, gid: str) -> dict:
         if gid not in self._follow:
-            from ..analyze import Params, followed_drift, hold_nan, local_shifts, plausible_drift, reads_in_grain_frame
-            g = self.grain(gid)
-            rs, half = self.renderer.ref_start, FOLLOW_HALF
-            p = Params()
-            ls = None
-            if p.grain_track in ("follow", "auto"):
-                others = [o for oid, o in self.doc["grains"].items()
-                          if oid != gid and o.get("exclude_reason") != "not_a_grain"]
-                ls = hold_nan(followed_drift(self.renderer, self.meta, g, others, p)["drift"])
-                ls = ls if reads_in_grain_frame(ls, g["r"], p) else None  # auto: as the analysis reads it
-            if ls is None:
-                crops = np.stack([self.renderer.crop(b, g["x"], g["y"], half) for b in range(rs, self.n_bins)])
-                if np.isnan(crops).any():
-                    crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)))
-                ls = local_shifts(crops, half - 0.5, g["r"], 12.0, 3)
-                if not plausible_drift(ls, FOLLOW_MAX_STEP):
-                    ls = np.zeros_like(ls)
-            self._follow[gid] = np.vstack([np.repeat(ls[:1], rs, axis=0), ls])
+            self._follow[gid] = self._label_track(gid) if self.follow_mode == "label" else self._review_track(gid)
         return self._follow[gid]
+
+    def _others(self, gid: str) -> list[dict]:
+        return [o for oid, o in self.doc["grains"].items() if oid != gid and o.get("exclude_reason") != "not_a_grain"]
+
+    def _review_track(self, gid: str) -> dict:
+        """The analysis' own frame (Params defaults): its followed drift where it reads the grain in its own frame
+        ("follow"; "auto" once it moves off its place; after a loss where the grain was last seen), otherwise the
+        phase-correlation track, zero if it is erratic."""
+        from ..analyze import Params, followed_drift, hold_nan, local_shifts, plausible_drift, reads_in_grain_frame
+        g = self.grain(gid)
+        rs, half = self.renderer.ref_start, FOLLOW_HALF
+        p = Params()
+        ls, fd = None, {}
+        if p.grain_track in ("follow", "auto"):
+            fd = followed_drift(self.renderer, self.meta, g, self._others(gid), p)
+            ls = hold_nan(fd["drift"])
+            ls = ls if reads_in_grain_frame(ls, g["r"], p) else None  # auto: as the analysis reads it
+        if ls is None:
+            crops = np.stack([self.renderer.crop(b, g["x"], g["y"], half) for b in range(rs, self.n_bins)])
+            if np.isnan(crops).any():
+                crops = np.nan_to_num(crops, nan=float(np.nanmedian(crops)))
+            ls = local_shifts(crops, half - 0.5, g["r"], 12.0, 3)
+            if not plausible_drift(ls, FOLLOW_MAX_STEP):
+                ls = np.zeros_like(ls)
+        lost_from = fd.get("lost_from")
+        return {"offsets": np.vstack([np.repeat(ls[:1], rs, axis=0), ls]), "lost_from": lost_from,
+                "lost_reason": fd.get("lost_reason"), "refound": fd.get("refound") or [],
+                "lost": [] if lost_from is None else [[int(lost_from), self.n_bins, fd.get("lost_reason")]]}
+
+    def _label_track(self, gid: str) -> dict:
+        """Wherever the tracker has the grain (``analyze.followed_drift`` with LABEL_TRACK), however little it moved;
+        after a loss, where it was last seen. From each bin the annotator said where the grain is, the tracker starts
+        again there (``track.follow`` from that bin, its look there as the reference)."""
+        from dataclasses import replace
+        from .. import track
+        from ..analyze import Params, followed_drift, hold_nan
+        g = self.grain(gid)
+        rs = self.renderer.ref_start
+        p = replace(Params(), **LABEL_TRACK)
+        others = self._others(gid)
+        fd = followed_drift(self.renderer, self.meta, g, others, p)
+        ls = hold_nan(fd["drift"])
+        offsets = np.vstack([np.repeat(ls[:1], rs, axis=0), ls])
+        marks = sorted((self.doc["labels"].get(gid) or {}).get("refinds", {}).values(), key=lambda r: r["bin"])
+        ends = [int(m["bin"]) for m in marks] + [self.n_bins]
+        # stretches the tool does not know where the grain is: from a loss to the next answer (or the end)
+        lost = [] if fd["lost_from"] is None or fd["lost_from"] >= ends[0] else [
+            [int(fd["lost_from"]), ends[0], fd["lost_reason"]]]
+        refound = [r for r in fd.get("refound") or [] if r["bin"] < ends[0]]
+        near = [(float(o["x"]), float(o["y"]), float(o["r"])) for o in others
+                if np.hypot(o["x"] - g["x"], o["y"] - g["y"]) < 200]
+        cfg = track.FollowConfig(step_px=p.track_step_px, min_score=p.track_min_score, max_gap=p.track_max_gap,
+                                 refind=p.track_refind)
+        for m, b1 in zip(marks, ends[1:]):
+            b0 = int(m["bin"])
+            x, y = (float(v) for v in m["xy_ref"])
+            tr = track.follow(self.renderer, x, y, float(g["r"]), b0, self.n_bins, near, cfg)
+            offsets[b0:b1] = np.array([x - float(g["x"]), y - float(g["y"])]) + hold_nan(tr["xy"])[:b1 - b0]
+            if tr["lost_from"] is not None and tr["lost_from"] < b1:
+                lost.append([int(tr["lost_from"]), b1, tr["lost_reason"]])
+            refound += [r for r in tr["refound"] if r["bin"] < b1]
+        return {"offsets": offsets, "lost": lost, "refound": refound,
+                "lost_from": lost[-1][0] if lost and lost[-1][1] == self.n_bins else None,
+                "lost_reason": lost[-1][2] if lost and lost[-1][1] == self.n_bins else None}
 
     def coarse_png(self, gid: str, mode: str) -> bytes:
         g = self.grain(gid)
@@ -476,6 +588,8 @@ def make_handler(bench: Bench):
                     return self._json({"grains": bench.pick_retest()})
                 if parts == ["api", "trace_retest"]:
                     return self._json({"traces": bench.pick_trace_retest()})
+                if parts[:2] == ["api", "follow"] and len(parts) == 3:
+                    return self._json(bench.follow_info(parts[2]))
                 if parts[:2] == ["api", "img"]:
                     kind, mode = parts[2], q.get("contrast", "n")
                     if kind == "field":
@@ -511,6 +625,8 @@ def make_handler(bench: Bench):
                     return self._json(bench.set_trace(parts[2], body))
                 if parts[:2] == ["api", "exclude"]:
                     return self._json(bench.set_exclusion(parts[2], body))
+                if parts[:2] == ["api", "refind"]:
+                    return self._json(bench.set_refind(parts[2], body))
                 if parts == ["api", "grain"]:
                     return self._json(bench.add_grain(body))
                 self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
