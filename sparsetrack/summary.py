@@ -70,9 +70,9 @@ def movie_row(folder: Path, units: tuple[float, float] | None = None) -> dict:
     if rev.exists():
         from .review import population_input
         doc = json.loads(rev.read_text())
-        riv = report.onset_intervals(population_input(doc))
+        riv = report.onset_intervals(population_input(doc), iso)  # the same grains as the model's curve
         checked = sum(1 for gid, lab in doc.get("labels", {}).items()
-                      if not doc["grains"].get(gid, {}).get("excluded")
+                      if gid in iso and not doc["grains"].get(gid, {}).get("excluded")
                       and (lab.get("onset") or {}).get("review_origin") == "human")
         row.update(reviewed_germinated=germinated_share(riv), reviewed_t50_frame=t50_of(riv), onsets_checked=checked,
                    _reviewed_intervals=riv)

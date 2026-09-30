@@ -1,4 +1,5 @@
 #!/bin/zsh
+# Opens TubeTracker (sets up .venv the first time). TubeTracker.command does the same on a double-click.
 set -e
 
 cd "$(dirname "$0")"
@@ -14,8 +15,14 @@ if [ -f ".venv/.requirements.sha256" ]; then
   installed_hash="$(<.venv/.requirements.sha256)"
 fi
 if [ "$requirements_hash" != "$installed_hash" ]; then
-  .venv/bin/python -m pip install -r requirements.txt
-  printf '%s\n' "$requirements_hash" > .venv/.requirements.sha256
+  if .venv/bin/python -m pip install -r requirements.txt; then
+    printf '%s\n' "$requirements_hash" > .venv/.requirements.sha256
+  elif .venv/bin/python -c "import wx, numpy, cv2" 2>/dev/null; then
+    echo "Could not update the Python packages (offline?); starting with the ones installed."
+  else
+    echo "Could not install the Python packages TubeTracker needs."
+    exit 1
+  fi
 fi
 
-.venv/bin/python TubeTracker.py
+exec .venv/bin/python TubeTracker.py "$@"

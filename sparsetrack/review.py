@@ -111,8 +111,11 @@ def trace_confidence(px, i: int) -> float:
     return 1.0 / (1.0 + math.exp(-z))
 
 
-def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=print) -> Path:
-    """Write the review labels file ``out`` (and the proposals as made, ``*.model.json``)."""
+def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=print,
+            follow: dict | None = None) -> Path:
+    """Write the review labels file ``out`` (and the proposals as made, ``*.model.json``). ``follow``: per grain id,
+    the (n_bins, 2) offsets of its grain-following view if already known (the TubeTracker app passes the analysis'
+    own drift); others are measured as the labelling tool does (seconds per grain)."""
     from . import __version__
     from .bench.server import Bench, trace_bins
     from .report import turned_path
@@ -129,6 +132,8 @@ def prefill(cache: str | Path, pred: dict | str | Path, out: str | Path, log=pri
     model_name = f"SparseTrack {pred.get('params', {}).get('version') or __version__}"
     bench = Bench(cache, building, annotator=model_name)
     bench.save = lambda *a, **k: None  # the answers go through the tool's own code; the file is written once, below
+    for gid, offsets in (follow or {}).items():
+        bench.set_follow(gid, offsets)
     census, fpb, nb = bench.doc["grains"], bench.fpb, bench.n_bins
     n_traces, check_first, confidence, observed_until = 0, {}, {}, {}
     for res in pred.get("grains", []):
