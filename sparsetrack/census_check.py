@@ -155,12 +155,26 @@ MODEL: dict = {
 }
 
 
+def annotate(cache_dir: str | Path) -> dict[str, float]:
+    """Write each census grain's P into the cache's grains.json (field ``likely_not_a_grain``; nothing else changes)
+    and return every grain's P."""
+    path = Path(cache_dir) / "grains.json"
+    doc = json.loads(path.read_text())
+    p = check(cache_dir)
+    for g in (doc["grains"].values() if isinstance(doc["grains"], dict) else doc["grains"]):
+        g[FLAG] = round(p[g["id"]], 3)
+    doc["census_check"] = {"threshold": MODEL["threshold"], "fitted_on": MODEL.get("fitted_on")}
+    path.write_text(json.dumps(doc, indent=1))
+    return p
+
+
 def main(argv=None) -> None:
     import argparse
     ap = argparse.ArgumentParser(description="census check: the census grains that are likely not grains")
     ap.add_argument("cache")
+    ap.add_argument("--write", action="store_true", help=f"store each grain's P in the cache's grains.json ({FLAG})")
     a = ap.parse_args(argv)
-    p = check(a.cache)
+    p = annotate(a.cache) if a.write else check(a.cache)
     fl = {g: v for g, v in p.items() if v >= float(MODEL["threshold"])}
     print(f"{len(fl)} of {len(p)} census grains flagged {FLAG} (P >= {MODEL['threshold']:.2f}): "
           + ", ".join(f"{g} {v:.2f}" for g, v in sorted(fl.items())))

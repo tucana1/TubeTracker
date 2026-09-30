@@ -1553,11 +1553,11 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
     not_grains: set[str] = set()
     if p.census_check:  # likely not grains: flagged, and left out of the population statistics below
         from . import census_check
-        fl = census_check.flagged(cache_dir, grains=[g for g in grains if any(r["id"] == g["id"] for r in results)])
+        suspects = census_check.flagged(cache_dir, grains=[g for g in grains if any(r["id"] == g["id"] for r in results)])
         for res in results:
-            if res["id"] in fl:
-                res["flags"].append(f"{census_check.FLAG}:{fl[res['id']]:.2f}")
-        not_grains = set(fl)
+            if res["id"] in suspects:
+                res["flags"].append(f"{census_check.FLAG}:{suspects[res['id']]:.2f}")
+        not_grains = set(suspects)
     pred = {"schema": PRED_SCHEMA, "method": f"sparsetrack-v1 {__version__}", "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "cache": str(cache_dir), "grains_source": str(src), "params": asdict(p),
             "frames_per_bin": meta["frames_per_bin"], "movie": meta["movie"], "focus_changes": focus, "grains": results}

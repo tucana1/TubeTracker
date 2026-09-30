@@ -70,6 +70,16 @@ def test_the_fitted_model_scores_dark_debris_above_a_ringed_grain(tmp_path):
     assert p[ids[(150.0, 50.0)]] > p[ids[(50.0, 50.0)]]
 
 
+def test_annotate_stores_each_grains_probability_in_the_census(tmp_path):
+    cache, ids = _cache(tmp_path)
+    before = json.loads((cache / "grains.json").read_text())
+    p = census_check.annotate(cache)
+    after = json.loads((cache / "grains.json").read_text())
+    assert {g["id"]: g[census_check.FLAG] for g in after["grains"]} == {k: round(v, 3) for k, v in p.items()}
+    for a, b in zip(before["grains"], after["grains"]):  # nothing else changes
+        assert {k: v for k, v in b.items() if k != census_check.FLAG} == a
+
+
 def test_the_census_check_is_off_by_default():
     from sparsetrack.analyze import Params
     assert Params().census_check is False
