@@ -72,6 +72,36 @@ def test_the_window_opens_an_analysis_and_takes_a_correction(app, tmp_path, monk
         _yield()
 
 
+def test_a_finished_analysis_opens_by_itself(app, tmp_path):
+    """Analyse (here a stand-in worker that puts an analysis in place): progress shows, then the movie opens."""
+    import time
+    from tubetracker.app.window import MainFrame
+
+    run = make_run(tmp_path / "runs" / "tiny", {"duration_s": 24000.0})
+    (run / "analysis").rename(run / "ready")
+    worker = tmp_path / "worker.py"
+    worker.write_text(
+        "import json, os, sys, time\n"
+        "def emit(**k): print('@@ ' + json.dumps(k), flush=True)\n"
+        "emit(phase='grains', label='Reading the grains', k=1, n=4); time.sleep(0.3)\n"
+        f"os.rename({str(run / 'ready')!r}, {str(run / 'analysis')!r})\n"
+        "emit(phase='done', label='Analysis complete')\n")
+    frame = MainFrame(tmp_path / "runs")
+    try:
+        frame.jobs.command = lambda job: [sys.executable, "-u", str(worker)]
+        frame.open_path(str(run))
+        assert frame.analysis.IsShown() and frame.data is None
+        frame.on_analyse()
+        t0 = time.time()
+        while frame.data is None and time.time() - t0 < 20:
+            _yield(2)
+            time.sleep(0.05)
+        assert frame.data is not None and frame.movie.IsShown()
+    finally:
+        frame.Destroy()
+        _yield()
+
+
 def test_the_launcher_opens_the_window_on_an_analysis_folder(app, tmp_path):
     from tubetracker.app.window import open_window, parse_args
 
