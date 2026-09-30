@@ -1,12 +1,16 @@
 """Pixel check of a tube network on a labelled movie without writing its probability movie to disk.
 
-    python -m prototypes.tube_net.pixels MODEL.pt MOVIE [MOVIE ...] [--json OUT]     # MOVIE = ld | m2
+    python -m prototypes.tube_net.pixels MODEL.pt MOVIE [MOVIE ...] [--json OUT]     # MOVIE = ld | m2 | m1
 
 Only the bins the checks read are computed (full frames, exactly as ``learned.prob_cache`` computes them), held in
 memory: the traced bins and every third bin before each grain's onset. Checks (``prototypes.synth_v6.recall``):
 traced-tube marking from the grain's visible edge (all FULL traces, first trace per grain, young <= 8 px, long
 >= 50 px), stubs and tips seen, marks 8-14 px beside tubes, and rim marks before onset (grain-bins with >= 6 px of
 P >= 0.5 within r..r+7 px, where the flood could start a tube on the grain itself).
+
+Movie 1 (30 Sep 2026; nothing is written to its cache): its grains move a median 33 px by the end, so its rim check
+looks for each grain where it is at every bin (the labelling tool's own per-bin grain offsets, ``--follow``, the
+default for movie 1) instead of at its first trace's place (ld and m2, as recorded).
 """
 
 from __future__ import annotations
@@ -22,7 +26,9 @@ from sparsetrack import learned, stack
 
 REPO = Path(__file__).resolve().parents[2]
 MOVIES = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
-          "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json")}
+          "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json"),
+          "m1": ("runs/sparsetrack/m1", "benchmark/labels/m1_v1.json")}
+FOLLOW_DEFAULT = {"m1"}  # movies whose rim check follows each grain bin by bin
 
 
 def needed_bins(labels: dict, meta: dict, step: int = 3) -> list[int]:
@@ -140,13 +146,57 @@ def tip_extent(pm: tuple, labels: dict, step: float = 0.5, reach: float = 12.0) 
     return out
 
 
-def check(model: str | Path, movie: str, log=print, net=None, tile: int = 0, bg: int = 0) -> dict:
+def rim_followed(pm: tuple, labels: dict, offsets: dict, step: int = 3, min_px: int = 6) -> dict:
+    """``recall.rim_false_marks`` with each grain looked for where it is at every bin (``offsets``: grain -> (n_bins,
+    2) offsets from its census place) rather than at its first trace's place: grain-bins before the human's first
+    visible bin - 2 (every bin of grains that never germinate) with >= ``min_px`` pixels of P >= 0.5 within r..r+7."""
+    from sparsetrack.render import Renderer
+    R = Renderer(*pm)
+    rs, nb = int(pm[1].get("ref_start", 0)), int(pm[1]["n_bins"])
+    marked = total = 0
+    grains_marked = set()
+    for gid, lab in labels["labels"].items():
+        g = labels["grains"][gid]
+        if g.get("excluded"):
+            continue
+        on = lab.get("onset", {})
+        end = (int(on["first_visible_bin"]) - 2 if on.get("verdict") == "emerged_within"
+               else nb - 1 if on.get("verdict") == "no_emergence_by_end" else None)
+        if end is None:
+            continue
+        off = offsets.get(gid)
+        half = int(g["r"] + 12)
+        yy, xx = np.mgrid[0:2 * half, 0:2 * half]
+        d = np.hypot(xx + 0.5 - half, yy + 0.5 - half)
+        zone = (d >= g["r"]) & (d <= g["r"] + 7)
+        for b in range(rs + 3, end, step):
+            ox, oy = (off[b] if off is not None else (0.0, 0.0))
+            p = np.nan_to_num(R.crop(b, g["x"] + ox, g["y"] + oy, half)) / learned.P_SCALE
+            total += 1
+            if int(((p >= 0.5) & zone).sum()) >= min_px:
+                marked += 1
+                grains_marked.add(gid)
+    return {"grain_bins": total, "marked": marked, "share": marked / max(total, 1), "grains": len(grains_marked),
+            "followed": True}
+
+
+_OFFSETS: dict = {}
+
+
+def check(model: str | Path, movie: str, log=print, net=None, tile: int = 0, bg: int = 0,
+          follow: bool | None = None) -> dict:
     labels = json.loads((REPO / MOVIES[movie][1]).read_text())
     _, meta = stack.load(REPO / MOVIES[movie][0])
     pm = prob_movie(model, movie, needed_bins(labels, meta), net=net, log=log, tile=tile, bg=bg)
     rows = measure(pm, REPO / MOVIES[movie][1])
     s = summarise(rows) | extra(rows)
-    s["rim_before_onset"] = rim_false_marks(pm, REPO / MOVIES[movie][1])
+    if (movie in FOLLOW_DEFAULT) if follow is None else follow:
+        if movie not in _OFFSETS:
+            from prototypes.tube_net.realdata import grain_offsets
+            _OFFSETS[movie] = grain_offsets(movie)
+        s["rim_before_onset"] = rim_followed(pm, labels, _OFFSETS[movie])
+    else:
+        s["rim_before_onset"] = rim_false_marks(pm, REPO / MOVIES[movie][1])
     te = tip_extent(pm, labels)
     ext = np.array([r["extent"] for r in te])
     s["tip_extent"] = {"traces": len(te), "median": float(np.median(ext)), "p25": float(np.percentile(ext, 25)),
@@ -185,11 +235,13 @@ if __name__ == "__main__":
     ap.add_argument("--grains", nargs="*", default=["g069", "g082", "g043", "g054", "g038", "g005", "g092"])
     ap.add_argument("--tile", type=int, default=0, help="compute the maps on tiles of this size (0: full frames)")
     ap.add_argument("--bg", type=int, default=0, help="inputs relative to the local background over this many px")
+    ap.add_argument("--follow", action="store_true", default=None,
+                    help="rim check with each grain followed bin by bin (default: movie 1 only)")
     a = ap.parse_args()
     net = learned.load_model(a.model)
     res = {}
     for mv in a.movies:
-        res[mv] = check(a.model, mv, net=net, tile=a.tile, bg=a.bg)
+        res[mv] = check(a.model, mv, net=net, tile=a.tile, bg=a.bg, follow=a.follow)
         tag = (f" tiles {a.tile}" if a.tile else "") + (f" bg {a.bg}" if a.bg else "")
         print(f"{Path(a.model).stem}{tag} on {mv}: {line(res[mv]['summary'])}", flush=True)
         if mv == "m2" and a.grains:
