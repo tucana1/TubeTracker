@@ -1,9 +1,15 @@
 """Learned tube evidence and the arrival-flood reader, for crowded fields.
 
 A small U-Net reads each registered bin with the movie's "before" and "after" images and
-outputs P(tube body) per pixel. The shipped model (``models/tubes_synth_v1.pt``) was trained
-only on codec-exact synthetic movies built on the real fields of the dev movie and movie 2
-(no human labels), so both human benchmarks stay held out for it.
+outputs P(tube body) per pixel. The shipped model (0.8.0 on, ``models/tubes_bn_real_ld_m2.pt``;
+recipe ``prototypes/learned_flood/models/tubes_bn_real_ld_m2.recipe.sh``) uses BatchNorm and inputs
+relative to the local background (so a pixel's map depends on its surroundings, not on the whole
+frame, and uneven illumination is taken out as in the training crops), trained on codec-exact
+synthetic movies (v5 and v6) and fine-tuned on both labelled movies' traces. Judged on the movie
+whose traces it did not see, the recipe marks far more of the traced tubes than the synthetic-only
+``models/tubes_synth_v1.pt`` (0.5-0.7) and gives per-grain growth rates that follow the annotator's
+(movie 2: correlation 0.72 vs 0.19; prototypes/tube_net/README.md). Both labelled movies are
+therefore development sets for it; movie 1 is its test.
 
 The flood reads one grain's tube from those maps: every pixel gets an arrival bin (the first
 bin from which it stays tube), and the tube grows in arrival order from the rim. A newly
@@ -37,7 +43,7 @@ import numpy as np
 from . import stack
 from .render import Renderer
 
-MODEL = Path(__file__).parent / "models" / "tubes_synth_v1.pt"
+MODEL = Path(__file__).parent / "models" / "tubes_bn_real_ld_m2.pt"  # 0.5.0-0.7.0: tubes_synth_v1.pt
 P_SCALE = 250.0       # probability movies are stored as uint8 P x P_SCALE
 IN_SCALE = 20.0       # network input: grey levels per unit, relative to the before image's median
 HALO = 3.0            # the rim's own change (focus, swelling) reaches this far out

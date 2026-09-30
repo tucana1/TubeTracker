@@ -62,22 +62,24 @@ when **the movie's focus changed** (movie 2 was out of focus from about bin 13 t
 meanwhile are seen only once it is sharp again, so onsets at that time mean "visible by" (flag
 `onset_at_focus_change`).
 
-**How far to trust the model unchecked** (29 Sep 2026, SparseTrack 0.7.0, against one
-annotator's traces; length within max(2 px, 10%), onset within 2 bins; both movies were
-used in development, so a third, blind-labelled movie is the honest test):
-- sparse movie: lengths 72/104 (69%), onsets 15/25 (60%); growth rate per grain within
-  max(0.1 px/bin, 20%) of the annotator's for 24 of 27 grains (correlation 0.83). The same
+**How far to trust the model unchecked** (30 Sep 2026, SparseTrack 0.8.0, against one annotator's traces; length
+within max(2 px, 10%), onset within 2 bins). 0.8.0's tube network was fine-tuned on both labelled movies' traces, so
+the honest numbers for those movies come from the same recipe trained on the *other* movie's traces; a third,
+blind-labelled movie (movie 1) is the real test:
+- sparse movie: lengths 73/104 (70%; 0.7.0: 72), length and tip 58, onsets 14/26; growth rate per grain within
+  max(0.1 px/bin, 20%) of the annotator's for 25 of 27 grains (correlation 0.91; 0.7.0: 24/27, 0.83). The same
   annotator repeating 15 traces blind agreed with themself on 11/14 lengths (79%) and on 4/7 onsets.
-- crowded movie 2: lengths 23/54 (43%), onsets 4/18 (22%), growth rates 6 of 18 (correlation
-  0.19): long tubes that cross others or move are read short. Tubes that touch or cross
-  other tubes, and very young tubes, are the hard cases; check those first (the gallery
-  and the review open with the model's least sure grains).
-- the germination curve holds up better than single onsets, whose errors partly cancel:
-  T50 within about one bin of the annotator's on the sparse movie (7735 vs 7383 frames)
-  and 2.3 bins on movie 2 (24752 vs 24049 frames); the curves differ by at most 0.14 and
-  0.19. `sparsetrack eval` reports this and the growth-rate agreement.
+- crowded movie 2: lengths 24/54 (44%; 0.7.0: 23), length and tip 22 (0.7.0: 17), onsets 4/18; growth rates 10 of 18
+  grains within tolerance, correlation 0.72 (0.7.0: 6/18, 0.19): the new network follows long, faint tubes the old
+  one lost, and no longer starts floods on rim noise (8 of 0.7.0's 23 movie-2 hits were such accidents). Tubes
+  that cross or touch others, and very young tubes, remain the hard cases; check those first (the gallery and the
+  review open with the model's least sure grains). Movie 2 was out of focus from about bin 13 to bin 63, so its
+  onsets there mean "visible by".
+- the germination curve holds up better than single onsets, whose errors partly cancel: T50 within about one bin
+  of the annotator's on the sparse movie and 2.3 bins on movie 2. `sparsetrack eval` reports it and the
+  growth-rate agreement.
 
-**Status (29 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.7.0 (below) is the
+**Status (30 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.0 (below) is the
 tracker. The cloud session's learned-evidence pipeline (`prototypes/learned_evidence/`, merged
 29 Sep) was tested on the lab's movies and read fewer lengths than SparseTrack (ld 40/100 vs
 69/104); it is kept as a research record. Work concentrated on isolated grains before crossings and
