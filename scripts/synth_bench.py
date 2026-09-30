@@ -38,7 +38,8 @@ WORK = Path(os.environ.get("TT_BENCH_DIR", "/tmp/tt_bench"))  # predictions go h
 # folder, for runs side by side)
 LEGACY_IDS = ["g025", "g014", "g037", "g034", "g013", "g030", "g029"]
 REAL = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
-        "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json")}
+        "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json"),
+        "m1": ("runs/sparsetrack/m1", "benchmark/labels/m1_v1.json")}  # labelled blind 30 Sep; a dev movie once scored
 SUITES = {"v1": ("s{}_cache", "synth_s{}_truth.json"), "v2": ("v2s{}_cache", "synthv2_s{}_truth.json"),
           "v3": ("v3s{}_cache", "synthv3_s{}_truth.json"), "v4": ("v4s{}_cache", "synthv4_s{}_truth.json"),
           "v5": ("v5s{}_cache", "synthv5_s{}_truth.json"),

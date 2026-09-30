@@ -28,7 +28,8 @@ import numpy as np
 REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO / "scripts"))
 MOVIES = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
-          "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json")}
+          "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json"),
+          "m1": ("runs/sparsetrack/m1", "benchmark/labels/m1_v1.json")}
 EARLY = 10  # bins: a flood start this far before the annotator's last-absent bin is a start on the rim, not the tube
 
 
