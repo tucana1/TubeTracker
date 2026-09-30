@@ -246,11 +246,11 @@ cd ../tt-0.7.0-bn && git cherry-pick ba89c96
 shasum ../TubeTracker/prototypes/learned_flood/models/tubes_bn_real_ld_m2.pt   # 91cb95715eae5122d3f70eb89aa7246ce5b34aaa
 ../TubeTracker/.venv/bin/python -c "
 from sparsetrack.analyze import Params, analyze
-analyze('../TubeTracker/runs/sparsetrack/m1', '../TubeTracker/runs/sparsetrack/m1_frozen_0.7.0_bn',
+analyze('../TubeTracker/runs/sparsetrack/m1', '../TubeTracker/runs/research/m1_frozen_0.7.0_bn',
         grains_path='../TubeTracker/benchmark/labels/m1_v1.json',
         params=Params(model='../TubeTracker/prototypes/learned_flood/models/tubes_bn_real_ld_m2.pt'))"
 cd ../TubeTracker && .venv/bin/python -m sparsetrack eval --labels benchmark/labels/m1_v1.json \
-    --pred runs/sparsetrack/m1_frozen_0.7.0_bn/predictions.json --out benchmark/reports/m1_v1_scores_0.7.0_bn.md
+    --pred runs/research/m1_frozen_0.7.0_bn/predictions.json --out benchmark/reports/m1_v1_scores_0.7.0_bn.md
 ```
 
 ## Three movies (30 Sep 2026, after movie 1's one-time frozen scoring)

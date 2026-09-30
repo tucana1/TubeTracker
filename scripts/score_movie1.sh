@@ -41,7 +41,7 @@ if todo:
 PY
 for v in 0.6.0 0.7.0; do
   [ -d ../tt-$v ] || git worktree add ../tt-$v sparsetrack-$v
-  OUT=runs/sparsetrack/m1_frozen_$v
+  OUT=runs/research/m1_frozen_$v
   if [ ! -f $OUT/predictions.json ]; then
     echo "== SparseTrack $v on movie 1"
     (cd ../tt-$v && $REPO/.venv/bin/python -m sparsetrack analyze $REPO/$CACHE --out $REPO/$OUT --grains $REPO/$LABELS)
@@ -49,7 +49,7 @@ for v in 0.6.0 0.7.0; do
 done
 MODEL=$REPO/prototypes/learned_flood/models/tubes_real_ld_m2.pt
 [ "$(shasum $MODEL | cut -c1-40)" = "e8c14145b0663d2d29e4f73836bf951e21078753" ] || { echo "The candidate network changed since it was fixed."; exit 1; }
-OUT=runs/sparsetrack/m1_frozen_0.7.0_real
+OUT=runs/research/m1_frozen_0.7.0_real
 if [ ! -f $OUT/predictions.json ]; then
   echo "== SparseTrack 0.7.0 with the real-trace network on movie 1"
   (cd ../tt-0.7.0 && $REPO/.venv/bin/python -c "
@@ -59,7 +59,7 @@ fi
 [ -d ../tt-0.7.0-bn ] || git worktree add ../tt-0.7.0-bn sparsetrack-0.7.0-bn
 MODEL=$REPO/prototypes/learned_flood/models/tubes_bn_real_ld_m2.pt
 [ "$(shasum $MODEL | cut -c1-40)" = "91cb95715eae5122d3f70eb89aa7246ce5b34aaa" ] || { echo "The BatchNorm candidate network changed since it was fixed."; exit 1; }
-OUT=runs/sparsetrack/m1_frozen_0.7.0_bn
+OUT=runs/research/m1_frozen_0.7.0_bn
 if [ ! -f $OUT/predictions.json ]; then
   echo "== SparseTrack 0.7.0-bn with the BatchNorm real-trace network on movie 1"
   (cd ../tt-0.7.0-bn && $REPO/.venv/bin/python -c "
@@ -67,7 +67,7 @@ from sparsetrack.analyze import Params, analyze
 analyze('$REPO/$CACHE', '$REPO/$OUT', grains_path='$REPO/$LABELS', params=Params(model='$MODEL'))")
 fi
 [ -d ../tt-0.7.0-bn-radial ] || git worktree add ../tt-0.7.0-bn-radial sparsetrack-0.7.0-bn-radial
-OUT=runs/sparsetrack/m1_frozen_0.7.0_bn_radial
+OUT=runs/research/m1_frozen_0.7.0_bn_radial
 if [ ! -f $OUT/predictions.json ]; then
   echo "== SparseTrack 0.7.0-bn-radial (the BatchNorm network, radial flood tip) on movie 1"
   (cd ../tt-0.7.0-bn-radial && $REPO/.venv/bin/python -c "
@@ -75,10 +75,10 @@ from sparsetrack.analyze import Params, analyze
 analyze('$REPO/$CACHE', '$REPO/$OUT', grains_path='$REPO/$LABELS', params=Params(model='$MODEL', flood_tip='radial'))")
 fi
 .venv/bin/python scripts/compare_predictions.py --labels $LABELS --baseline 0.6.0 \
-    --pred 0.6.0=runs/sparsetrack/m1_frozen_0.6.0/predictions.json \
-    --pred 0.7.0=runs/sparsetrack/m1_frozen_0.7.0/predictions.json \
-    --pred 0.7.0+real=runs/sparsetrack/m1_frozen_0.7.0_real/predictions.json \
-    --pred 0.8.0=runs/sparsetrack/m1_frozen_0.7.0_bn/predictions.json \
-    --pred 0.8.0+radial=runs/sparsetrack/m1_frozen_0.7.0_bn_radial/predictions.json \
+    --pred 0.6.0=runs/research/m1_frozen_0.6.0/predictions.json \
+    --pred 0.7.0=runs/research/m1_frozen_0.7.0/predictions.json \
+    --pred 0.7.0+real=runs/research/m1_frozen_0.7.0_real/predictions.json \
+    --pred 0.8.0=runs/research/m1_frozen_0.7.0_bn/predictions.json \
+    --pred 0.8.0+radial=runs/research/m1_frozen_0.7.0_bn_radial/predictions.json \
     --out benchmark/reports/m1_v1_frozen.md
 echo "Report: benchmark/reports/m1_v1_frozen.md"

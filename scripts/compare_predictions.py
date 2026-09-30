@@ -1,8 +1,8 @@
 """Score several prediction files on one labels file, side by side, with paired comparisons against one of them.
 
     python scripts/compare_predictions.py --labels benchmark/labels/m1_v1.json \
-        --pred 0.6.0=runs/sparsetrack/m1_frozen_0.6.0/predictions.json \
-        --pred 0.7.0=runs/sparsetrack/m1_frozen_0.7.0/predictions.json --baseline 0.6.0 \
+        --pred 0.6.0=runs/research/m1_frozen_0.6.0/predictions.json \
+        --pred 0.7.0=runs/research/m1_frozen_0.7.0/predictions.json --baseline 0.6.0 \
         --out benchmark/reports/m1_v1_frozen.md
 
 Per prediction: onsets within 2 bins, FULL-trace lengths within max(2 px, 10%), length and tip, the germination

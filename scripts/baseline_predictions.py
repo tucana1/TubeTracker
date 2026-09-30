@@ -5,7 +5,7 @@
 - ``tube_track+emergence_onset``: the 22 Sep state — rev19 ridge-walk lengths (model-only
   rows) and the rev18 operating onset config, for S3/S4/S6/S9/S11 only.
 
-    .venv/bin/python scripts/baseline_predictions.py runs/sparsetrack/ld runs/sparsetrack/baselines
+    .venv/bin/python scripts/baseline_predictions.py runs/sparsetrack/ld runs/research/baselines
 """
 
 from __future__ import annotations

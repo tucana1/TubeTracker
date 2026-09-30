@@ -12,7 +12,7 @@ least sure first, before 79% / 90% are within tolerance; checked ones count as r
 bootstrap intervals over grains; then the same two features refitted on two movies and applied to the third.
 
 Readings: each movie read by a network that never saw its traces - movie 1 by SparseTrack 0.8.0 as frozen
-(runs/sparsetrack/m1_frozen_0.7.0_bn: ld + m2 traces, default dispatch), the dev movie by tn_bn_r3v6_m2 and movie 2 by
+(runs/research/m1_frozen_0.7.0_bn: ld + m2 traces, default dispatch), the dev movie by tn_bn_r3v6_m2 and movie 2 by
 tn_bn_r3v6_ld (prototypes/tube_net, the two-movie folds; their bench predictions). Record: runs/tube_net/conf3_loo.json.
 
 | movie | traces (within tolerance) | AUROC, fixed | effort to 79%: least sure first / random (paired, 95% CI) | to 90% | AUROC, refitted on the other two |
