@@ -1,0 +1,36 @@
+#!/bin/zsh
+# Score the versions fixed before movie 1's blind labels existed, once each, and compare them (paired over grains).
+# Run once, after benchmark/labels/m1_v1.json is finished; do not tune anything on movie 1 afterwards.
+#   0.6.0          tag sparsetrack-0.6.0
+#   0.7.0          tag sparsetrack-0.7.0 (grains followed, tips continued)
+#   0.7.0+real     0.7.0 with the tube network fine-tuned on ld and m2 traces (prototypes/learned_flood/models/)
+# Each version is analysed from its own worktree (../tt-<version>), so it runs its own code.
+set -e
+cd "$(dirname "$0")/.."
+REPO=$PWD
+LABELS=benchmark/labels/m1_v1.json
+CACHE=runs/sparsetrack/m1
+[ -f $LABELS ] || { echo "No $LABELS yet: label movie 1 first (Label_Movie1_Heldout.command)."; exit 1; }
+for v in 0.6.0 0.7.0; do
+  [ -d ../tt-$v ] || git worktree add ../tt-$v sparsetrack-$v
+  OUT=runs/sparsetrack/m1_frozen_$v
+  if [ ! -f $OUT/predictions.json ]; then
+    echo "== SparseTrack $v on movie 1"
+    (cd ../tt-$v && $REPO/.venv/bin/python -m sparsetrack analyze $REPO/$CACHE --out $REPO/$OUT --grains $REPO/$LABELS)
+  fi
+done
+MODEL=$REPO/prototypes/learned_flood/models/tubes_real_ld_m2.pt
+[ "$(shasum $MODEL | cut -c1-40)" = "e8c14145b0663d2d29e4f73836bf951e21078753" ] || { echo "The candidate network changed since it was fixed."; exit 1; }
+OUT=runs/sparsetrack/m1_frozen_0.7.0_real
+if [ ! -f $OUT/predictions.json ]; then
+  echo "== SparseTrack 0.7.0 with the real-trace network on movie 1"
+  (cd ../tt-0.7.0 && $REPO/.venv/bin/python -c "
+from sparsetrack.analyze import Params, analyze
+analyze('$REPO/$CACHE', '$REPO/$OUT', grains_path='$REPO/$LABELS', params=Params(model='$MODEL'))")
+fi
+.venv/bin/python scripts/compare_predictions.py --labels $LABELS --baseline 0.6.0 \
+    --pred 0.6.0=runs/sparsetrack/m1_frozen_0.6.0/predictions.json \
+    --pred 0.7.0=runs/sparsetrack/m1_frozen_0.7.0/predictions.json \
+    --pred 0.7.0+real=runs/sparsetrack/m1_frozen_0.7.0_real/predictions.json \
+    --out benchmark/reports/m1_v1_frozen.md
+echo "Report: benchmark/reports/m1_v1_frozen.md"
