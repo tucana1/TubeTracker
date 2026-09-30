@@ -132,6 +132,20 @@ class Params:
     flood_compete: bool = False  # flood every tube in view at once: new material goes to the tube growing there
     flood_fallback: bool = False  # hybrid: where the flood finds no tube but the change reader saw one, keep it (no gain)
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
+    # the flood's start and stop rules (learned.flood), settled on tubes_synth_v1's maps; options for other maps:
+    flood_p: float = 0.5         # a pixel is tube where P >= this...
+    flood_persist: int = 10      # ...and it arrives at the first bin from which it is tube in >= flood_frac of the
+    flood_frac: float = 0.7      # next flood_persist bins
+    flood_halo: float = 3.0      # nothing within this of the rim is claimed (the rim's own change; learned.HALO)
+    flood_arc_deg: float = 60.0  # a start spanning more than this round the grain is an arc on the rim, not a stub
+    flood_old_far_px: float = 10.0  # a start joined to material this far beyond the rim that arrived more than...
+    flood_old_far_bins: int = 3     # ...this many bins earlier is the leading end of a structure already there
+    flood_min_len: float = 8.0   # a tube that stops for flood_give_up bins before reaching this far beyond the rim...
+    flood_give_up: int = 40      # ...was rim noise: forgotten, and the flood starts again
+    flood_tip: str = "dist"      # the tip its length is read to: the pixel of greatest rim distance ("dist"), or also
+                                 # the one farthest from the grain where that reads longer ("radial": a young blob;
+                                 # "radial_zone": only while the first is within the start zone)
+    flood_exit_edge: bool = False  # flood lengths from the grain's visible edge along the exit (as exit_edge)
     exit_edge: bool = True       # change reader: lengths from the grain's visible edge along the exit, where an
                                  # annotator starts a trace, not from the census circle
     exit_edge_onset: bool = False  # ...and its onset stub there too (ld: fixes 2 onsets, loses 3: off)
