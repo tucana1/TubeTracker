@@ -44,15 +44,24 @@ HALO = 3.0            # the rim's own change (focus, swelling) reaches this far 
 
 
 # ----------------------------------------------------------------------------- network
-def _unet(widths=(16, 32, 64, 128)):
+def _unet(widths=(16, 32, 64, 128), norm: str = "group"):
+    """The network. ``norm="group"`` (every model up to 29 Sep 2026) normalises each feature over the whole input, so
+    a pixel's output depends on the input's size and content; ``"batch"`` (fixed statistics at inference) makes it
+    depend only on the pixel's surroundings, so full-frame maps equal the maps of the crops it was trained on."""
     import torch
     from torch import nn
     import torch.nn.functional as F
 
+    if norm not in ("group", "batch"):
+        raise ValueError(f"unknown normalisation {norm!r}: group or batch")
+
+    def nrm(c):
+        return nn.GroupNorm(8, c) if norm == "group" else nn.BatchNorm2d(c)
+
     def block(cin, cout):
         return nn.Sequential(
-            nn.Conv2d(cin, cout, 3, padding=1, bias=False), nn.GroupNorm(8, cout), nn.ReLU(inplace=True),
-            nn.Conv2d(cout, cout, 3, padding=1, bias=False), nn.GroupNorm(8, cout), nn.ReLU(inplace=True))
+            nn.Conv2d(cin, cout, 3, padding=1, bias=False), nrm(cout), nn.ReLU(inplace=True),
+            nn.Conv2d(cout, cout, 3, padding=1, bias=False), nrm(cout), nn.ReLU(inplace=True))
 
     class UNet(nn.Module):
         def __init__(self):
@@ -85,15 +94,31 @@ def load_model(path: str | Path = MODEL, device: str | None = None):
     if device is None:
         device = "mps" if torch.backends.mps.is_available() else "cpu"
     ck = torch.load(str(path), map_location="cpu", weights_only=False)
-    net = _unet(ck.get("widths", (16, 32, 64, 128)))
+    net = _unet(ck.get("widths", (16, 32, 64, 128)), ck.get("norm", "group"))
     net.load_state_dict(ck["state"])
+    net.bg_px = int(ck.get("bg_px", 0) or 0)  # > 0: inputs relative to the local background (tube_probability)
     return net.eval().to(device)
 
 
+def local_background(early: np.ndarray, px: int) -> np.ndarray:
+    """The "before" image's median over about ``px`` px round every pixel (a smooth map): the level a training crop
+    of that size was normalised by. Movie 2's illumination falls off by up to ~75 grey levels across the frame, so
+    one median for the whole frame leaves most of it far from the level the network saw in training."""
+    h, w = early.shape
+    f = 8
+    small = cv2.resize(np.nan_to_num(early, nan=float(np.nanmedian(early))).astype(np.float32),
+                       (max(w // f, 1), max(h // f, 1)), interpolation=cv2.INTER_AREA)
+    k = max(3, int(round(px / f)) | 1)
+    med = cv2.medianBlur(np.clip(np.round(small), 0, 255).astype(np.uint8), k).astype(np.float32)
+    return cv2.resize(med, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
 def tube_probability(net, img: np.ndarray, early: np.ndarray, late: np.ndarray) -> np.ndarray:
-    """P(tube body) for one registered frame, given the movie's before and after images."""
+    """P(tube body) for one registered frame, given the movie's before and after images: inputs relative to the before
+    image's median over the whole frame, or - for a network whose checkpoint names ``bg_px`` - to its local median
+    over that many px (``local_background``), as each training crop was normalised by its own median."""
     import torch
-    m = float(np.nanmedian(early))
+    m = local_background(early, net.bg_px) if getattr(net, "bg_px", 0) else float(np.nanmedian(early))
     x = np.nan_to_num((np.stack([img, early, late]).astype(np.float32) - m) / IN_SCALE, nan=0.0)
     h, w = img.shape
     k = 2 ** (len(net.widths) - 1)
