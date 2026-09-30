@@ -16,6 +16,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import wx
+import wx.adv
+import wx.svg
 
 from . import theme
 from .canvas import FieldCanvas
@@ -123,7 +125,6 @@ class MainFrame(wx.Frame):
     @staticmethod
     def icon_bitmap(size: int):
         try:
-            import wx.svg
             return wx.svg.SVGimage.CreateFromFile(str(ICON)).ConvertToScaledBitmap((size, size))
         except Exception:  # noqa: BLE001 - no icon is better than no window
             return None
@@ -784,7 +785,6 @@ class MainFrame(wx.Frame):
         subprocess.Popen([sys.executable, "-m", "tubetracker", "--legacy"], cwd=str(REPO))
 
     def on_about(self):
-        import wx.adv
         info = wx.adv.AboutDialogInfo()
         info.SetName("TubeTracker")
         from sparsetrack import __version__
@@ -858,6 +858,11 @@ class MainFrame(wx.Frame):
                 t.Stop()
         self.jobs.shutdown()
         self.pool.shutdown(wait=False, cancel_futures=True)
+        dock = getattr(self, "_dock", None)
+        if dock is not None:  # a Dock icon left behind would keep the app from quitting
+            dock.RemoveIcon()
+            dock.Destroy()
+            self._dock = None
 
     def Destroy(self):
         self._shutdown()
@@ -882,28 +887,24 @@ def reveal(path) -> None:
         subprocess.Popen(["open", str(path)])
 
 
-def main(argv=None) -> None:
+def parse_args(argv=None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(prog="TubeTracker", description="Pollen germination movies: analyse, check, export.")
     ap.add_argument("paths", nargs="*", help="a movie or analysis folder to open")
     ap.add_argument("--runs", default=os.environ.get("TUBETRACKER_RUNS", str(DEFAULT_RUNS_ROOT)),
                     help=f"where each movie's analysis folder goes (default {DEFAULT_RUNS_ROOT})")
     ap.add_argument("--legacy", action="store_true", help="the old manual pipeline (Hough grains, tip templates)")
-    args = ap.parse_args(argv)
-    if args.legacy:
-        from tubetracker.gui import main as legacy_main
-        legacy_main()
-        return
-    app = wx.App(False)
-    app.SetAppName("TubeTracker")
-    app.SetAppDisplayName("TubeTracker")
+    return ap.parse_args(argv)
+
+
+def open_window(args: argparse.Namespace) -> MainFrame:
+    """The main window, shown, with the Dock icon, opening ``args.paths[0]`` once the event loop runs."""
     frame = MainFrame(args.runs)
     frame.Show()
     if sys.platform == "darwin":
         try:  # the Dock icon
-            import wx.adv
-            icon = wx.Icon()
             bmp = frame.icon_bitmap(256)
             if bmp:
+                icon = wx.Icon()
                 icon.CopyFromBitmap(bmp)
                 frame._dock = wx.adv.TaskBarIcon(wx.adv.TBI_DOCK)
                 frame._dock.SetIcon(icon, "TubeTracker")
@@ -911,4 +912,17 @@ def main(argv=None) -> None:
             pass
     if args.paths:
         wx.CallAfter(frame.open_path, args.paths[0])
+    return frame
+
+
+def main(argv=None) -> None:
+    args = parse_args(argv)
+    if args.legacy:
+        from tubetracker.gui import main as legacy_main
+        legacy_main()
+        return
+    app = wx.App(False)
+    app.SetAppName("TubeTracker")
+    app.SetAppDisplayName("TubeTracker")
+    open_window(args)
     app.MainLoop()

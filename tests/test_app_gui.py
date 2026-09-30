@@ -70,3 +70,16 @@ def test_the_window_opens_an_analysis_and_takes_a_correction(app, tmp_path, monk
     finally:
         frame.Destroy()
         _yield()
+
+
+def test_the_launcher_opens_the_window_on_an_analysis_folder(app, tmp_path):
+    from tubetracker.app.window import open_window, parse_args
+
+    run = make_run(tmp_path / "runs" / "tiny", {"duration_s": 24000.0})
+    frame = open_window(parse_args(["--runs", str(tmp_path / "runs"), str(run)]))
+    try:
+        _yield(10)
+        assert frame.data is not None and frame.movie.IsShown()
+    finally:
+        frame.Destroy()
+        _yield()

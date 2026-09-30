@@ -371,6 +371,7 @@ class SidePanel(wx.Panel):
             self.gstate.SetLabel("  ·  ".join([STATE_WORDS[st], *where, REVIEW_WORDS[g["review"]["state"]]]))
             reasons = g.get("check") or []
             self.why.SetLabel(" · ".join(r["text"] for r in reasons) if reasons and not g["done"] else "")
+            self.why.Wrap(max(self.grain_page.GetClientSize()[0] - 24, 200))
             self.why.SetToolTip("\n".join(f"{r['text']}: {r['detail']}" for r in reasons) if reasons else "")
             self.why.Show(bool(reasons) and not g["done"])
             L = g["L"][b]
