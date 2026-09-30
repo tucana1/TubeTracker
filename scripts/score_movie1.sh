@@ -4,6 +4,8 @@
 #   0.6.0          tag sparsetrack-0.6.0
 #   0.7.0          tag sparsetrack-0.7.0 (grains followed, tips continued)
 #   0.7.0+real     0.7.0 with the tube network fine-tuned on ld and m2 traces (prototypes/learned_flood/models/)
+#   0.7.0+bn       tag sparsetrack-0.7.0-bn (0.7.0 + the BatchNorm / local-background checkpoint options) with the
+#                  network retrained on those fixes and both movies' traces (prototypes/tube_net/README.md)
 # Each version is analysed from its own worktree (../tt-<version>), so it runs its own code.
 set -e
 cd "$(dirname "$0")/.."
@@ -28,9 +30,20 @@ if [ ! -f $OUT/predictions.json ]; then
 from sparsetrack.analyze import Params, analyze
 analyze('$REPO/$CACHE', '$REPO/$OUT', grains_path='$REPO/$LABELS', params=Params(model='$MODEL'))")
 fi
+[ -d ../tt-0.7.0-bn ] || git worktree add ../tt-0.7.0-bn sparsetrack-0.7.0-bn
+MODEL=$REPO/prototypes/learned_flood/models/tubes_bn_real_ld_m2.pt
+[ "$(shasum $MODEL | cut -c1-40)" = "91cb95715eae5122d3f70eb89aa7246ce5b34aaa" ] || { echo "The BatchNorm candidate network changed since it was fixed."; exit 1; }
+OUT=runs/sparsetrack/m1_frozen_0.7.0_bn
+if [ ! -f $OUT/predictions.json ]; then
+  echo "== SparseTrack 0.7.0-bn with the BatchNorm real-trace network on movie 1"
+  (cd ../tt-0.7.0-bn && $REPO/.venv/bin/python -c "
+from sparsetrack.analyze import Params, analyze
+analyze('$REPO/$CACHE', '$REPO/$OUT', grains_path='$REPO/$LABELS', params=Params(model='$MODEL'))")
+fi
 .venv/bin/python scripts/compare_predictions.py --labels $LABELS --baseline 0.6.0 \
     --pred 0.6.0=runs/sparsetrack/m1_frozen_0.6.0/predictions.json \
     --pred 0.7.0=runs/sparsetrack/m1_frozen_0.7.0/predictions.json \
     --pred 0.7.0+real=runs/sparsetrack/m1_frozen_0.7.0_real/predictions.json \
+    --pred 0.7.0+bn=runs/sparsetrack/m1_frozen_0.7.0_bn/predictions.json \
     --out benchmark/reports/m1_v1_frozen.md
 echo "Report: benchmark/reports/m1_v1_frozen.md"
