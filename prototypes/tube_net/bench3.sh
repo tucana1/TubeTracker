@@ -24,16 +24,19 @@ bench() {  # NAME MODEL MOVIE [extra bench.py args]
       | tee runs/tube_net/logs/bench3_$1.log
 }
 [ -f $EDGE ] || $PY -m prototypes.tube_net.edge_labels --out $EDGE
-bench r3v6_ld_on_m2     runs/tube_net/tn_bn_r3v6_ld.pt m2 --bg 96
 bench tn3_ldm1_on_m2    runs/tube_net/tn3_ldm1.pt      m2
-bench r3v6_m2_on_ld     runs/tube_net/tn_bn_r3v6_m2.pt ld --bg 96
 bench tn3_m2m1_on_ld    runs/tube_net/tn3_m2m1.pt      ld
-bench v080_on_m1        sparsetrack/models/tubes_bn_real_ld_m2.pt m1
+bench r3v6_m2_on_ld     runs/tube_net/tn_bn_r3v6_m2.pt ld --bg 96   # the two-movie fold again at HEAD (its record:
+                                                                     # runs/tube_net/e2e_tn_bn_r3v6_m2_bg96_on_ld.json)
 bench r3v6_ld_on_m1     runs/tube_net/tn_bn_r3v6_ld.pt m1 --bg 96
 bench r3v6_m2_on_m1     runs/tube_net/tn_bn_r3v6_m2.pt m1 --bg 96
 # the flood's radial tip (0.8.0+radial, pre-registered for movie 1: its frozen report) on the three-movie fold maps
 bench tn3_ldm1_on_m2_radial runs/tube_net/tn3_ldm1.pt  m2 --set flood_tip=radial
 bench tn3_m2m1_on_ld_radial runs/tube_net/tn3_m2m1.pt  ld --set flood_tip=radial
+# last: the two-movie fold on m2 and 0.8.0 on m1 again at HEAD (their records: e2e_tn_bn_r3v6_ld_bg96_on_m2.json and
+# the frozen 0.8.0 predictions, runs/sparsetrack/m1_frozen_0.7.0_bn)
+bench r3v6_ld_on_m2     runs/tube_net/tn_bn_r3v6_ld.pt m2 --bg 96
+bench v080_on_m1        sparsetrack/models/tubes_bn_real_ld_m2.pt m1
 for n in v080_on_m1 r3v6_ld_on_m1 r3v6_m2_on_m1; do
   [ -f runs/tube_net/e2e3_$n.json ] && [ ! -f runs/tube_net/e2e3_${n}edge.json ] && \
     $PY -m prototypes.tube_net.rescore runs/tube_net/e2e3_$n.json m1=$EDGE --out runs/tube_net/e2e3_${n}edge.json

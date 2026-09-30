@@ -30,6 +30,10 @@ Two options for movie 1 (30 Sep 2026; both off by default, so the ld and m2 shar
   2 px away from the traced bin's place (ld 0.7%, m2 3%): a neighbour-bin crop is skipped where the grain moved
   more than ``max_move`` px from the traced bin (the tube may or may not have moved with it), and a negative crop
   before the onset is placed where the grain is at that bin (its exit crop would otherwise miss the rim).
+
+``rim_bg`` (off by default; measured in prototypes/tube_net/README.md, "Three movies"): the grain's rim, r - 1 to
+r + ``rim_bg`` px from its centre at that bin, is scored as background except within BODY + 2 px of the traced tube (on
+negatives everywhere), on traces not flagged as touching: a grain's own rim is not tube except where its tube leaves.
 """
 
 from __future__ import annotations
@@ -50,7 +54,8 @@ BODY, GAP, BAND = 3.0, 6.0, 14.0
 
 
 def _targets(path: np.ndarray, cx: float, cy: float, half: int, gxy: tuple, gr: float, neg: bool, band: bool,
-             blind: list[tuple[float, float, float]], flat_cap: bool = False, inside_unscored: bool = False):
+             blind: list[tuple[float, float, float]], flat_cap: bool = False, inside_unscored: bool = False,
+             rim_bg: float = 0.0):
     size = 2 * half
     q = path - [cx - half, cy - half] - 0.5  # crop pixel centres
     line = np.zeros((size, size), np.uint8)
@@ -72,7 +77,10 @@ def _targets(path: np.ndarray, cx: float, cy: float, half: int, gxy: tuple, gr: 
         w |= beyond
     for bx, by, rad in blind:  # unscored discs (reference coordinates)
         w &= np.hypot(jj - (bx - cx + half - 0.5), ii - (by - cy + half - 0.5)) > rad
-    inside = np.hypot(jj - (gxy[0] - cx + half - 0.5), ii - (gxy[1] - cy + half - 0.5)) <= gr - 1
+    dg = np.hypot(jj - (gxy[0] - cx + half - 0.5), ii - (gxy[1] - cy + half - 0.5))
+    inside = dg <= gr - 1
+    if rim_bg and band:  # the grain's rim is not tube, except where the tube leaves it (not on touching traces)
+        w |= (dg > gr - 1) & (dg <= gr + rim_bg) & ((d > BODY + 2.0) | neg)
     if inside_unscored:  # a tube lying over its grain: really there, but lengths start at the grain's edge
         w &= ~inside
     else:
@@ -93,7 +101,8 @@ def grain_offsets(movie: str) -> dict:
 
 def build(movie: str, out: str | Path, half: int = 48, crops_per_trace: int = 6, exit_crops: int = 2,
           neighbours: tuple = (-2, -1, 1, 2), neg_back: tuple = (0, 4, 12), seed: int = 0, flat_cap: bool = False,
-          over_grain: float = 0.0, follow: bool = False, max_move: float = 1.5, log=print) -> Path:
+          over_grain: float = 0.0, follow: bool = False, max_move: float = 1.5, rim_bg: float = 0.0,
+          log=print) -> Path:
     cache, labels = (REPO / p for p in REAL[movie])
     L = json.loads(labels.read_text())
     view = CacheView(cache)
@@ -111,7 +120,7 @@ def build(movie: str, out: str | Path, half: int = 48, crops_per_trace: int = 6,
             return
         # a flat cap only where the traced end is the tube's apex at this very bin (FULL trace, same bin)
         body, w = _targets(path, cx, cy, half, gxy, gr, neg, band, blind, flat_cap and tip_xy is not None,
-                           inside_unscored)
+                           inside_unscored, rim_bg)
         tip = tip_heatmap([tip_xy], cx, cy, half) if tip_xy is not None else np.zeros(body.shape, np.float32)
         xs.append(x.astype(np.float16)); bodies.append(body); tips.append(tip.astype(np.float16)); ws.append(w)
         info.append((b, cx, cy, int(neg)))
@@ -193,5 +202,7 @@ if __name__ == "__main__":
                          "unscored (movie 1: 0.6)")
     ap.add_argument("--follow", action="store_true", help="grains followed bin by bin (movie 1): neighbour crops "
                                                           "skipped where the grain moved, negatives placed on it")
+    ap.add_argument("--rim-bg", type=float, default=0.0,
+                    help="score the grain's rim (r-1 .. r+this px) as background away from the traced tube")
     a = ap.parse_args()
-    build(a.movie, a.out, flat_cap=a.flat_cap, over_grain=a.over_grain, follow=a.follow)
+    build(a.movie, a.out, flat_cap=a.flat_cap, over_grain=a.over_grain, follow=a.follow, rim_bg=a.rim_bg)

@@ -186,6 +186,11 @@ class Params:
     lost_policy: str = "hold"    # a lost grain: "hold" its readings from the loss on (flag grain_lost_after:<frame>),
                                  # or "read" on at its last place
     lost_min_bins: int = 15      # a grain followed for fewer bins than this is unobservable
+    # census check (sparsetrack/census_check.py): census "grains" that look like debris, clumps or passing things are
+    # flagged likely_not_a_grain:<P> and left out of the population statistics (they are still read and reported).
+    # Off: judged leave one movie out on the three labelled movies it did not move every movie's germination share
+    # and T50 towards the annotator's (prototypes/census_check/README.md)
+    census_check: bool = False
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -1535,6 +1540,14 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         of = res.get("onset_frame")
         if of is not None and any(abs(of // fpb - f["bin"]) <= 3 for f in focus):
             res["flags"].append("onset_at_focus_change")
+    not_grains: set[str] = set()
+    if p.census_check:  # likely not grains: flagged, and left out of the population statistics below
+        from . import census_check
+        fl = census_check.flagged(cache_dir, grains=[g for g in grains if any(r["id"] == g["id"] for r in results)])
+        for res in results:
+            if res["id"] in fl:
+                res["flags"].append(f"{census_check.FLAG}:{fl[res['id']]:.2f}")
+        not_grains = set(fl)
     pred = {"schema": PRED_SCHEMA, "method": f"sparsetrack-v1 {__version__}", "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "cache": str(cache_dir), "grains_source": str(src), "params": asdict(p),
             "frames_per_bin": meta["frames_per_bin"], "movie": meta["movie"], "focus_changes": focus, "grains": results}
@@ -1565,7 +1578,8 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             tips = (r.get("tip") or {}).get("xy") or [[None, None]] * len(r["length"]["frames"])
             for f, L, (tx, ty) in zip(r["length"]["frames"], r["length"]["px"], tips):
                 w.writerow([r["id"], f, L, tx, ty] + ([round(f * spf / 60.0, 2), round(L * um, 2)] if cal else []))
-    isolated = [r["id"] for r in results if next((g for g in grains if g["id"] == r["id"]), {}).get("isolated", True)]
+    isolated = [r["id"] for r in results if next((g for g in grains if g["id"] == r["id"]), {}).get("isolated", True)
+                and r["id"] not in not_grains]
     pop = report.write_population(pred, out_dir, set(isolated))
     report.write_growth_curves(pred, out_dir, isolated)
     report.write_gallery(pred, out_dir, set(isolated), population=pop, units=units)
