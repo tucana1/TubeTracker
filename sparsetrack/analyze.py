@@ -131,6 +131,11 @@ class Params:
     flood_lookback: float = 0.25  # walk the onset back while P at the tube's exit stays above this (0 = off)
     flood_compete: bool = False  # flood every tube in view at once: new material goes to the tube growing there
     flood_fallback: bool = False  # hybrid: where the flood finds no tube but the change reader saw one, keep it (no gain)
+    hybrid_onset: str = "change"  # flooded grains on a noisy background: whose germination call and onset count -
+                                  # "change" (0.5.1-0.8.0: the change reader's, the flood's lengths from it; its "no
+                                  # tube" zeroes the flood's), "change_unless_missed" (the flood's where the change
+                                  # reader saw no tube but the flood read one of hybrid_min_px), or "flood"
+    hybrid_min_px: float = 10.0
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
     # the flood's start and stop rules (learned.flood), settled on tubes_synth_v1's maps; options for other maps:
     flood_p: float = 0.5         # a pixel is tube where P >= this...
@@ -1519,10 +1524,15 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
                     and fl["status"] == "no_emergence_by_end"):
                 res["flags"].append("flood_found_no_tube")  # a gap in the map at its base, say: keep what grew
             else:
-                if res is not None and not crowded:
+                missed = (res is not None and res["status"] == "no_emergence_by_end"
+                          and fl["status"] != "no_emergence_by_end" and fl.get("final_length_px", 0.0) >= p.hybrid_min_px)
+                if res is not None and not crowded and p.hybrid_onset != "flood" and not (
+                        p.hybrid_onset == "change_unless_missed" and missed):
                     # a clean rim still gives the better onset: keep the change reader's germination call,
                     # and the flood's lengths from that onset on
                     fl = learned.with_onset(fl, res)
+                elif missed:
+                    fl["flags"].append("onset:flood_over_change")
                 res = fl
         cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)
