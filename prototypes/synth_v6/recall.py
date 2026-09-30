@@ -38,7 +38,7 @@ def _samp(img: np.ndarray, q: np.ndarray) -> np.ndarray:
 
 
 def measure(prob_cache: str | Path, labels_path: str | Path) -> list[dict]:
-    bins, meta = stack.load(prob_cache)
+    bins, meta = prob_cache if isinstance(prob_cache, tuple) else stack.load(prob_cache)  # or an in-memory (bins, meta)
     R = Renderer(bins, meta)
     L = json.loads(Path(labels_path).read_text())
     rows = []
@@ -116,7 +116,7 @@ def rim_false_marks(prob_cache: str | Path, labels_path: str | Path, step: int =
     """Before a grain's tube exists (bins up to 2 before the human's first visible bin; every bin of grains that
     never germinate): how often the map marks the rim zone - r to r + 7 px from the grain centre, where the flood
     may start a tube - with at least ``min_px`` pixels of P >= 0.5. Each such grain-bin is a chance for a false start."""
-    bins, meta = stack.load(prob_cache)
+    bins, meta = prob_cache if isinstance(prob_cache, tuple) else stack.load(prob_cache)  # or an in-memory (bins, meta)
     R = Renderer(bins, meta)
     L = json.loads(Path(labels_path).read_text())
     rs = int(meta.get("ref_start", 0))
