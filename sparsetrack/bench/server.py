@@ -426,7 +426,9 @@ class Bench:
         offsets = np.asarray(offsets, dtype=np.float64).reshape(-1, 2)
         if len(offsets) != self.n_bins:
             raise ValueError(f"{gid}: {len(offsets)} offsets for {self.n_bins} bins")
-        self._follow[gid] = offsets
+        with self._track_lock:  # the same record _track keeps for a followed grain
+            self._follow[gid] = {"offsets": offsets, "lost": [], "lost_from": None, "lost_reason": None,
+                                 "refound": []}
 
     def follow(self, gid: str) -> np.ndarray:
         """(n_bins, 2) offsets that keep a grain centred in its views (grain registration on top of the field
