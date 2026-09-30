@@ -355,6 +355,11 @@ trace, arriving in order outwards). The crops never say that a grain's rim is no
 background except within 5 px of the traced tube (all of it on the negatives before onset), on traces not touching
 anything; crops `real4_*`. Rule fixed before its results: it replaces real3 only if, judged leave one movie out, it
 lowers rim marks before onset without losing traced-point marking or young stubs, and end to end it is at least level.
+Result, the one fold run (ld + m2 crops with the rim as background, `tn4_ldm2`, judged on movie 1; synthetic
+validation as 0.8.0's): traced 77% (0.8.0's network 75%; paired +2.2 points, 95% CI -1.8 to +7.5), stubs 39/50 (+0),
+tips 37 (-2), young stubs 19/27 (+0), rim marks before onset 26.1% of grain-bins (122, 13 grains) against 29.3% (137,
+15 grains). A small drop in rim marks, within what one training draw can move; the other folds and the end-to-end
+benches were not run. Not adopted.
 
 **Not done (stopped for the demo, 30 Sep):** the dev movie end to end with the m2 + m1 fold (its maps did not change);
 movie 1 end to end for the single-movie folds with the germination veto lifted (`hybrid_onset`); a second training seed
