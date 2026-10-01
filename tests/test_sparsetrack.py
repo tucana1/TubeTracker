@@ -184,6 +184,27 @@ def test_probe_and_keyframe_decode_on_a_synthetic_movie(tmp_path):
     assert frames == [0, 12, 24, 36]
 
 
+@pytest.mark.skipif(shutil.which("ffmpeg") is None, reason="ffmpeg not installed")
+def test_every_kth_frame_and_bins_that_average_them(tmp_path):
+    from sparsetrack import stack
+    from sparsetrack.video import iter_frames
+    movie = tmp_path / "m.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=64x48:rate=14", "-frames:v", "48",
+                    "-c:v", "libx264", "-x264-params", "keyint=12:min-keyint=12:scenecut=0", "-pix_fmt", "yuv420p",
+                    str(movie)], check=True)
+    info = probe(movie)
+    every4 = list(iter_frames(info, 4))
+    assert [f for f, _ in every4] == list(range(0, 48, 4))
+    keys = dict(iter_keyframes(info))
+    assert all(np.array_equal(img, keys[f]) for f, img in every4 if f in keys)  # a keyframe decodes the same either way
+    assert len(list(iter_frames(info))) == 48
+    meta = stack.prepare(movie, tmp_path / "c", frames_per_bin=24, ref_bins=1, ref_start=0, log=lambda *a: None,
+                         sample="all")
+    assert meta["sampling"] == "every frame" and meta["keyframes_per_bin"] == [24, 24]
+    meta = stack.prepare(movie, tmp_path / "k", frames_per_bin=24, ref_bins=1, ref_start=0, log=lambda *a: None)
+    assert meta["sampling"] == "keyframes" and meta["keyframes_per_bin"] == [2, 2]
+
+
 # ---------------------------------------------------------------- analysis and scoring
 from sparsetrack.analyze import Params, analyze_grain, dp_front, rotation_track, sustained_onset  # noqa: E402
 from sparsetrack.evaluate import interval_distance, score  # noqa: E402

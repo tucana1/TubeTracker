@@ -23,13 +23,22 @@ def registered_mean(bins: np.ndarray, shifts: list, which: list[int]) -> np.ndar
     return acc / len(which)
 
 
+def _sample(text: str) -> str | int:
+    if text in ("keyframes", "all"):
+        return text
+    if text.isdigit() and int(text) >= 1:
+        return int(text)
+    raise argparse.ArgumentTypeError("keyframes, all, or a number of frames")
+
+
 def cmd_prepare(args) -> None:
     out = Path(args.out)
     if (out / "meta.json").exists() and (out / "grains.json").exists() and not args.force:
         print(f"cache already exists at {out} (use --force to rebuild)")
         return
     ref_start = args.ref_start if args.ref_start == "auto" else int(args.ref_start)
-    stack.prepare(args.movie, out, frames_per_bin=args.frames_per_bin, ref_bins=args.ref_bins, ref_start=ref_start)
+    stack.prepare(args.movie, out, frames_per_bin=args.frames_per_bin, ref_bins=args.ref_bins, ref_start=ref_start,
+                  sample=args.sample)
     write_census(out, args.ref_bins, args.flatfield)
 
 
@@ -225,6 +234,8 @@ def main(argv=None) -> None:
     p.add_argument("movie")
     p.add_argument("--out", required=True)
     p.add_argument("--frames-per-bin", type=int, default=300)
+    p.add_argument("--sample", type=_sample, default="keyframes",
+                   help="frames averaged into each bin: keyframes (default), all, or every N frames (a number)")
     p.add_argument("--ref-bins", type=int, default=3, help="bins averaged as the 'before' reference")
     p.add_argument("--ref-start", default="auto",
                    help="first reference bin, or 'auto' = first bin after the field has settled")

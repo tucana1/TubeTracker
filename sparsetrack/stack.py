@@ -22,7 +22,7 @@ import cv2
 import numpy as np
 
 from . import __version__
-from .video import MovieInfo, iter_keyframes, probe
+from .video import MovieInfo, iter_frames, iter_keyframes, probe
 
 SCHEMA = "sparsetrack.cache.v1"
 
@@ -121,11 +121,13 @@ def _counted(items: Iterable, total: int, progress) -> Iterable:
 
 
 def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, ref_bins: int = 3,
-            ref_start: int | str = "auto", log=print, progress=None) -> dict:
+            ref_start: int | str = "auto", log=print, progress=None, sample: str | int = "keyframes") -> dict:
     """Build the cache for ``movie`` in ``out_dir`` and return its metadata.
 
     ``ref_start`` = first bin of the "before" reference, or "auto" (first settled bin). ``progress(done, total)``,
-    if given, is called after every keyframe read (the TubeTracker app shows it).
+    if given, is called after every frame read (the TubeTracker app shows it). ``sample``: the frames averaged into
+    each bin - "keyframes" (the default: in these x264 movies the other frames are predicted from them), "all", or
+    every k-th frame (an int).
     """
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -133,13 +135,14 @@ def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, r
     info: MovieInfo = probe(movie)
     log(f"{info.path}: {info.n_frames} frames, {len(info.keyframes)} keyframes "
         f"(interval {info.keyframe_interval}), {info.width}x{info.height} @ {info.fps:g} fps")
-    frames = iter_keyframes(info)
+    every = None if sample == "keyframes" else (1 if sample == "all" else int(sample))
+    frames = iter_keyframes(info) if every is None else iter_frames(info, every)
     if progress is not None:
-        frames = _counted(frames, len(info.keyframes), progress)
+        frames = _counted(frames, len(info.keyframes) if every is None else -(-info.n_frames // every), progress)
     counts = build_bins(frames, info.n_frames, frames_per_bin, (info.height, info.width), out_dir / "bins.npy")
     log(f"binned into {len(counts)} bins of {frames_per_bin} frames in {time.time() - started:.0f} s")
     per_bin = float(np.median(counts)) if len(counts) else 0.0
-    if per_bin < 8:  # SparseTrack was built on ~25 keyframes averaged per bin (a keyframe every 12 frames)
+    if per_bin < 8 and every is None:  # SparseTrack was built on ~25 keyframes averaged per bin (one every 12 frames)
         log(f"WARNING: only ~{per_bin:.0f} keyframes per bin: the averaged images are much noisier than the "
             f"benchmark movies' (~25), so faint and young tubes will be missed more often. Record with a keyframe "
             f"every ~12 frames (or losslessly), or use larger bins (--frames-per-bin).")
@@ -160,6 +163,7 @@ def prepare(movie: str | Path, out_dir: str | Path, frames_per_bin: int = 300, r
                   "n_frames": info.n_frames, "fps_container": info.fps,
                   "n_keyframes": len(info.keyframes), "keyframe_interval": info.keyframe_interval},
         "frames_per_bin": frames_per_bin,
+        "sampling": "keyframes" if every is None else ("every frame" if every == 1 else f"every {every} frames"),
         "n_bins": int(len(counts)),
         "keyframes_per_bin": counts.tolist(),
         "ref_bins": ref_bins,

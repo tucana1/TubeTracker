@@ -1,4 +1,4 @@
-"""Keyframe-only access to movie files through ffmpeg/ffprobe."""
+"""Access to movie files through ffmpeg/ffprobe: their keyframes (the default), or every k-th frame."""
 
 from __future__ import annotations
 
@@ -89,3 +89,36 @@ def iter_keyframes(info: MovieInfo, crop: tuple[int, int, int, int] | None = Non
         proc.wait()
     if decoded != len(info.keyframes):
         raise RuntimeError(f"decoded {decoded} of {len(info.keyframes)} keyframes from {info.path}")
+
+
+def iter_frames(info: MovieInfo, every: int = 1, crop: tuple[int, int, int, int] | None = None
+                ) -> Iterator[tuple[int, np.ndarray]]:
+    """Yield (source_frame, grey uint8 image) for every ``every``-th frame (0, every, 2 * every, ...), in order:
+    decoded in full, not only the keyframes (in an x264 movie the other frames are predicted from the keyframes,
+    with the encoder's quantisation; how much they add is for the movie to say)."""
+    every = max(1, int(every))
+    width, height = info.width, info.height
+    vf = []
+    if crop is not None:
+        x, y, width, height = crop
+        vf.append(f"crop={width}:{height}:{x}:{y}")
+    if every > 1:
+        vf.insert(0, f"select=not(mod(n\\,{every}))")
+    cmd = [FFMPEG, "-v", "error", "-i", info.path, *(["-vf", ",".join(vf)] if vf else []),
+           "-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "gray", "-"]
+    size = width * height
+    expected = -(-info.n_frames // every)
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    decoded = 0
+    try:
+        while decoded < expected:
+            buf = proc.stdout.read(size)
+            if len(buf) < size:
+                break
+            yield decoded * every, np.frombuffer(buf, np.uint8).reshape(height, width)
+            decoded += 1
+    finally:
+        proc.kill()
+        proc.wait()
+    if decoded < expected - 1:  # the container's frame count can be one off its stream's
+        raise RuntimeError(f"decoded {decoded} of {expected} frames from {info.path}")

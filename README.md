@@ -98,7 +98,8 @@ and works on registered averages of 25 keyframes (300 source frames per "bin").
 ```bash
 # one step for any movie: cache (first time), analysis, review gallery in the browser
 .venv/bin/python -m sparsetrack run MOVIE            # or double-click Analyze_Movie_SparseTrack.command
-# build the cache: keyframe bins, registration, grain census (~30-40 s for the sparse movie)
+# build the cache: keyframe bins, registration, grain census (~30-40 s for the sparse movie); --sample all or N
+# averages every (N-th) frame instead of the keyframes (no gain on x264 movies: docs/status-2026-09-29.md)
 .venv/bin/python -m sparsetrack prepare MOVIE --out runs/sparsetrack/ld
 # benchmark labelling tool (local web page; answers saved to the labels file after every click)
 .venv/bin/python -m sparsetrack bench runs/sparsetrack/ld --labels benchmark/labels/ld_v1.json
