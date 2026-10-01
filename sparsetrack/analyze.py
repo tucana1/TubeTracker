@@ -157,6 +157,8 @@ class Params:
     drawn_min_on: float = 0.5    # ...flag drawn_off_tube where less of it than this lies on the map
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
     flood_routes_by_bin: bool = True  # draw each bin's own route where it leaves the final one (path_by_bin)
+    flood_turn_deg: float = 0.0   # >0: a piece carrying the far end more than flood_turn_min_px on at once, turning
+    flood_turn_min_px: float = 6.0  # more than this from the tube's last 10 px, is not claimed (passing tubes)
     flood_route_off_px: float = 2.5   # ...by more than this on average
     flood_speed_cap: bool = True   # a bin's tip at most vmax_px (the movie's growth cap) further than the last
                                    # one (0.8.7): a moved tube taken as growth jumped 27-121 px in a bin (m2

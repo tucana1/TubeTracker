@@ -271,14 +271,17 @@ def from_exit(line: list[tuple[float, float]], centre: float, gr: float, zone: f
 
 def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray, gr: float, recent: int = 12,
           bridge: int = 4, start_band: float = 4.0, min_len: float = 8.0, give_up: int = 40, halo: float = HALO,
-          arc_deg: float = 60.0, old_far_px: float = 10.0, old_far_bins: int = 3) -> dict:
+          arc_deg: float = 60.0, old_far_px: float = 10.0, old_far_bins: int = 3, turn_deg: float = 0.0,
+          turn_min_px: float = 6.0) -> dict:
     """Grow one grain's tube through an arrival map (see the module docstring).
 
     Start rules: nothing within ``halo`` px of the rim is claimed; a tube starts on a piece reaching the
     ``start_band`` px beyond that, spanning at most ``arc_deg`` degrees round the grain, and not joined (through
     what has arrived so far) to material that arrived more than ``old_far_bins`` bins earlier more than
     ``old_far_px`` px beyond the rim. A tube that stops for ``give_up`` bins before getting ``min_len`` px beyond
-    the rim was rim noise: it is forgotten and the flood starts again.
+    the rim was rim noise: it is forgotten and the flood starts again. With ``turn_deg``, a piece that would carry the
+    tube's far end more than ``turn_min_px`` further in one bin, turning more than ``turn_deg`` from the direction of
+    its last 10 px, is a passing or moved tube, not growth: it is not claimed.
 
     Returns the tube mask, each tube pixel's arrival bin and rim distance, the emergence bin
     and the length per bin.
@@ -324,6 +327,8 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
                 for l in range(1, nl):
                     c = lab == l
                     if (c & seeds).any():
+                        if turn_deg > 0 and _turns_away(dist, tube, c, tip, bridge, turn_deg, turn_min_px):
+                            continue
                         _extend_dist(dist, c, tip, bridge)
                         tube |= c
                         t_in[c] = b
@@ -331,6 +336,34 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
         fin = tube & np.isfinite(dist)
         length[b] = float(dist[fin].max()) if fin.any() else 0.0
     return {"tube": tube, "t_in": t_in, "dist": dist, "emerge": emerge, "length": np.maximum.accumulate(length)}
+
+
+def _turns_away(dist: np.ndarray, tube: np.ndarray, comp: np.ndarray, sources: np.ndarray, bridge: int,
+                turn_deg: float, min_px: float) -> bool:
+    """Whether joining ``comp`` would carry the tube's far end more than ``min_px`` further at once, in a direction
+    more than ``turn_deg`` from that of the tube's last 10 px (``flood``'s turn rule)."""
+    fin = tube & np.isfinite(dist)
+    if not fin.any():
+        return False
+    trial = dist.copy()
+    _extend_dist(trial, comp, sources, bridge)
+    far = np.where(comp & np.isfinite(trial), trial, -1.0)
+    cur = float(dist[fin].max())
+    if far.max() <= cur + min_px:
+        return False
+    ty, tx = np.unravel_index(int(np.argmax(np.where(fin, dist, -1.0))), dist.shape)
+    back = fin & (np.abs(dist - (cur - 10.0)) <= 1.5)
+    if not back.any():
+        return False
+    by, bx = np.nonzero(back)
+    k = int(np.argmin(np.hypot(by - ty, bx - tx)))
+    v_in = np.array([ty - by[k], tx - bx[k]], float)
+    fy, fx = np.unravel_index(int(np.argmax(far)), far.shape)
+    v_out = np.array([fy - ty, fx - tx], float)
+    n_in, n_out = float(np.hypot(*v_in)), float(np.hypot(*v_out))
+    if n_in < 1e-6 or n_out < 1e-6:
+        return False
+    return float(np.degrees(np.arccos(np.clip(np.dot(v_in, v_out) / (n_in * n_out), -1.0, 1.0)))) > turn_deg
 
 
 def flood_compete(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray, gr: float,
@@ -503,7 +536,8 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
         fl = flood_compete(arr, rg, ang, blocked, gr, rivals, p.flood_recent, p.flood_bridge, p.flood_start_band)
     else:
         fl = flood(arr, rg, ang, blocked, gr, p.flood_recent, p.flood_bridge, p.flood_start_band, p.flood_min_len,
-                   p.flood_give_up, p.flood_halo, p.flood_arc_deg, p.flood_old_far_px, p.flood_old_far_bins)
+                   p.flood_give_up, p.flood_halo, p.flood_arc_deg, p.flood_old_far_px, p.flood_old_far_bins,
+                   p.flood_turn_deg, p.flood_turn_min_px)
     length = np.maximum(fl["length"] - p.flood_tip_px, 0.0) * (fl["length"] > 0)
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
     to_ref = lambda y, x: [round(float(x - centre + gx), 2), round(float(y - centre + gy), 2)]
