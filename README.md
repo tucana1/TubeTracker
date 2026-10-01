@@ -85,7 +85,7 @@ honest numbers for those come from the same recipe trained on the *other* movie'
 **Status (1 Oct 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.3 (below) is the
 tracker, and the TubeTracker app (above) is its desktop front end. The cloud session's learned-evidence pipeline
 (`prototypes/learned_evidence/`, merged 29 Sep) was tested on the lab's movies and read fewer lengths than
-SparseTrack (ld 40/100 vs 69/104); it is kept as a research record. Work concentrated on isolated grains before
+SparseTrack (ld 40/100 vs 69/104); its code is kept as a research record (its large outputs were removed). Work concentrated on isolated grains before
 crossings and clumps (sparse-first reset, 23 Sep). The research record up to 22 Sep 2026 is in
 `prototypes/LEDGER.md`; the complete pre-reset tree is preserved at the git tag `snapshot-2026-09-23`.
 

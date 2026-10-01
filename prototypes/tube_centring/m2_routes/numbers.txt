@@ -1,0 +1,190 @@
+
+=== g005@349  cov=0.29  traced L=257.0 (arc 257.0)  model L=95.8  final=95.77  route arc=97.3  flags=['reader:flood', 'drift_rejected', 'onset_lookback:24']
+  onset: label first visible bin 124, model onset bin 114
+  view_offset=[0.0, 0.0]  model drift=[0.0, 0.0]  has_drift=False  exit_xy=[650.26, 67.81]  census=(657.5,58.5)
+  trace start [650.3, 65.7] end [628.7, 312.1];  drawn start [648.4, 66.5] end [618.4, 156.0]
+  trace->drawn: median 32.7, frac<=2 0.29;  drawn->trace: median 1.1, frac<=2 0.74, max 2.5
+  trace->whole route: median 30.9, frac<=2 0.29, frac<=4 0.40
+  trace points covered (<=2.5 px) at arc positions: 0..98 of 258
+  drawn tube on other labelled traces at bin 349: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {309: 95.8, 329: 95.8, 339: 95.8, 344: 95.8, 349: 95.8, 350: 95.8}
+  nearest census grains: [('g018', np.float64(98.6)), ('g011', np.float64(101.0)), ('g006', np.float64(107.1)), ('g019', np.float64(130.7))]
+
+=== g009@140  cov=0.27  traced L=48.5 (arc 48.5)  model L=36.3  final=77.74  route arc=75.2  flags=['reader:flood', 'tube_at_frame_edge', 'onset_lookback:4']
+  onset: label first visible bin 53, model onset bin 50
+  view_offset=[0.0, 0.0]  model drift=[7.15, 2.2]  has_drift=True  exit_xy=[51.79, 111.48]  census=(53.5,99.5)
+  trace start [66.1, 112.1] end [31.7, 138.1];  drawn start [58.0, 113.5] end [34.9, 138.3]
+  trace->drawn: median 4.9, frac<=2 0.33;  drawn->trace: median 4.4, frac<=2 0.38, max 8.1
+  trace->whole route: median 4.9, frac<=2 0.35, frac<=4 0.41
+  trace points covered (<=2.5 px) at arc positions: 31..47 of 49
+  (no-drift drawn: trace frac<=2 0.00)
+  drawn tube on other labelled traces at bin 140: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {100: 15.4, 120: 18.4, 130: 18.4, 135: 31.8, 140: 36.3, 141: 36.3}
+  nearest census grains: [('g015', np.float64(41.0)), ('g016', np.float64(107.6)), ('g023', np.float64(113.5)), ('g030', np.float64(114.8))]
+
+=== g016@140  cov=0.16  traced L=23.9 (arc 23.9)  model L=24.0  final=280.15  route arc=289.3  flags=['reader:flood']
+  onset: label first visible bin 46, model onset bin 40
+  view_offset=[0.0, 0.0]  model drift=[0.35, -0.95]  has_drift=True  exit_xy=[170.68, 116.47]  census=(160.5,110.5)
+  trace start [169.3, 115.7] end [191.7, 121.3];  drawn start [171.0, 115.5] end [194.3, 118.0]
+  trace->drawn: median 2.7, frac<=2 0.33;  drawn->trace: median 3.0, frac<=2 0.29, max 3.6
+  trace->whole route: median 2.7, frac<=2 0.33, frac<=4 1.00
+  trace points covered (<=2.5 px) at arc positions: 0..9 of 24
+  (no-drift drawn: trace frac<=2 0.58)
+  drawn tube on other labelled traces at bin 140: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {100: 10.8, 120: 15.3, 130: 19.8, 135: 21.3, 140: 24.0, 141: 24.5}
+  nearest census grains: [('g023', np.float64(55.8)), ('g009', np.float64(107.6)), ('g001', np.float64(114.5)), ('g030', np.float64(123.6))]
+
+=== g038@68  cov=0.00  traced L=8.0 (arc 8.0)  model L=6.8  final=58.24  route arc=58.2  flags=['reader:flood', 'drift_rejected']
+  onset: label first visible bin 62, model onset bin 57
+  view_offset=[0.0, 0.0]  model drift=[0.0, 0.0]  has_drift=False  exit_xy=[906.1, 305.69]  census=(906.5,292.5)
+  trace start [908.9, 304.1] end [909.3, 312.1];  drawn start [906.1, 305.7] end [906.0, 312.5]
+  trace->drawn: median 3.1, frac<=2 0.00;  drawn->trace: median 3.1, frac<=2 0.00, max 3.3
+  trace->whole route: median 3.1, frac<=2 0.00, frac<=4 1.00
+  trace points covered (<=2.5 px) at arc positions: None..None of 9
+  drawn tube on other labelled traces at bin 68: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {28: 0.0, 48: 0.0, 58: 5.5, 63: 6.6, 68: 6.8, 69: 6.8}
+  nearest census grains: [('g041', np.float64(47.4)), ('g040', np.float64(62.8)), ('g032', np.float64(90.0)), ('g050', np.float64(95.0))]
+
+=== g038@244  cov=0.00  traced L=78.7 (arc 78.7)  model L=58.2  final=58.24  route arc=58.2  flags=['reader:flood', 'drift_rejected']
+  onset: label first visible bin 62, model onset bin 57
+  view_offset=[0.0, 0.0]  model drift=[0.0, 0.0]  has_drift=False  exit_xy=[906.1, 305.69]  census=(906.5,292.5)
+  trace start [905.7, 294.5] end [859.3, 353.3];  drawn start [906.1, 305.7] end [920.0, 354.0]
+  trace->drawn: median 11.5, frac<=2 0.00;  drawn->trace: median 11.1, frac<=2 0.00, max 38.6
+  trace->whole route: median 11.5, frac<=2 0.00, frac<=4 0.00
+  trace points covered (<=2.5 px) at arc positions: None..None of 79
+  drawn tube on other labelled traces at bin 244: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {204: 58.2, 224: 58.2, 234: 58.2, 239: 58.2, 244: 58.2, 245: 58.2}
+  nearest census grains: [('g041', np.float64(47.4)), ('g040', np.float64(62.8)), ('g032', np.float64(90.0)), ('g050', np.float64(95.0))]
+
+=== g038@349  cov=0.00  traced L=156.6 (arc 156.5)  model L=58.2  final=58.24  route arc=58.2  flags=['reader:flood', 'drift_rejected']
+  onset: label first visible bin 62, model onset bin 57
+  view_offset=[0.0, 0.0]  model drift=[0.0, 0.0]  has_drift=False  exit_xy=[906.1, 305.69]  census=(906.5,292.5)
+  trace start [899.3, 288.5] end [788.9, 398.9];  drawn start [906.1, 305.7] end [920.0, 354.0]
+  trace->drawn: median 55.6, frac<=2 0.00;  drawn->trace: median 30.5, frac<=2 0.00, max 58.2
+  trace->whole route: median 55.6, frac<=2 0.00, frac<=4 0.00
+  trace points covered (<=2.5 px) at arc positions: None..None of 157
+  drawn tube on other labelled traces at bin 349: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {309: 58.2, 329: 58.2, 339: 58.2, 344: 58.2, 349: 58.2, 350: 58.2}
+  nearest census grains: [('g041', np.float64(47.4)), ('g040', np.float64(62.8)), ('g032', np.float64(90.0)), ('g050', np.float64(95.0))]
+
+=== g048@349  cov=0.00  traced L=259.6 (arc 259.6)  model L=139.0  final=139.04  route arc=142.5  flags=['reader:flood', 'onset_lookback:2', 'grain_lost_after:89550']
+  onset: label first visible bin 92, model onset bin 169
+  view_offset=[0.0, 0.05]  model drift=[0.0, -0.2]  has_drift=True  exit_xy=[409.68, 407.26]  census=(398.5,409.5)
+  trace start [408.9, 416.8] end [156.1, 379.2];  drawn start [409.4, 405.8] end [357.1, 502.4]
+  trace->drawn: median 116.2, frac<=2 0.00;  drawn->trace: median 35.8, frac<=2 0.00, max 93.3
+  trace->whole route: median 116.2, frac<=2 0.00, frac<=4 0.00
+  trace points covered (<=2.5 px) at arc positions: None..None of 260
+  (no-drift drawn: trace frac<=2 0.00)
+  drawn tube on other labelled traces at bin 349: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {309: 139.0, 329: 139.0, 339: 139.0, 344: 139.0, 349: 139.0, 350: 139.0}
+  nearest census grains: [('g047', np.float64(31.6)), ('g056', np.float64(45.9)), ('g045', np.float64(54.2)), ('g055', np.float64(60.2))]
+
+=== g052@140  cov=0.00  traced L=20.3 (arc 20.3)  model L=15.1  final=87.02  route arc=73.9  flags=['reader:flood', 'onset_lookback:5']
+  onset: label first visible bin 74, model onset bin 74
+  view_offset=[6.7, -0.7]  model drift=[6.7, -0.7]  has_drift=True  exit_xy=[992.52, 389.81]  census=(1003.5,384.5)
+  trace start [998.2, 384.0] end [992.2, 399.4];  drawn start [1001.2, 393.2] end [1000.9, 405.5]
+  trace->drawn: median 7.5, frac<=2 0.00;  drawn->trace: median 7.4, frac<=2 0.00, max 10.5
+  trace->whole route: median 7.5, frac<=2 0.00, frac<=4 0.00
+  trace points covered (<=2.5 px) at arc positions: None..None of 21
+  (no-drift drawn: trace frac<=2 0.33)
+  drawn tube on other labelled traces at bin 140: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {100: 6.6, 120: 12.2, 130: 13.2, 135: 13.4, 140: 15.1, 141: 17.3}
+  nearest census grains: [('g061', np.float64(51.3)), ('g051', np.float64(58.3)), ('g042', np.float64(59.3)), ('g050', np.float64(99.0))]
+
+=== g052@244  cov=0.00  traced L=63.2 (arc 63.2)  model L=62.9  final=87.02  route arc=73.9  flags=['reader:flood', 'onset_lookback:5']
+  onset: label first visible bin 74, model onset bin 74
+  view_offset=[7.05, -0.35]  model drift=[7.05, -0.35]  has_drift=True  exit_xy=[992.52, 389.81]  census=(1003.5,384.5)
+  trace start [999.0, 385.0] end [1000.2, 441.0];  drawn start [1003.4, 397.7] end [1034.0, 400.3]
+  trace->drawn: median 12.7, frac<=2 0.00;  drawn->trace: median 14.2, frac<=2 0.00, max 37.6
+  trace->whole route: median 12.7, frac<=2 0.00, frac<=4 0.00
+  trace points covered (<=2.5 px) at arc positions: None..None of 64
+  (no-drift drawn: trace frac<=2 0.00)
+  drawn tube on other labelled traces at bin 244: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {204: 57.6, 224: 57.6, 234: 57.6, 239: 57.6, 244: 62.9, 245: 64.6}
+  nearest census grains: [('g061', np.float64(51.3)), ('g051', np.float64(58.3)), ('g042', np.float64(59.3)), ('g050', np.float64(99.0))]
+
+=== g052@349  cov=0.00  traced L=133.3 (arc 133.3)  model L=87.0  final=87.02  route arc=73.9  flags=['reader:flood', 'onset_lookback:5']
+  onset: label first visible bin 74, model onset bin 74
+  view_offset=[12.9, -1.5]  model drift=[12.9, -1.5]  has_drift=True  exit_xy=[992.52, 389.81]  census=(1003.5,384.5)
+  trace start [996.4, 382.2] end [1002.0, 512.6];  drawn start [1008.9, 395.8] end [1056.3, 392.1]
+  trace->drawn: median 35.8, frac<=2 0.00;  drawn->trace: median 27.7, frac<=2 0.00, max 60.1
+  trace->whole route: median 35.8, frac<=2 0.00, frac<=4 0.00
+  trace points covered (<=2.5 px) at arc positions: None..None of 134
+  (no-drift drawn: trace frac<=2 0.00)
+  drawn tube on other labelled traces at bin 349: [('g043', 0.52, 'partial')]
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {309: 87.0, 329: 87.0, 339: 87.0, 344: 87.0, 349: 87.0, 350: 87.0}
+  nearest census grains: [('g061', np.float64(51.3)), ('g051', np.float64(58.3)), ('g042', np.float64(59.3)), ('g050', np.float64(99.0))]
+
+=== g054@349  cov=0.49  traced L=195.8 (arc 195.8)  model L=112.6  final=112.6  route arc=116.6  flags=['drift_rejected', 'rotates:45deg']
+  onset: label first visible bin 106, model onset bin 93
+  view_offset=[0.0, 0.0]  model drift=[0.0, 0.0]  has_drift=False  exit_xy=[1218.96, 396.86]  census=(1209.5,410.5)
+  trace start [1216.8, 396.9] end [1279.2, 212.9];  drawn start [1220.0, 397.3] end [1250.8, 291.1]
+  trace->drawn: median 2.4, frac<=2 0.45;  drawn->trace: median 1.0, frac<=2 0.78, max 3.1
+  trace->whole route: median 2.2, frac<=2 0.47, frac<=4 0.62
+  trace points covered (<=2.5 px) at arc positions: 5..115 of 196
+  drawn tube on other labelled traces at bin 349: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {309: 112.6, 329: 112.6, 339: 112.6, 344: 112.6, 349: 112.6, 350: 112.6}
+  nearest census grains: [('g044', np.float64(76.6)), ('g053', np.float64(108.3)), ('g043', np.float64(126.8)), ('g035', np.float64(172.9))]
+
+=== g064@349  cov=0.04  traced L=115.4 (arc 115.4)  model L=73.4  final=73.4  route arc=74.9  flags=['reader:flood', 'onset_lookback:2']
+  onset: label first visible bin 103, model onset bin 99
+  view_offset=[0.0, 0.0]  model drift=[-14.35, 32.25]  has_drift=True  exit_xy=[638.06, 491.49]  census=(626.5,490.5)
+  trace start [619.3, 516.5] end [705.7, 454.1];  drawn start [624.2, 518.6] end [677.9, 481.2]
+  trace->drawn: median 15.0, frac<=2 0.05;  drawn->trace: median 12.9, frac<=2 0.11, max 21.7
+  trace->whole route: median 14.6, frac<=2 0.09, frac<=4 0.16
+  trace points covered (<=2.5 px) at arc positions: 4..10 of 116
+  (no-drift drawn: trace frac<=2 0.00)
+  drawn tube on other labelled traces at bin 349: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {309: 73.4, 329: 73.4, 339: 73.4, 344: 73.4, 349: 73.4, 350: 73.4}
+  nearest census grains: [('g065', np.float64(63.1)), ('g059', np.float64(76.0)), ('g057', np.float64(91.7)), ('g058', np.float64(92.3))]
+
+=== g069@244  cov=0.28  traced L=169.2 (arc 169.2)  model L=301.4  final=396.19  route arc=396.9  flags=['reader:flood', 'onset_at_focus_change']
+  onset: label first visible bin 64, model onset bin 65
+  view_offset=[1.9, -2.1]  model drift=[1.9, -2.1]  has_drift=True  exit_xy=[491.28, 571.58]  census=(493.5,560.5)
+  trace start [484.8, 561.4] end [494.6, 717.6];  drawn start [490.8, 569.0] end [411.4, 636.7]
+  trace->drawn: median 13.1, frac<=2 0.27;  drawn->trace: median 21.0, frac<=2 0.16, max 54.2
+  trace->whole route: median 13.1, frac<=2 0.27, frac<=4 0.31
+  trace points covered (<=2.5 px) at arc positions: 122..169 of 170
+  (no-drift drawn: trace frac<=2 0.00)
+  drawn tube on other labelled traces at bin 244: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {204: 143.6, 224: 170.6, 234: 298.5, 239: 301.4, 244: 301.4, 245: 301.4}
+  nearest census grains: [('g074', np.float64(60.4)), ('g067', np.float64(84.9)), ('g084', np.float64(109.8)), ('g057', np.float64(119.9))]
+
+=== g092@349  cov=0.23  traced L=269.6 (arc 269.6)  model L=274.3  final=274.3  route arc=274.0  flags=['reader:flood', 'onset_lookback:3']
+  onset: label first visible bin 46, model onset bin 32
+  view_offset=[36.8, 8.45]  model drift=[36.8, 8.45]  has_drift=True  exit_xy=[374.51, 709.15]  census=(367.5,719.5)
+  trace start [396.3, 713.6] end [242.7, 517.6];  drawn start [404.5, 712.9] end [241.4, 575.5]
+  trace->drawn: median 4.4, frac<=2 0.23;  drawn->trace: median 4.5, frac<=2 0.23, max 54.0
+  trace->whole route: median 4.4, frac<=2 0.23, frac<=4 0.44
+  trace points covered (<=2.5 px) at arc positions: 13..187 of 270
+  (no-drift drawn: trace frac<=2 0.00)
+  drawn tube on other labelled traces at bin 349: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {309: 270.9, 329: 274.3, 339: 274.3, 344: 274.3, 349: 274.3, 350: 274.3}
+  nearest census grains: [('g091', np.float64(40.2)), ('g083', np.float64(87.9)), ('g103', np.float64(88.0)), ('g079', np.float64(103.4))]
+
+=== g106@140  cov=0.17  traced L=14.5 (arc 14.5)  model L=4.0  final=23.95  route arc=24.1  flags=['reader:flood', 'onset_lookback:25']
+  onset: label first visible bin 80, model onset bin 79
+  view_offset=[-3.15, -1.85]  model drift=[-3.15, -1.85]  has_drift=True  exit_xy=[755.46, 820.21]  census=(744.5,812.5)
+  trace start [748.2, 814.6] end [759.4, 823.8];  drawn start [753.0, 817.2] end [756.1, 819.7]
+  trace->drawn: median 2.0, frac<=2 0.47;  drawn->trace: median 1.0, frac<=2 1.00, max 1.1
+  trace->whole route: median 1.7, frac<=2 0.60, frac<=4 0.87
+  trace points covered (<=2.5 px) at arc positions: 4..11 of 15
+  (no-drift drawn: trace frac<=2 0.40)
+  drawn tube on other labelled traces at bin 140: []
+  the trace is covered by other grains' drawn tubes: []
+  model L around bin: {100: 2.6, 120: 4.0, 130: 4.0, 135: 4.0, 140: 4.0, 141: 4.0}
+  nearest census grains: [('g098', np.float64(71.6)), ('g112', np.float64(86.8)), ('g093', np.float64(92.0)), ('g108', np.float64(141.5))]
