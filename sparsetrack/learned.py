@@ -523,6 +523,7 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     tips, tip_yx = [], []
     zone = gr + p.flood_halo + p.flood_start_band
     exit_len = np.zeros(n_bins)
+    lines = [None] * n_bins  # each bin's centreline to its tip, from the exit
     reach = None  # with p.flood_speed_cap: the rim distance of the last tip; a tip may get only p.vmax_px further a bin
     for t in range(n_bins):  # tip = the farthest tube pixel claimed by then
         sel = tube & (t_in <= t) & np.isfinite(dist)
@@ -532,17 +533,17 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
         if sel.any():
             reach = float(dist[y, x])
         if p.flood_from_exit and sel.any() and length[t] > 0:
-            exit_len[t] = from_exit(centreline(sel, dist, (int(y), int(x)), centre, gr, p.flood_bridge + 0.5),
-                                    centre, gr, zone)[1]
+            lines[t], exit_len[t] = from_exit(centreline(sel, dist, (int(y), int(x)), centre, gr, p.flood_bridge + 0.5),
+                                              centre, gr, zone)
             if p.flood_tip == "radial":
                 # a young tube's blob widens along the rim, where pieces joining late get the greatest rim distance:
                 # the farthest pixel from the grain is then the tip, if its length from the exit is the longer
                 yr, xr = np.unravel_index(int(np.argmax(np.where(sel, rg, -1.0))), dist.shape)
                 if (yr, xr) != (y, x):
-                    er = from_exit(centreline(sel, dist, (int(yr), int(xr)), centre, gr, p.flood_bridge + 0.5),
-                                   centre, gr, zone)[1]
+                    lr, er = from_exit(centreline(sel, dist, (int(yr), int(xr)), centre, gr, p.flood_bridge + 0.5),
+                                       centre, gr, zone)
                     if er > exit_len[t]:
-                        exit_len[t], y, x = er, yr, xr
+                        lines[t], exit_len[t], y, x = lr, er, yr, xr
         tips.append(to_ref(y, x))
         tip_yx.append((int(y), int(x)))
     if p.flood_from_exit:  # measured along the tube from where it leaves the grain, never longer than before
@@ -591,9 +592,67 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
                tip={"frames": frames, "xy": tips}, path=[to_ref(y, x) for y, x in line],
                exit_xy=to_ref(*line[0]),
                final_length_px=round(float(length[-1]), 2), path_length_px=round(float(dist[ty, tx]), 2))
+    if p.flood_routes_by_bin and p.flood_from_exit:
+        by_bin = _routes_by_bin(lines, exit_len, [to_ref(y, x) for y, x in line], to_ref, p.flood_route_off_px)
+        if by_bin:
+            res["path_by_bin"] = by_bin
     pts = np.array([[x, y] for y, x in line], float)
     res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), tube, pts, None, None, centre)
     return res
+
+
+def _routes_by_bin(lines: list, exit_len: np.ndarray, final: list, to_ref, off_px: float) -> dict | None:
+    """The route to draw at each bin where it is not the final route: the centreline of the bin whose length from the
+    exit is the longest so far (the length reported then), kept where its points lie on average more than
+    ``off_px`` from the final route (a tube read along another branch, or before it moved). A growing tube's routes
+    extend one another: a run of them is kept once, as its longest (each bin cuts it to its length). ``{"routes":
+    [route, ...], "index": [per bin: the route's index, -1 for the final route]}``, routes as reference [x, y] every
+    ~2 px."""
+    from . import routes
+    fin = np.asarray(final, float)
+    best, k, index, kept, cache, group = -1.0, None, [], [], {}, None
+    for t, (ln, e) in enumerate(zip(lines, exit_len)):
+        if ln is not None and e >= best:
+            best, k = e, t
+        if k is None:
+            index.append(-1)
+            continue
+        if k not in cache:
+            pts = np.asarray([to_ref(y, x) for y, x in lines[k]], float)
+            cache[k] = -1
+            if len(pts) >= 3 and len(fin) >= 2:
+                q, _ = routes.resample(pts, 2.0)
+                far = q[3:] if len(q) > 5 else q
+                if _mean_dist(far, fin) > off_px:
+                    q = np.round(q, 1).tolist()
+                    if group is not None and _extends(np.asarray(kept[group], float), np.asarray(q, float)):
+                        kept[group] = q  # the last route extends the group's: it stands for them all
+                    else:
+                        kept.append(q)
+                        group = len(kept) - 1
+                    cache[k] = group
+                else:
+                    group = None
+        index.append(cache[k])
+    return {"routes": kept, "index": index} if kept else None
+
+
+def _extends(old: np.ndarray, new: np.ndarray, mean_px: float = 1.5, max_px: float = 3.0) -> bool:
+    """Whether route ``new`` carries route ``old`` on: every point of ``old`` within ``max_px`` of it, ``mean_px`` on
+    average (a moved tube's later route does not stand for its earlier one)."""
+    d = np.array([min(_seg_dist(v, a, b) for a, b in zip(new[:-1], new[1:])) for v in old])
+    return bool(len(d)) and float(d.mean()) <= mean_px and float(d.max()) <= max_px
+
+
+def _mean_dist(pts: np.ndarray, line: np.ndarray) -> float:
+    """Mean distance of ``pts`` to the polyline ``line``."""
+    return float(np.mean([min(_seg_dist(v, a, b) for a, b in zip(line[:-1], line[1:])) for v in pts])) if len(pts) else 0.0
+
+
+def _seg_dist(v: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+    d = b - a
+    s = float(np.clip(np.dot(v - a, d) / max(float(np.dot(d, d)), 1e-9), 0.0, 1.0))
+    return float(np.hypot(*(a + s * d - v)))
 
 
 def _band_centres(prof: np.ndarray, offs: np.ndarray, min_p: float, max_width: float) -> np.ndarray:
@@ -703,11 +762,26 @@ def centre_route(res: dict, prob: Renderer, meta: dict, p) -> None:
         th = math.radians(float(rot[i]))
         turn = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
         return int(frames[i]) // fpb, (q - pivot) @ turn.T + pivot + drift[i], n @ turn.T
+    offs = np.arange(-p.centre_reach, p.centre_reach + 1e-6, 0.25)
+    by_bin = res.get("path_by_bin")
+    if by_bin:  # the flood's own routes for some bins: each centred on the maps of the bins it is drawn at
+        index = np.asarray(by_bin["index"])
+        for k, rt in enumerate(by_bin["routes"]):
+            used = np.flatnonzero(index == k)
+            q = np.asarray(rt, float)
+            if len(q) < 3 or not len(used):
+                continue
+            q, _ = routes.resample(q, 1.0)
+            n = routes.normals(q)
+            mid = used[len(used) // 2]
+            near_bins = [j for j in (mid - 1, mid, mid + 1) if j in set(used.tolist())]
+            ck = _centres_along(_across(prob, [lay(j, q, n) for j in near_bins], offs), offs, p)
+            if ck is not None:
+                by_bin["routes"][k] = np.round(q + np.asarray(ck)[:, None] * n, 2).tolist()
     pts, _ = routes.resample(path, 1.0)
     if len(pts) < 3:
         return
     nrm = routes.normals(pts)
-    offs = np.arange(-p.centre_reach, p.centre_reach + 1e-6, 0.25)
     c = _centres_along(_across(prob, [lay(i, pts, nrm) for i in idx], offs), offs, p)
     if c is None:
         return
@@ -792,7 +866,7 @@ def drawn_check(res: dict, prob: Renderer, meta: dict, p) -> None:
             continue
         th = math.radians(float(rot[i]))
         turn = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
-        drawn = (routes.cut(routes.bent(path, res.get("bend"), i), L[i]) - pivot) @ turn.T + pivot + drift[i]
+        drawn = (routes.cut(routes.route_at(res, i), L[i]) - pivot) @ turn.T + pivot + drift[i]
         pts, s = routes.resample(drawn, 1.0)
         keep = (np.hypot(pts[:, 0] - res["x"] - drift[i][0], pts[:, 1] - res["y"] - drift[i][1]) > res["r"] + 3.0) & (
             s < s[-1] - 2.0)

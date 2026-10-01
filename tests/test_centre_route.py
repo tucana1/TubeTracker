@@ -171,3 +171,27 @@ def test_a_tube_drawn_off_the_network_s_tube_is_flagged():
     off.update(status="emerged_within", flags=[], r=10.0, x=28.0, y=75.0)
     learned.drawn_check(off, prob, meta, p)
     assert any(f.startswith("drawn_off_tube:") for f in off["flags"])
+
+
+def test_a_bin_drawn_along_its_own_route_where_the_flood_read_another():
+    from tubetracker.app.overlay import bent_at
+    final = [[float(x), 60.0] for x in range(40, 120)]
+    other = [[40.0, 60.0 + y] for y in range(0, 40)]  # the tube went down then (another branch)
+    res = {"path": final, "path_by_bin": {"routes": [other], "index": [-1, 0, 0, -1]}}
+    assert np.allclose(routes.route_at(res, 1), other) and np.allclose(routes.route_at(res, 3), final)
+    rec = {"path": final, "by_bin": {"routes": [other], "index": [-1, 0, 0, -1]}}
+    assert bent_at(rec, 2) == other and bent_at(rec, 0) == final
+
+
+def test_only_routes_that_leave_the_final_one_are_kept_per_bin():
+    to_ref = lambda y, x: [float(x), float(y)]
+    final = [[float(x), 60.0] for x in range(40, 120)]
+    along = [(60.0, float(x)) for x in range(40, 80)]   # the final route's first 40 px (crop (y, x))
+    down = [(60.0 + y, 40.0) for y in range(0, 30)]     # another branch
+    lines = [None, along, down, None, along]
+    exit_len = np.array([0.0, 39.0, 29.0, 0.0, 41.0])
+    out = learned._routes_by_bin(lines, exit_len, final, to_ref, 2.5)
+    assert out is None  # bin 2's route is shorter than bin 1's: the length (and route) of bin 1 hold
+    exit_len = np.array([0.0, 20.0, 29.0, 0.0, 41.0])
+    out = learned._routes_by_bin(lines, exit_len, final, to_ref, 2.5)
+    assert out["index"] == [-1, -1, 0, 0, -1] and len(out["routes"]) == 1

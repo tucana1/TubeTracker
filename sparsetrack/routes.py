@@ -71,3 +71,13 @@ def cut(path, length: float, max_extend: float = 5.0) -> np.ndarray:
     d = p[-1] - back
     n = float(np.hypot(*d)) or 1.0
     return np.vstack([p, p[-1] + d / n * min(length - s[-1], max_extend)])
+
+
+def route_at(res: dict, i: int) -> np.ndarray:
+    """The route a reading draws at bin index ``i``: its own route for that bin where the flood read the tube along
+    another one then (``path_by_bin``), else the stored route bent as the tube lay then."""
+    by_bin = res.get("path_by_bin") or {}
+    index = by_bin.get("index") or []
+    if 0 <= i < len(index) and index[i] >= 0:
+        return np.asarray(by_bin["routes"][index[i]], float).reshape(-1, 2)
+    return bent(res.get("path") or [], res.get("bend"), i)

@@ -182,8 +182,8 @@ def turned_path(g: dict, t: int, pred: dict) -> np.ndarray:
     """The grain's model path as the model read it at bin index ``t``: bent as the tube lay then (``routes.bent``,
     0.8.3 on), turned by that bin's rotation about the tube exit (``rot_pivot="exit"``, 0.4.1 on) or the grain
     centre (before)."""
-    from .routes import bent
-    path = bent(g.get("path") or [], g.get("bend"), t).reshape(-1, 2)
+    from .routes import route_at
+    path = route_at(g, t).reshape(-1, 2)
     rot = g.get("rotation_deg") or []
     th = math.radians(rot[t]) if t < len(rot) else 0.0
     exit_pivot = (pred.get("params") or {}).get("rot_pivot") == "exit" and g.get("exit_xy")

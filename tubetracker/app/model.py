@@ -50,6 +50,14 @@ def by_bin(values: list, res: dict, fpb: int, n_bins: int) -> list:
     return out + [out[-1]] * (n_bins - len(out))
 
 
+def by_bin_list(index: list, res: dict, fpb: int, n_bins: int) -> list:
+    """A per-reading index series by bin (``by_bin``), -1 (the stored route) before and after the series."""
+    out = by_bin(index, res, fpb, n_bins)
+    frames = (res.get("length") or {}).get("frames") or []
+    start = int(frames[0]) // fpb if frames else 0
+    return [-1] * min(start, n_bins) + out[start:] if out else []
+
+
 def _r(v, nd=1):
     return round(float(v), nd)
 
@@ -191,6 +199,9 @@ class RunData:
             pts = np.asarray(res["path"], float)
             bend = {"step": float(res["bend"]["step_px"]), "rows": by_bin(res["bend"]["px10"], res, fpb, nb),
                     "s": routes.arc(pts), "n": routes.normals(pts)}
+        own = None  # the flood's own routes for some bins
+        if (res.get("path_by_bin") or {}).get("routes"):
+            own = {"routes": res["path_by_bin"]["routes"], "index": by_bin_list(res["path_by_bin"]["index"], res, fpb, nb)}
         pivot = None
         if res.get("path"):
             exit_pivot = (self.pred.get("params") or {}).get("rot_pivot") == "exit" and res.get("exit_xy")
@@ -200,6 +211,7 @@ class RunData:
         if cov is not None and cov < report.COVERAGE_MIN:
             flags.append(f"path_coverage:{cov:.2f}")
         return {"L": L, "rot": rot if any(abs(a) > 0.05 for a in rot) else None, "drift": drift or None, "bend": bend,
+                "by_bin": own,
                 "status": status, "fv": fv, "conf": conf, "unsure": unsure, "lost": lost, "lost_why": lost_why,
                 "pivot": pivot, "flags": flags, "path": res.get("path") or [],
                 "rate": report.growth_rate([self.frame(b) for b in range(nb)], L) if status in EMERGED else None,
@@ -307,7 +319,7 @@ class RunData:
             "status": status, "model_status": s["status"], "onset": fv, "model_onset": s["fv"],
             "onset_after": after, "onset_by": by,
             "L": [_r(v) for v in L], "path": s["path"], "pivot": s["pivot"], "rot": s["rot"], "drift": s["drift"],
-            "bend": s["bend"],
+            "bend": s["bend"], "by_bin": s["by_bin"],
             "human": human, "lost": lost, "lost_why": lost_why, "stall": stall,
             "conf": None if s["conf"] is None else _r(s["conf"], 3), "unsure": s["unsure"],
             "final": _r(final, 2), "rate": rate, "flags": s["flags"], "review": review, "excluded": review["excluded"],

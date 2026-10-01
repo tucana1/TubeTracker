@@ -80,6 +80,9 @@ def pos_at(g: dict, b: int) -> tuple[float, float]:
 def bent_at(g: dict, b: int) -> list:
     """The model's route as the tube lay at bin ``b`` (``sparsetrack.routes.bent``; the record carries the route's
     arc lengths and normals, ``model.RunData``)."""
+    own = g.get("by_bin")
+    if own and 0 <= b < len(own["index"]) and own["index"][b] >= 0:
+        return own["routes"][own["index"][b]]  # the flood read the tube along another route then
     path = g.get("path") or []
     bend = g.get("bend")
     rows = (bend or {}).get("rows") or []
