@@ -139,6 +139,20 @@ class Params:
                                   # tube" zeroes the flood's), "change_unless_missed" (the flood's where the change
                                   # reader saw no tube but the flood read one of hybrid_min_px), or "flood"
     hybrid_min_px: float = 10.0
+    # where the drawn tube lies across it (learned.centre_route): both readers' routes follow the strongest evidence,
+    # a tube's darker wall, 3.5 px (median) from the middle annotators trace; moved onto the middle of the tube
+    # network's band across the tube (ld 3.6 -> 1.8 px from the traces, m2 2.7 -> 1.8). Lengths are not changed.
+    centre_route: bool = True
+    centre_late: int = 3         # the network's map averaged over the last bins the grain was seen, where it was then
+    centre_reach: float = 10.0   # px either side of the route searched for the band (a route on a wall is ~4.5 px
+                                 # from the middle of a band ~9.5 px wide)
+    centre_min_p: float = 0.35   # a band peaking lower than this is not used (the route stays there)
+    centre_max_width: float = 14.0  # a band wider than this is two tubes or a clump (not used)
+    centre_smooth: int = 7       # route points the shifts are median-filtered over
+    centre_max_shift: float = 5.0
+    centre_per_bin: bool = True  # also how the route lay at each bin (tubes bend and are pushed as they grow)
+    centre_knot_px: float = 5.0  # ...kept every this many px along it
+    centre_lengths: bool = False  # lengths measured along the centred route (not the wall the reader followed)
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
     # the flood's start and stop rules (learned.flood), settled on tubes_synth_v1's maps; options for other maps:
     flood_p: float = 0.5         # a pixel is tube where P >= this...
@@ -1286,7 +1300,10 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     result = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": [drift_flag] if drift_flag else [],
               "map_threshold": round(thr, 2), "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
-    if followed:  # paths and tips are in the grain's frame: its place in the field is census + drift
+    if followed or np.any(ls):
+        # paths and tips are in the frame the grain was read in (its crops registered by its followed drift or its
+        # phase track): its place in the field is census + drift. Until 0.8.2 only followed grains kept theirs, so
+        # the app drew every other grain and tube where it started while the grain drifted (ld g017: 20 px)
         result["drift"] = {"frames": frames, "xy": np.round(ls, 2).tolist()}
     if not attached:
         result.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None,
@@ -1665,6 +1682,9 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
                 elif missed:
                     fl["flags"].append("onset:flood_over_change")
                 res = fl
+        if p.centre_route and prob is not None and len(res.get("path") or []) >= 2:
+            from . import learned
+            learned.centre_route(res, prob, meta, p)
         cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)
         results.append(res)

@@ -1,0 +1,109 @@
+"""A reading's route moved onto the middle of its tube, and how it lay at each bin (sparsetrack.learned.centre_route,
+sparsetrack.routes), drawn the same way by the app (tubetracker.app.overlay)."""
+
+import math
+
+import numpy as np
+
+from sparsetrack import learned, routes
+from sparsetrack.analyze import Params
+from sparsetrack.render import Renderer
+
+FPB, NB, H, W = 300, 10, 120, 160
+
+
+def _prob(band, width=8.0):
+    """A probability movie (P x P_SCALE, reference coordinates): at bin b one straight band through ``band(b)[0]``
+    at ``band(b)[1]`` degrees, ``width`` px wide at half maximum (no band where ``band(b)`` is None)."""
+    bins = np.zeros((NB, H, W), np.uint8)
+    yy, xx = np.mgrid[0:H, 0:W] + 0.5  # continuous pixel centres
+    for b in range(NB):
+        if band(b) is None:
+            continue
+        (cx, cy), deg = band(b)
+        a = math.radians(deg)
+        d = -(xx - cx) * math.sin(a) + (yy - cy) * math.cos(a)  # distance across the band
+        bins[b] = np.clip(learned.P_SCALE * np.exp(-0.5 * (d / (width / 2.355)) ** 2), 0, 255).astype(np.uint8)
+    return Renderer(bins, {"n_bins": NB, "frames_per_bin": FPB, "shifts": [[0.0, 0.0]] * NB}), \
+        {"n_bins": NB, "frames_per_bin": FPB}
+
+
+def _res(path, tips=None, drift=None, rot=None, L=None):
+    frames = [b * FPB + FPB // 2 for b in range(NB)]
+    res = {"x": 20.0, "y": 60.0, "path": [list(map(float, q)) for q in path],
+           "length": {"frames": frames, "px": list(L) if L is not None else [60.0] * NB},
+           "exit_xy": list(map(float, path[0]))}
+    if tips is not None:
+        res["tip"] = {"frames": frames, "xy": tips}
+    if drift is not None:
+        res["drift"] = {"frames": frames, "xy": drift}
+    if rot is not None:
+        res["rotation_deg"] = rot
+    return res
+
+
+def _across(pts, centre, deg):
+    a = math.radians(deg)
+    pts = np.asarray(pts, float)
+    return -(pts[:, 0] - centre[0]) * math.sin(a) + (pts[:, 1] - centre[1]) * math.cos(a)
+
+
+def test_a_route_along_a_wall_moves_to_the_middle_of_the_band():
+    prob, meta = _prob(lambda b: ((80.0, 60.0), 0.0))
+    route = [(40.0 + i, 63.5) for i in range(80)]  # 3.5 px off the band's middle (y = 60)
+    res = _res(route, tips=[[100.0, 63.5]] * NB)
+    learned.centre_route(res, prob, meta, Params())
+    assert np.all(np.abs(np.asarray(res["path"])[:, 1] - 60.0) < 0.5)
+    assert abs(res["tip"]["xy"][-1][1] - 60.0) < 0.5 and abs(res["tip"]["xy"][-1][0] - 100.0) < 0.5
+    assert res["exit_xy"] == [40.0, 63.5] and res["route_centred_px"] > 3.0  # the turning pivot stays
+
+
+def test_the_band_is_found_where_the_grain_was_then():
+    prob, meta = _prob(lambda b: ((84.0, 57.0) if b >= NB - 4 else (80.0, 60.0), 30.0))
+    a = math.radians(30.0)
+    route = [(80.0 + s * math.cos(a) - 3.0 * math.sin(a), 60.0 + s * math.sin(a) + 3.0 * math.cos(a))
+             for s in np.arange(-30, 30, 1.0)]  # 3 px beside the band, in the grain's own frame
+    drift = [[0.0, 0.0]] * (NB - 4) + [[4.0, -3.0]] * 4  # the late bins: the grain (and band) moved
+    res = _res(route, drift=drift)
+    learned.centre_route(res, prob, meta, Params())
+    assert np.all(np.abs(_across(res["path"], (80.0, 60.0), 30.0)) < 0.6)
+
+
+def test_a_route_that_turns_with_its_grain_is_centred_as_it_lay():
+    pivot = (40.0, 63.5)
+    deg = 12.0
+    a = math.radians(deg)
+    # the tube turned by 12 degrees about its exit in the late bins; the stored route (unturned) is 3 px off it
+    late_mid = (pivot[0] + 40.0 * math.cos(a) + 3.0 * math.sin(a), pivot[1] + 40.0 * math.sin(a) - 3.0 * math.cos(a))
+    prob, meta = _prob(lambda b: (late_mid, deg) if b >= NB - 4 else ((80.0, 60.5), 0.0))
+    route = [(40.0 + i, 63.5) for i in range(80)]
+    res = _res(route, rot=[0.0] * (NB - 4) + [deg] * 4)
+    learned.centre_route(res, prob, meta, Params())
+    from sparsetrack.report import turned_path
+    late = turned_path(res, NB - 2, {"params": {"rot_pivot": "exit"}})
+    assert np.all(np.abs(_across(late[5:-5], late_mid, deg)) < 0.6)
+
+
+def test_how_the_tube_lay_at_each_bin_is_kept_and_drawn_the_same_by_the_app():
+    from tubetracker.app.overlay import bent_at
+    # the tube lies 2 px below its final place until bin 4, then moves up to it (pushed sideways as it grew)
+    prob, meta = _prob(lambda b: ((80.0, 62.0), 0.0) if b < 5 else ((80.0, 60.0), 0.0))
+    route = [(40.0 + i, 60.0) for i in range(80)]
+    res = _res(route, tips=[[90.0, 60.0]] * NB, L=[0.0] + [70.0] * (NB - 1))
+    learned.centre_route(res, prob, meta, Params())
+    assert res["bend"]["px10"][0] == []  # no tube yet
+    early, late = routes.bent(res["path"], res["bend"], 2), routes.bent(res["path"], res["bend"], NB - 1)
+    assert np.all(np.abs(early[:65, 1] - 62.0) < 0.5) and np.all(np.abs(late[:, 1] - 60.0) < 0.5)
+    assert abs(res["tip"]["xy"][2][1] - 62.0) < 0.5 and abs(res["tip"]["xy"][NB - 1][1] - 60.0) < 0.5
+    rec = {"path": res["path"], "bend": {"step": res["bend"]["step_px"], "rows": res["bend"]["px10"],
+                                         "s": routes.arc(res["path"]), "n": routes.normals(res["path"])}}
+    assert np.allclose(bent_at(rec, 2), early) and np.allclose(bent_at(rec, NB - 1), late)
+
+
+def test_no_band_or_a_band_wider_than_a_tube_leaves_the_route_as_it_is():
+    route = [(40.0 + i, 63.5) for i in range(40)]
+    for band, width in ((lambda b: None, 8.0), (lambda b: ((80.0, 60.0), 0.0), 20.0)):
+        prob, meta = _prob(band, width)
+        res = _res(route)
+        learned.centre_route(res, prob, meta, Params())
+        assert res["path"] == [list(map(float, q)) for q in route] and "bend" not in res

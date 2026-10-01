@@ -23,7 +23,8 @@ python3 -m venv .venv
 3. **Analyse.** SparseTrack runs in the background, step by step with a progress bar and Cancel: a few minutes
    the first time a movie is read, then roughly 10-30 s per grain. The movie opens when it is done.
 4. **Look.** Every grain is outlined by its state at the time shown (germinated, not yet, never, lost partway,
-   excluded), with its tube drawn to its length then, the tip and the exit. Play, scrub, scroll to zoom, drag to
+   excluded), with its tube drawn to its length then along the tube's middle, the tip and the exit; grains and
+   their tubes move with the grain as it drifts. Play, scrub, scroll to zoom, drag to
    pan; View > Growth shows the time minus 6 bins earlier, where growing tips stand out. The timeline under the
    movie holds the germination curve with T50, germinations, grains lost partway, tubes that stop growing, the
    least sure readings and focus changes; click one to go there.
@@ -61,7 +62,7 @@ when **the movie's focus changed** (movie 2 was out of focus from about bin 13 t
 meanwhile are seen only once it is sharp again, so onsets at that time mean "visible by" (flag
 `onset_at_focus_change`).
 
-**How far to trust the model unchecked** (30 Sep 2026, SparseTrack 0.8.1-0.8.2, against one annotator's traces; length
+**How far to trust the model unchecked** (30 Sep - 1 Oct 2026, SparseTrack 0.8.1-0.8.3, against one annotator's traces; length
 within max(2 px, 10%), onset within 2 bins). The tube network was fine-tuned on the first two movies' traces, so the
 honest numbers for those come from the same recipe trained on the *other* movie's traces:
 - sparse movie: lengths 73/104 (70%), length and tip 58, onsets 14/26; growth rate per grain within
@@ -81,7 +82,7 @@ honest numbers for those come from the same recipe trained on the *other* movie'
   of the annotator's on the sparse movie and 2.3 bins on movies 2 and 1. `sparsetrack eval` reports it and the
   growth-rate agreement.
 
-**Status (30 Sep 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.2 (below) is the
+**Status (1 Oct 2026; details in `docs/status-2026-09-29.md`).** SparseTrack 0.8.3 (below) is the
 tracker, and the TubeTracker app (above) is its desktop front end. The cloud session's learned-evidence pipeline
 (`prototypes/learned_evidence/`, merged 29 Sep) was tested on the lab's movies and read fewer lengths than
 SparseTrack (ld 40/100 vs 69/104); it is kept as a research record. Work concentrated on isolated grains before

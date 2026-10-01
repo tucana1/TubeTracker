@@ -77,12 +77,26 @@ def pos_at(g: dict, b: int) -> tuple[float, float]:
     return (g["x"] + dx, g["y"] + dy)
 
 
+def bent_at(g: dict, b: int) -> list:
+    """The model's route as the tube lay at bin ``b`` (``sparsetrack.routes.bent``; the record carries the route's
+    arc lengths and normals, ``model.RunData``)."""
+    path = g.get("path") or []
+    bend = g.get("bend")
+    rows = (bend or {}).get("rows") or []
+    if not path or not 0 <= b < len(rows) or not rows[b]:
+        return path
+    import numpy as np
+    from sparsetrack.routes import offsets_along
+    off = offsets_along(bend["s"], rows[b], bend["step"])
+    return (np.asarray(path, float) + off[:, None] * bend["n"]).tolist()
+
+
 def route_at(g: dict, b: int) -> tuple[list, bool]:
     """The route the tube is drawn along at bin ``b``, in the grain's own frame, and whether a person traced it: the
     first route a person traced at or after ``b``; else their last one, carried on along the model's route where it
     ended on it (a tip set along the model's route); else the model's route turned to ``b``."""
     rot = g.get("rot")
-    model = turned(g.get("path") or [], rot[b] if rot else 0.0, g.get("pivot"))
+    model = turned(bent_at(g, b), rot[b] if rot else 0.0, g.get("pivot"))
     drawn = [t for t in g.get("human") or [] if t.get("pts")]
     if not drawn:
         return model, False

@@ -508,7 +508,7 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     to_ref = lambda y, x: [round(float(x - centre + gx), 2), round(float(y - centre + gy), 2)]
     res = {"id": grain["id"], "x": gx, "y": gy, "r": gr, "flags": flags, "map_threshold": 1.0,
            "local_shift_max_px": round(float(np.hypot(*ls.T).max()), 2)}
-    if followed:  # paths and tips are in the grain's frame: its place in the field is census + drift
+    if followed or np.any(ls):  # paths and tips are in the frame the grain was read in: in the field, census + drift
         res["drift"] = {"frames": frames, "xy": np.round(ls, 2).tolist()}
     b = fl["emerge"]
     if b is None or length[-1] < p.min_tube_px:
@@ -581,6 +581,170 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     pts = np.array([[x, y] for y, x in line], float)
     res["_diag"] = (late, np.where(arr < n_bins, 3.0 * (n_bins - arr) / n_bins, 0).astype(np.float32), tube, pts, None, None, centre)
     return res
+
+
+def _band_centres(prof: np.ndarray, offs: np.ndarray, min_p: float, max_width: float) -> np.ndarray:
+    """Per row of ``prof`` (a map sampled across a tube at offsets ``offs``), the middle of the band the route at
+    offset 0 is on: uphill from offset 0 to the band's own peak (a stronger neighbour does not set the level), then
+    the midpoint of the run above half that peak (NaN: no band, a peak below ``min_p``, or a run that leaves the
+    window or is wider than ``max_width``)."""
+    out = np.full(len(prof), np.nan)
+    j0 = int(np.argmin(np.abs(offs)))
+    n = prof.shape[1]
+    for i, row in enumerate(prof):
+        j = j0
+        while True:  # climb to the nearest peak (the steeper side first)
+            left = row[j - 1] if j > 0 else -np.inf
+            right = row[j + 1] if j < n - 1 else -np.inf
+            if max(left, right) <= row[j]:
+                break
+            j = j - 1 if left > right else j + 1
+        peak = float(row[j])
+        if peak < min_p:
+            continue
+        half = 0.5 * peak
+        a = b = j
+        while a > 0 and row[a - 1] >= half:
+            a -= 1
+        while b < n - 1 and row[b + 1] >= half:
+            b += 1
+        if a == 0 or b == n - 1:
+            continue
+        lo = offs[a - 1] + (half - row[a - 1]) / max(row[a] - row[a - 1], 1e-9) * (offs[a] - offs[a - 1])
+        hi = offs[b] + (row[b] - half) / max(row[b] - row[b + 1], 1e-9) * (offs[b + 1] - offs[b])
+        if hi - lo <= max_width:
+            out[i] = 0.5 * (lo + hi)
+    return out
+
+
+def _across(prob: Renderer, layouts: list[tuple[int, np.ndarray, np.ndarray]], offs: np.ndarray) -> np.ndarray:
+    """The network's map (0..1) across a route, averaged over ``layouts``: per bin, (bin, the route's points where
+    the tube lay then, their normals), sampled at points + ``offs`` x normal."""
+    prof = None
+    for b, pts, nrm in layouts:
+        q = (pts[:, None, :] + offs[None, :, None] * nrm[:, None, :] + np.asarray(prob.shifts[b], float)
+             - 0.5).astype(np.float32)  # continuous coordinates -> pixel centres
+        v = cv2.remap(np.asarray(prob.bins[b]), q[..., 0], q[..., 1], cv2.INTER_LINEAR,
+                      borderMode=cv2.BORDER_CONSTANT, borderValue=0).astype(np.float32)
+        prof = v if prof is None else prof + v
+    return prof / (len(layouts) * P_SCALE)
+
+
+def _centres_along(prof: np.ndarray, offs: np.ndarray, p) -> np.ndarray | None:
+    """Per route point, how far its tube's middle is along its normal: the band's middle, gaps taken from the
+    neighbours, median-filtered along the route and clamped; None where fewer than two points find a band."""
+    c = _band_centres(prof, offs, p.centre_min_p, p.centre_max_width)
+    ok = np.isfinite(c)
+    if ok.sum() < 2:
+        return None
+    n = np.arange(len(c))
+    c = np.interp(n, n[ok], c[ok])
+    h = p.centre_smooth // 2
+    return np.clip([np.median(c[max(0, i - h):i + h + 1]) for i in n], -p.centre_max_shift, p.centre_max_shift)
+
+
+def centre_route(res: dict, prob: Renderer, meta: dict, p) -> None:
+    """Move a reading's route (and its tips) onto the middle of its tube, in place; with ``p.centre_per_bin`` also
+    store how the route lay at each bin (``res["bend"]``, ``routes.bent``).
+
+    A tube in these movies is two dark walls about 7 px apart with a clear middle, one wall darker than the other.
+    The change reader's cheapest path and the flood's geodesic centreline both run along the darker wall: 3.5 px
+    (median) from the middle, where annotators trace (ld, m2 and m1; 1 Oct 2026). The tube network marks the whole
+    width, so the middle of its band across the tube is the tube's middle. Each route point (every px) moves along
+    its normal to the midpoint of the half-maximum run of the network's map that holds it, the map averaged over the
+    last ``p.centre_late`` bins the grain was seen, where the grain was then (route + drift); shifts are
+    median-filtered along the route, points with no clear band take their neighbours'. Tubes bend and are pushed as
+    they grow (the route centred on the end lies 2-3 px off traces made 100 bins earlier): per bin, the same on that
+    bin's map (and its neighbours'), smoothed over 5 bins, kept every ``p.centre_knot_px`` px as offsets from the
+    centred route. A route that turns with its grain (``rotation_deg``) is turned for each bin first (an offset
+    along the route's own normal survives the turn). The change reader's tips (points of its route) move with their
+    route point; the flood's (its farthest tube pixel) stay. Lengths, onsets and the exit are not changed."""
+    from . import routes
+    path = np.asarray(res.get("path") or [], float)
+    if len(path) < 2 or routes.arc(path)[-1] < 2.0:
+        return
+    frames = np.asarray(res["length"]["frames"])
+    fpb = int(meta["frames_per_bin"])
+    until = res.get("observed_until_frame")
+    last = int(np.flatnonzero(frames <= until)[-1]) if until is not None and (frames <= until).any() else len(frames) - 1
+    idx = list(range(max(0, last - p.centre_late), last)) or [last]
+    drift = np.asarray(res["drift"]["xy"], float) if res.get("drift") else np.zeros((len(frames), 2))
+    rot = np.asarray(res.get("rotation_deg") or [], float)
+    rot = rot if len(rot) == len(frames) else np.zeros(len(frames))
+    pivot = np.asarray(res["exit_xy"] if p.rot_pivot == "exit" and res.get("exit_xy") else [res["x"], res["y"]], float)
+
+    def lay(i, q, n):  # (bin, points, normals) as the route lay at frame index i: turned, then moved by the drift
+        th = math.radians(float(rot[i]))
+        turn = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
+        return int(frames[i]) // fpb, (q - pivot) @ turn.T + pivot + drift[i], n @ turn.T
+    pts, _ = routes.resample(path, 1.0)
+    if len(pts) < 3:
+        return
+    nrm = routes.normals(pts)
+    offs = np.arange(-p.centre_reach, p.centre_reach + 1e-6, 0.25)
+    c = _centres_along(_across(prob, [lay(i, pts, nrm) for i in idx], offs), offs, p)
+    if c is None:
+        return
+    shift = np.asarray(c)[:, None] * nrm
+    centred = np.round(pts + shift, 2)
+    res["path"] = centred.tolist()
+    res["path_length_px"] = round(float(routes.arc(centred)[-1]), 2)
+    def moved(i, t, q, vec):  # tip t (frame index i, where the tube lay then) moved by its route point's vector
+        _, qi, vi = lay(i, q, vec)
+        k = int(np.argmin(np.hypot(qi[:, 0] - drift[i][0] - t[0], qi[:, 1] - drift[i][1] - t[1])))
+        return k, vi[k]
+
+    # the change reader's tips are points of its route and move with it; the flood's are its farthest tube pixel,
+    # already on the tube (m2: 1-3 px from the annotator's apex, 5-7 px when moved with the route)
+    tips = (res.get("tip") or {}).get("xy") if "reader:flood" not in res.get("flags", []) else None
+    if tips and len(tips) == len(frames):
+        res["tip"]["xy"] = [t if t is None or t[0] is None else
+                            np.round(np.asarray(t, float) + moved(i, t, pts, shift)[1], 2).tolist()
+                            for i, t in enumerate(tips)]
+        tips = res["tip"]["xy"]
+    res["route_centred_px"] = round(float(np.median(np.abs(c))), 2)
+    if p.centre_lengths:  # lengths along the middle: the same point of the tube, its arc length on the centred route
+        s0, s1 = routes.arc(pts), routes.arc(centred)
+        px = [0.0 if v <= 0 else round(float(np.interp(v, s0, s1) if v <= s0[-1] else s1[-1] + v - s0[-1]), 2)
+              for v in res["length"]["px"]]
+        res["length"]["px"] = px
+        res["final_length_px"] = px[-1] if px else 0.0
+    if not p.centre_per_bin:
+        return
+    s, nrm_c = routes.arc(centred), routes.normals(centred)
+    step = float(p.centre_knot_px)
+    knots = np.arange(0.0, s[-1] + 1e-6, step)
+    L = np.asarray(res["length"]["px"], float)
+    rows = np.full((len(frames), len(knots)), np.nan)
+    for i in range(last + 1):
+        if L[i] <= 0.5:
+            continue
+        vis = s <= L[i] + step
+        if vis.sum() < 3:
+            continue
+        near_bins = [j for j in (i - 1, i, i + 1) if 0 <= j <= last]
+        ci = _centres_along(_across(prob, [lay(j, centred[vis], nrm_c[vis]) for j in near_bins], offs), offs, p)
+        if ci is not None:
+            k = knots <= s[vis][-1]
+            rows[i, k] = np.interp(knots[k], s[vis], ci)
+    smooth = np.full_like(rows, np.nan)
+    for i in range(len(frames)):
+        window = rows[max(0, i - 2):i + 3]
+        have = np.isfinite(window).any(axis=0)
+        if np.isfinite(rows[i]).any():
+            smooth[i, have] = np.nanmedian(window[:, have], axis=0)
+            smooth[i, ~np.isfinite(rows[i])] = np.nan  # no further than the tube reached then
+    px10 = [[int(round(10 * v)) for v in r[np.isfinite(r)]] if np.isfinite(r).any() else [] for r in smooth]
+    if not any(px10):
+        return
+    res["bend"] = {"step_px": step, "px10": px10}
+    if tips and len(tips) == len(frames):
+        for i, t in enumerate(tips):
+            if t is None or t[0] is None or i >= len(px10) or not px10[i]:
+                continue
+            k, n = moved(i, t, centred, nrm_c)
+            tips[i] = np.round(np.asarray(t, float) + float(routes.offsets_along(s[k:k + 1], px10[i], step)[0]) * n,
+                               2).tolist()
 
 
 def with_onset(flood_res: dict, change_res: dict) -> dict:
