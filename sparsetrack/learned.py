@@ -35,6 +35,7 @@ import json
 import math
 import shutil
 import time
+import warnings
 from pathlib import Path
 
 import cv2
@@ -519,7 +520,7 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     tube, t_in, dist = fl["tube"], fl["t_in"], fl["dist"]
     if outside.any() and (tube & cv2.dilate(outside.any(axis=0).astype(np.uint8), np.ones((5, 5), np.uint8)) > 0).any():
         flags.append("tube_at_frame_edge")  # its length is known only up to the edge
-    tips = []
+    tips, tip_yx = [], []
     zone = gr + p.flood_halo + p.flood_start_band
     exit_len = np.zeros(n_bins)
     for t in range(n_bins):  # tip = the farthest tube pixel claimed by then
@@ -538,10 +539,17 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
                     if er > exit_len[t]:
                         exit_len[t], y, x = er, yr, xr
         tips.append(to_ref(y, x))
+        tip_yx.append((int(y), int(x)))
     if p.flood_from_exit:  # measured along the tube from where it leaves the grain, never longer than before
         length = np.maximum.accumulate(np.where(length > 0, np.minimum(length, exit_len), 0.0))
+    # the final tip: the pixel of greatest rim distance, or with lengths from the exit, the tip of the latest bin
+    # whose length from the exit is the longest (the reported final length). The greatest rim distance can lie by the
+    # grain, reached round a detour: ld g008's route was 3 px for a 61 px tube, m2 g012's 3 px for 55 px.
+    if p.flood_from_exit and exit_len.max() > 0:
+        ty, tx = tip_yx[int(np.flatnonzero(exit_len >= exit_len.max() - 1e-6)[-1])]
+    else:
+        ty, tx = np.unravel_index(int(np.argmax(np.where(tube & np.isfinite(dist), dist, -1.0))), dist.shape)
     # the tube's pixels on the way from the rim to the final tip, nearest the rim first (the look-back's exit)
-    ty, tx = np.unravel_index(int(np.argmax(np.where(tube & np.isfinite(dist), dist, -1.0))), dist.shape)
     order = sorted(zip(*np.nonzero(tube & np.isfinite(dist))), key=lambda q: dist[q])
     route = [q for q in order if math.hypot(q[0] - ty, q[1] - tx) <= dist[ty, tx] - dist[q] + 3.0][::3]
     line = centreline(tube, dist, (int(ty), int(tx)), centre, gr, p.flood_bridge + 0.5)  # what is drawn and reviewed
@@ -585,36 +593,50 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
 
 def _band_centres(prof: np.ndarray, offs: np.ndarray, min_p: float, max_width: float) -> np.ndarray:
     """Per row of ``prof`` (a map sampled across a tube at offsets ``offs``), the middle of the band the route at
-    offset 0 is on: uphill from offset 0 to the band's own peak (a stronger neighbour does not set the level), then
-    the midpoint of the run above half that peak (NaN: no band, a peak below ``min_p``, or a run that leaves the
-    window or is wider than ``max_width``)."""
-    out = np.full(len(prof), np.nan)
-    j0 = int(np.argmin(np.abs(offs)))
-    n = prof.shape[1]
-    for i, row in enumerate(prof):
-        j = j0
-        while True:  # climb to the nearest peak (the steeper side first)
-            left = row[j - 1] if j > 0 else -np.inf
-            right = row[j + 1] if j < n - 1 else -np.inf
-            if max(left, right) <= row[j]:
-                break
-            j = j - 1 if left > right else j + 1
-        peak = float(row[j])
-        if peak < min_p:
-            continue
-        half = 0.5 * peak
-        a = b = j
-        while a > 0 and row[a - 1] >= half:
-            a -= 1
-        while b < n - 1 and row[b + 1] >= half:
-            b += 1
-        if a == 0 or b == n - 1:
-            continue
-        lo = offs[a - 1] + (half - row[a - 1]) / max(row[a] - row[a - 1], 1e-9) * (offs[a] - offs[a - 1])
-        hi = offs[b] + (row[b] - half) / max(row[b] - row[b + 1], 1e-9) * (offs[b + 1] - offs[b])
-        if hi - lo <= max_width:
-            out[i] = 0.5 * (lo + hi)
+    offset 0 is on: uphill from offset 0 to the band's own peak (the steeper side first; a stronger neighbour does
+    not set the level), then the midpoint of the run above half that peak, its ends interpolated (NaN: a peak below
+    ``min_p``, or a run that leaves the window or is wider than ``max_width``)."""
+    prof = np.asarray(prof, np.float64)
+    n, m = prof.shape
+    out = np.full(n, np.nan)
+    if n == 0 or m < 3:
+        return out
+    j0, rows, idx = int(np.argmin(np.abs(offs))), np.arange(n), np.arange(m)[None, :]
+    here = prof[:, j0]
+    left = prof[:, j0 - 1] if j0 > 0 else np.full(n, -np.inf)
+    right = prof[:, j0 + 1] if j0 < m - 1 else np.full(n, -np.inf)
+    d = np.diff(prof, axis=1)  # d[:, k] = prof[k + 1] - prof[k]
+    peak = np.full(n, j0)
+    if j0 < m - 1:  # climbing right: up to the first k from j0 with prof[k + 1] <= prof[k]
+        up = d[:, j0:] > 0
+        peak = np.where((right > here) & (right >= left), j0 + np.where(up.all(axis=1), m - 1 - j0, np.argmin(up, axis=1)),
+                        peak)
+    if j0 > 0:  # climbing left: down to the first k from j0 with prof[k - 1] <= prof[k]
+        dn = d[:, :j0][:, ::-1] < 0
+        peak = np.where((left > here) & (left > right), j0 - np.where(dn.all(axis=1), j0, np.argmin(dn, axis=1)), peak)
+    pv = prof[rows, peak]
+    half = 0.5 * pv
+    below = prof < half[:, None]
+    lb = np.where(below & (idx < peak[:, None]), idx, -1).max(axis=1)  # the run holding the peak: (lb, rb) exclusive
+    rb = np.where(below & (idx > peak[:, None]), idx, m).min(axis=1)
+    ok = (pv >= min_p) & (lb >= 0) & (rb <= m - 1)
+    a, b = np.clip(lb + 1, 1, m - 1), np.clip(rb - 1, 0, m - 2)
+    lo = offs[a - 1] + (half - prof[rows, a - 1]) / np.maximum(prof[rows, a] - prof[rows, a - 1], 1e-9) * (offs[a] - offs[a - 1])
+    hi = offs[b] + (prof[rows, b] - half) / np.maximum(prof[rows, b] - prof[rows, b + 1], 1e-9) * (offs[b + 1] - offs[b])
+    ok &= (hi - lo) <= max_width
+    out[ok] = 0.5 * (lo[ok] + hi[ok])
     return out
+
+
+def _running_median(a: np.ndarray, h: int, axis: int = 0) -> np.ndarray:
+    """Median over a window of ``h`` either side along ``axis`` (shorter at the ends; NaN ignored)."""
+    a = np.asarray(a, float)
+    pad = [(0, 0)] * a.ndim
+    pad[axis] = (h, h)
+    win = np.lib.stride_tricks.sliding_window_view(np.pad(a, pad, constant_values=np.nan), 2 * h + 1, axis=axis)
+    with warnings.catch_warnings():  # an all-NaN window gives NaN
+        warnings.simplefilter("ignore", RuntimeWarning)
+        return np.nanmedian(win, axis=-1)
 
 
 def _across(prob: Renderer, layouts: list[tuple[int, np.ndarray, np.ndarray]], offs: np.ndarray) -> np.ndarray:
@@ -639,8 +661,7 @@ def _centres_along(prof: np.ndarray, offs: np.ndarray, p) -> np.ndarray | None:
         return None
     n = np.arange(len(c))
     c = np.interp(n, n[ok], c[ok])
-    h = p.centre_smooth // 2
-    return np.clip([np.median(c[max(0, i - h):i + h + 1]) for i in n], -p.centre_max_shift, p.centre_max_shift)
+    return np.clip(_running_median(c, p.centre_smooth // 2), -p.centre_max_shift, p.centre_max_shift)
 
 
 def centre_route(res: dict, prob: Renderer, meta: dict, p) -> None:
@@ -727,13 +748,7 @@ def centre_route(res: dict, prob: Renderer, meta: dict, p) -> None:
         if ci is not None:
             k = knots <= s[vis][-1]
             rows[i, k] = np.interp(knots[k], s[vis], ci)
-    smooth = np.full_like(rows, np.nan)
-    for i in range(len(frames)):
-        window = rows[max(0, i - 2):i + 3]
-        have = np.isfinite(window).any(axis=0)
-        if np.isfinite(rows[i]).any():
-            smooth[i, have] = np.nanmedian(window[:, have], axis=0)
-            smooth[i, ~np.isfinite(rows[i])] = np.nan  # no further than the tube reached then
+    smooth = np.where(np.isfinite(rows), _running_median(rows, 2, axis=0), np.nan)  # no further than it reached then
     px10 = [[int(round(10 * v)) for v in r[np.isfinite(r)]] if np.isfinite(r).any() else [] for r in smooth]
     if not any(px10):
         return

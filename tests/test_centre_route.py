@@ -107,3 +107,47 @@ def test_no_band_or_a_band_wider_than_a_tube_leaves_the_route_as_it_is():
         res = _res(route)
         learned.centre_route(res, prob, meta, Params())
         assert res["path"] == [list(map(float, q)) for q in route] and "bend" not in res
+
+
+def _band_centres_loop(prof, offs, min_p, max_width):
+    """The band search written out point by point (the reference the vectorised one must match)."""
+    out = np.full(len(prof), np.nan)
+    j0, n = int(np.argmin(np.abs(offs))), prof.shape[1]
+    for i, row in enumerate(prof):
+        j = j0
+        while True:
+            left = row[j - 1] if j > 0 else -np.inf
+            right = row[j + 1] if j < n - 1 else -np.inf
+            if max(left, right) <= row[j]:
+                break
+            j = j - 1 if left > right else j + 1
+        peak = float(row[j])
+        if peak < min_p:
+            continue
+        half = 0.5 * peak
+        a = b = j
+        while a > 0 and row[a - 1] >= half:
+            a -= 1
+        while b < n - 1 and row[b + 1] >= half:
+            b += 1
+        if a == 0 or b == n - 1:
+            continue
+        lo = offs[a - 1] + (half - row[a - 1]) / max(row[a] - row[a - 1], 1e-9) * (offs[a] - offs[a - 1])
+        hi = offs[b] + (row[b] - half) / max(row[b] - row[b + 1], 1e-9) * (offs[b + 1] - offs[b])
+        if hi - lo <= max_width:
+            out[i] = 0.5 * (lo + hi)
+    return out
+
+
+def test_the_band_search_matches_its_point_by_point_definition():
+    rng = np.random.default_rng(0)
+    offs = np.arange(-10, 10 + 1e-6, 0.25)
+    x = offs[None, :]
+    for _ in range(50):
+        n = 60
+        prof = sum(rng.uniform(0, 1, (n, 1)) * np.exp(-0.5 * ((x - rng.uniform(-10, 10, (n, 1))) / rng.uniform(1.5, 5, (n, 1))) ** 2)
+                   for _ in range(2)) + rng.normal(0, 0.03, (n, len(offs)))
+        prof = (np.round(np.clip(prof, 0, 1) * 250) / 250).astype(np.float32)  # quantised like the stored maps
+        want, got = _band_centres_loop(prof, offs, 0.35, 14.0), learned._band_centres(prof, offs, 0.35, 14.0)
+        assert np.array_equal(np.isnan(want), np.isnan(got))
+        assert np.allclose(want[np.isfinite(want)], got[np.isfinite(got)], atol=1e-6)
