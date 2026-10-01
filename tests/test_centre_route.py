@@ -151,3 +151,23 @@ def test_the_band_search_matches_its_point_by_point_definition():
         want, got = _band_centres_loop(prof, offs, 0.35, 14.0), learned._band_centres(prof, offs, 0.35, 14.0)
         assert np.array_equal(np.isnan(want), np.isnan(got))
         assert np.allclose(want[np.isfinite(want)], got[np.isfinite(got)], atol=1e-6)
+
+
+def test_a_route_is_cut_to_a_length_as_the_app_cuts_it():
+    from tubetracker.app.overlay import to_length
+    route = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (20.0, 10.0)]
+    for length in (0.0, 4.0, 10.0, 15.5, 30.0, 33.0, 60.0):
+        assert np.allclose(routes.cut(route, length), to_length(route, length))
+
+
+def test_a_tube_drawn_off_the_network_s_tube_is_flagged():
+    prob, meta = _prob(lambda b: ((80.0, 60.0), 0.0))
+    p = Params(centre_route=False)
+    on = _res([(40.0 + i, 60.0) for i in range(80)], L=[60.0] * NB)
+    on.update(status="emerged_within", flags=[], r=10.0, x=28.0, y=60.0)
+    learned.drawn_check(on, prob, meta, p)
+    assert not any(f.startswith("drawn_off_tube") for f in on["flags"]) and min(on["drawn_on_tube"]["share"]) > 0.9
+    off = _res([(40.0 + i, 75.0) for i in range(80)], L=[60.0] * NB)  # 15 px beside the band
+    off.update(status="emerged_within", flags=[], r=10.0, x=28.0, y=75.0)
+    learned.drawn_check(off, prob, meta, p)
+    assert any(f.startswith("drawn_off_tube:") for f in off["flags"])

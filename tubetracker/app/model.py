@@ -35,7 +35,8 @@ STALL_BINS = 15       # a tube that has not grown for this many bins before the 
 STALL_MIN_PX = 8.0    # ...if it is at least this long
 GROWTH_EPS = 0.25     # px per bin: less than this is standing still (as review.trace_confidence counts it)
 # the order a grain's reasons are listed in (the first one sets the time the check list shows it at)
-REASON_ORDER = ("lost", "no_grain", "unsure", "focus", "onset", "contact", "unfollowed", "coverage", "path", "short")
+REASON_ORDER = ("lost", "no_grain", "drawn", "unsure", "focus", "onset", "contact", "unfollowed", "coverage", "path",
+                "short")
 
 
 def by_bin(values: list, res: dict, fpb: int, n_bins: int) -> list:
@@ -109,6 +110,8 @@ FLAG_DETAIL = {
     "tip_continued": "The tube turned back along its grain; the reading followed it on.",
     "onset_lookback": "The onset was walked back to when the tube first showed at the exit.",
     "path_coverage": "The route explains little of the change round the grain: the tube may curl or be shared.",
+    "drawn_off_tube": "Most of the tube drawn then is not on the tube the network sees: the reading may have taken "
+                      "another tube or lost its own.",
 }
 
 
@@ -331,6 +334,9 @@ class RunData:
             add("lost", f"lost at {self.when(self.frame(s['lost']))}", FLAG_DETAIL["grain_lost_after"], s["lost"] - 1)
         if has("no_grain"):
             add("no_grain", "no grain rim", FLAG_DETAIL["no_grain"], self.ref_start)
+        for f in has("drawn_off_tube"):
+            fr = int(f.partition(":")[2] or 0)
+            add("drawn", f"drawn off the tube at {self.when(fr)}", FLAG_DETAIL["drawn_off_tube"], fr // self.fpb)
         if s["conf"] is not None and s["conf"] < UNSURE:
             add("unsure", "unsure length", f"The model's least sure reading of this tube ({100 * s['conf']:.0f}% "
                                            f"confidence), at {self.when(self.frame(s['unsure']))}.", s["unsure"])

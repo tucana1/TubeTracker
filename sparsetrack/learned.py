@@ -523,9 +523,14 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
     tips, tip_yx = [], []
     zone = gr + p.flood_halo + p.flood_start_band
     exit_len = np.zeros(n_bins)
+    reach = None  # with p.flood_speed_cap: the rim distance of the last tip; a tip may get only p.vmax_px further a bin
     for t in range(n_bins):  # tip = the farthest tube pixel claimed by then
         sel = tube & (t_in <= t) & np.isfinite(dist)
+        if p.flood_speed_cap and reach is not None:
+            sel &= dist <= reach + p.vmax_px
         y, x = np.unravel_index(int(np.argmax(np.where(sel, dist, -1.0))), dist.shape) if sel.any() else (centre, centre)
+        if sel.any():
+            reach = float(dist[y, x])
         if p.flood_from_exit and sel.any() and length[t] > 0:
             exit_len[t] = from_exit(centreline(sel, dist, (int(y), int(x)), centre, gr, p.flood_bridge + 0.5),
                                     centre, gr, zone)[1]
@@ -760,6 +765,51 @@ def centre_route(res: dict, prob: Renderer, meta: dict, p) -> None:
             k, n = moved(i, t, centred, nrm_c)
             tips[i] = np.round(np.asarray(t, float) + float(routes.offsets_along(s[k:k + 1], px10[i], step)[0]) * n,
                                2).tolist()
+
+
+def drawn_check(res: dict, prob: Renderer, meta: dict, p) -> None:
+    """Flag a reading whose drawn tube (as the app draws it: bent and turned as the tube lay then, cut to the
+    length, moved by the drift) lies mostly off the tube network's map at some bin, in place: every
+    ``p.drawn_every`` bins with a tube of at least 10 px, the share of it beyond the rim (and short of its last 2 px)
+    on P >= 0.5 then; under ``p.drawn_min_on`` at the worst bin -> flag ``drawn_off_tube:<frame>``. On the labelled
+    traces it flags 5 of 15 badly drawn ones on the sparse movie and 7 of 13 on movie 2, none of 75 well drawn ones
+    (1 Oct 2026). ``res["drawn_on_tube"]``: the checked frames and shares."""
+    from . import routes
+    path = res.get("path") or []
+    if not p.drawn_every or len(path) < 2 or not res.get("status", "").startswith("emerged"):
+        return
+    frames = np.asarray(res["length"]["frames"])
+    fpb = int(meta["frames_per_bin"])
+    until = res.get("observed_until_frame")
+    L = np.asarray(res["length"]["px"], float)
+    drift = np.asarray(res["drift"]["xy"], float) if res.get("drift") else np.zeros((len(frames), 2))
+    rot = np.asarray(res.get("rotation_deg") or [], float)
+    rot = rot if len(rot) == len(frames) else np.zeros(len(frames))
+    pivot = np.asarray(res["exit_xy"] if p.rot_pivot == "exit" and res.get("exit_xy") else [res["x"], res["y"]], float)
+    checked, shares = [], []
+    for i in range(0, len(frames), p.drawn_every):
+        if L[i] < 10.0 or (until is not None and frames[i] > until):
+            continue
+        th = math.radians(float(rot[i]))
+        turn = np.array([[math.cos(th), -math.sin(th)], [math.sin(th), math.cos(th)]])
+        drawn = (routes.cut(routes.bent(path, res.get("bend"), i), L[i]) - pivot) @ turn.T + pivot + drift[i]
+        pts, s = routes.resample(drawn, 1.0)
+        keep = (np.hypot(pts[:, 0] - res["x"] - drift[i][0], pts[:, 1] - res["y"] - drift[i][1]) > res["r"] + 3.0) & (
+            s < s[-1] - 2.0)
+        if keep.sum() < 4:
+            continue
+        b = int(frames[i]) // fpb
+        q = (pts[keep] + np.asarray(prob.shifts[b], float) - 0.5).astype(np.float32)
+        v = cv2.remap(np.asarray(prob.bins[b]), q[:, 0], q[:, 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT,
+                      borderValue=0)
+        checked.append(int(frames[i]))
+        shares.append(round(float(np.mean(v.ravel() >= 0.5 * P_SCALE)), 2))
+    if not checked:
+        return
+    res["drawn_on_tube"] = {"frames": checked, "share": shares}
+    k = int(np.argmin(shares))
+    if shares[k] < p.drawn_min_on:
+        res["flags"].append(f"drawn_off_tube:{checked[k]}")
 
 
 def with_onset(flood_res: dict, change_res: dict) -> dict:

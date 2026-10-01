@@ -130,9 +130,9 @@ def test_labelling_views_follow_the_tracker_and_a_review_keeps_the_analysis_fram
     info = label.follow_info("g001")
     assert info["lost"] == [] and info["lost_from"] is None and info["refound"]
     review = Bench(tmp_path, tmp_path / "labels.json", follow_mode="review")
-    # the analysis (Params defaults) loses the knocked grain and holds it where it was last seen
-    assert np.max(np.hypot(*review.follow("g001")[25:].T)) < 1.0
-    assert review.follow_info("g001")["lost_from"] == 20
+    # the analysis (Params defaults: re-finding on from 0.8.6) follows the knocked grain too
+    assert np.max(np.hypot(*(review.follow("g001")[25:] - [-26.0, 6.0]).T)) < 1.5
+    assert review.follow_info("g001")["lost_from"] is None
     with pytest.raises(ValueError):
         review.set_refind("g001", {"bin": 30, "x": 100.0, "y": 100.0})
     with pytest.raises(ValueError):

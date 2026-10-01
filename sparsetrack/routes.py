@@ -54,3 +54,20 @@ def bent(path, bend: dict | None, i: int) -> np.ndarray:
     if len(p) < 2 or not 0 <= i < len(rows) or not rows[i]:
         return p
     return p + offsets_along(arc(p), rows[i], float(bend["step_px"]))[:, None] * normals(p)
+
+
+def cut(path, length: float, max_extend: float = 5.0) -> np.ndarray:
+    """The route cut to ``length`` px of arc, or carried on along its last direction by at most ``max_extend`` px
+    (``tubetracker.app.overlay.to_length``)."""
+    p = np.asarray(path, float).reshape(-1, 2)
+    if len(p) < 2:
+        return p
+    s = arc(p)
+    if length <= s[-1]:
+        i = max(1, int(np.searchsorted(s, length)))
+        a = (length - s[i - 1]) / max(s[i] - s[i - 1], 1e-9)
+        return np.vstack([p[:i], p[i - 1] + a * (p[i] - p[i - 1])])
+    back = next((q for q in p[-2::-1] if np.hypot(*(p[-1] - q)) >= 3.0), p[0])
+    d = p[-1] - back
+    n = float(np.hypot(*d)) or 1.0
+    return np.vstack([p, p[-1] + d / n * min(length - s[-1], max_extend)])

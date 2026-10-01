@@ -144,16 +144,20 @@ class Params:
     # network's band across the tube (ld 3.6 -> 1.8 px from the traces, m2 2.7 -> 1.8). Lengths are not changed.
     centre_route: bool = True
     centre_late: int = 3         # the network's map averaged over the last bins the grain was seen, where it was then
-    centre_reach: float = 10.0   # px either side of the route searched for the band (a route on a wall is ~4.5 px
-                                 # from the middle of a band ~9.5 px wide)
+    centre_reach: float = 12.0   # px either side of the route searched for the band (a route on a wall is ~4.5 px
+                                 # from the middle of a band ~9.5 px wide; young tubes lie further off the final route)
     centre_min_p: float = 0.35   # a band peaking lower than this is not used (the route stays there)
     centre_max_width: float = 14.0  # a band wider than this is two tubes or a clump (not used)
     centre_smooth: int = 7       # route points the shifts are median-filtered over
-    centre_max_shift: float = 5.0
+    centre_max_shift: float = 8.0  # 0.8.6 (was 5): drawn tube within 2 px of the traces ld 88 -> 93%, m2 76 -> 80%
     centre_per_bin: bool = True  # also how the route lay at each bin (tubes bend and are pushed as they grow)
     centre_knot_px: float = 5.0  # ...kept every this many px along it
     centre_lengths: bool = False  # lengths measured along the centred route (not the wall the reader followed)
+    drawn_every: int = 10        # check the drawn tube against the network's map every this many bins (0 = off)
+    drawn_min_on: float = 0.5    # ...flag drawn_off_tube where less of it than this lies on the map
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
+    flood_speed_cap: bool = False  # a bin's tip at most vmax_px (the movie's growth cap) further than the last
+                                   # one: a moved tube taken as growth jumps 27-121 px in a bin (m2)
     # the flood's start and stop rules (learned.flood), settled on tubes_synth_v1's maps; options for other maps:
     flood_p: float = 0.5         # a pixel is tube where P >= this...
     flood_persist: int = 10      # ...and it arrives at the first bin from which it is tube in >= flood_frac of the
@@ -203,8 +207,10 @@ class Params:
     track_min_score: float = 0.5  # follow/auto: a match scoring below this is a missed bin...
     track_max_gap: int = 8       # ...and more missed bins in a row than this lose the grain
     track_tol_px: float = 4.0    # follow/auto: the phase track is kept where it is within this of the grain's track
-    track_refind: bool = False   # follow/auto: a grain the bank misses is searched for by its last look, turned
-                                 # (track.FollowConfig.refind: a knocked grain that jumps and turns is found again)
+    track_refind: bool = True    # follow/auto: a grain the bank misses is searched for by its last look, turned
+                                 # (track.FollowConfig.refind: a knocked grain that jumps and turns is found again;
+                                 # on from 0.8.6: m1 g027, g030, g056 followed to the end, no score changed on the
+                                 # three movies)
     track_recentre_px: float = 25.0  # a grain read in its own frame that moves further than this is cropped where it
                                      # is (a fixed crop warped that far brings in that much replicated border)
     lost_policy: str = "hold"    # a lost grain: "hold" its readings from the loss on (flag grain_lost_after:<frame>),
@@ -1685,6 +1691,9 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         if p.centre_route and prob is not None and len(res.get("path") or []) >= 2:
             from . import learned
             learned.centre_route(res, prob, meta, p)
+        if prob is not None:
+            from . import learned
+            learned.drawn_check(res, prob, meta, p)
         cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)
         results.append(res)
