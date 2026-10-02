@@ -472,6 +472,12 @@ class MainFrame(wx.Frame):
             self.show_start()
         word = {"done": "finished", "failed": "failed", "cancelled": "cancelled"}.get(job.state, job.state)
         self.status(f"Analysis of {job.name} {word}", 1)
+        if job.state in ("done", "failed") and self.IsShown() and not self.IsActive():  # said outside the window too
+            try:
+                wx.adv.NotificationMessage("TubeTracker", f"The analysis of {job.name} {word}.", self).Show()
+                self.RequestUserAttention()
+            except Exception:  # noqa: BLE001 - cosmetic
+                pass
 
     def _poll(self):
         st = self.jobs.status()

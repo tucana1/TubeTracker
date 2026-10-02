@@ -554,8 +554,11 @@ class SidePanel(wx.Panel):
         shown = g is not None
         self.grain_panel.Show(shown)
         self.overview.Show(not shown)
+        if self.book.GetPageText(0) != ("Grain" if shown else "Movie"):
+            self.book.SetPageText(0, "Grain" if shown else "Movie")
         width = page.GetClientSize()[0]
         if not shown:
+            self._zoomed_for = None  # the next grain chosen is framed afresh
             self._show_reasons(None, data, b)
             self.overview.update(width)
         if shown:
@@ -586,6 +589,9 @@ class SidePanel(wx.Panel):
                          "unobservable": "-"}.get(g["status"], "-")
             grown = g["status"] in EMERGED and not g["excluded"]
             self.stats["onset"].SetLabel(onset + ("  (checked)" if g["review"]["onset"] != "model" else ""))
+            frames = (f": not there at frame {int(g['onset_after']):,}, there at frame {int(g['onset_by']):,}"
+                      if g["onset_after"] is not None and g["onset_by"] is not None else "")
+            self.stats["onset"].SetToolTip(f"When the tube first showed{frames}")
             self.stats["final"].SetLabel(data.length_words(g["final"]) if grown else "-")
             rate = u.rate(g["rate"]) if grown and g["rate"] else None
             self.stats["rate"].SetLabel(f"{rate:.3g} {u.rate_unit}" if rate is not None else "-")
