@@ -153,3 +153,21 @@ def test_summary_and_warnings_are_short(data):
     assert s["n"] == 3 and s["germinated"] == 2 and s["lost"] == 1 and "T50" in s["line"]
     w = data.warnings()
     assert w and w[0]["text"].startswith("focus change at")
+
+
+def test_an_onset_within_one_minute_reads_as_that_minute_and_the_time_shown_reads_against_the_end(data):
+    # 2 s per frame: frames 2850 and 2851 are both at 95 min
+    assert data.when_range(2850, 2851) == "95 min"
+    assert data.time_of(10) == f"{frame(10) * 2 / 60:.0f} of {frame(39) * 2 / 60:.0f} min"
+    data.set_units({})
+    assert data.time_of(10) == f"frame {frame(10):,} of {frame(39):,}"
+
+
+def test_the_summary_says_which_grains_are_counted_and_a_grain_what_else_was_found(data):
+    grains = data.grains()
+    s = data.summary(grains, data.population(grains))
+    assert "counted" in s["line"] and "1 in clumps or at the edge" in s["detail"]
+    g3 = data.grain("g003")
+    assert any(n.startswith("moved ") for n in data.notes(g3))  # it drifted 12.5 px and was followed
+    unsure = [r for g in grains for r in g["check"] if r["code"] == "unsure"]
+    assert all("the model reads" in r["detail"] for r in unsure)

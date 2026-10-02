@@ -8,6 +8,7 @@ from . import theme
 from .charts import Plot
 from .overlay import EMERGED
 from .panels import bg
+from .runfolder import sample_name
 
 PALETTE = [(56, 189, 248), (244, 114, 182), (52, 211, 153), (251, 191, 36), (192, 132, 252), (251, 146, 60),
            (163, 230, 53), (248, 113, 113)]
@@ -63,7 +64,7 @@ class SetupDialog(wx.Dialog):
         grid.Add(wx.StaticText(self, label="Pixel size"), 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(row, 0)
         self.fields = {}
-        default_id = name.rsplit(".", 1)[0].strip()
+        default_id = sample_name(name)
         for key, lab, default in (("sample_id", "Sample ID", default_id), ("genotype", "Genotype", ""),
                                   ("replicate", "Replicate", ""), ("notes", "Notes", "")):
             ctrl = wx.TextCtrl(self, value=str(setup.get(key) if setup.get(key) is not None else default),
@@ -144,8 +145,9 @@ KEYS = (("Space", "Play / pause"), ("Left, Right", "Previous / next time (Shift:
         ("N, P", "Next / previous grain to check"), ("], [", "Next / previous grain"), ("C", "Movie, contrast, growth"),
         ("G", "Growth view on / off"), ("F", "Fit the field"), ("Z", "Zoom to the grain"), ("I", "Names on / off"),
         ("Enter", "Confirm the grain"), ("O", "Onset here"), ("Shift-O", "Never germinated"), ("T", "Set the tip"),
-        ("D", "Draw the tube (Enter saves)"), ("B", "Burst or gone here"), ("X", "Not a grain"), ("K", "Clump"),
-        ("U", "Back to the model's answer"), ("Cmd-Z", "Undo"), ("Esc", "Cancel the tool"))
+        ("D", "Draw the tube (Enter saves)"), ("B", "Burst or gone here"), ("X", "Not a grain (again: include)"),
+        ("K", "Clump"), ("U", "Back to the model's answer"), ("Cmd-Z", "Undo"),
+        ("Esc", "Cancel the tool, else back to the movie's numbers"), ("F1, ?", "Help"))
 
 
 class ShortcutsDialog(wx.Dialog):
@@ -170,8 +172,8 @@ class ShortcutsDialog(wx.Dialog):
 class ResultsFrame(wx.Frame):
     """One movie's numbers, germination curve, growth curves and per-grain table; Export writes them."""
 
-    COLS = (("Grain", 60), ("State", 150), ("Onset", 80), ("Final", 80), ("Growth", 90), ("Conf.", 60),
-            ("Checked", 90), ("In curve", 70))
+    COLS = (("Grain", 60), ("State", 150), ("Onset", 80), ("Final", 80), ("Growth", 90), ("Confidence", 80),
+            ("Checked", 90), ("Counted", 70))
 
     def __init__(self, parent, ctl):
         super().__init__(parent, title="Results", size=(1080, 820))
@@ -193,10 +195,16 @@ class ResultsFrame(wx.Frame):
         s.Add(plots, 0, wx.EXPAND | wx.ALL, 14)
         self.table = wx.ListCtrl(p, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         s.Add(self.table, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 14)
+        self.about = wx.StaticText(p, label="")
+        self.about.SetForegroundColour(theme.muted_fg())
+        s.Add(self.about, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 14)
         row = wx.BoxSizer(wx.HORIZONTAL)
         self.note = wx.StaticText(p, label="")
         self.note.SetForegroundColour(theme.muted_fg())
         row.Add(self.note, 1, wx.ALIGN_CENTER_VERTICAL)
+        self.show_folder = wx.Button(p, label="Show Folder")
+        self.show_folder.SetToolTip("Open the results folder in the Finder")
+        row.Add(self.show_folder, 0, wx.RIGHT, 8)
         export = wx.Button(p, label="Export")
         export.SetToolTip("Write the tables and figures to the movie's results folder")
         row.Add(export, 0)
@@ -205,6 +213,7 @@ class ResultsFrame(wx.Frame):
         self.rows = []
         self._sort = (None, 1)
         export.Bind(wx.EVT_BUTTON, lambda e: ctl.on_export())
+        self.show_folder.Bind(wx.EVT_BUTTON, lambda e: ctl.show_results_folder())
         self.table.Bind(wx.EVT_LIST_COL_CLICK, self._sort_by)
         self.table.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._open)
         self.grow.on_pick = self._pick_curve
@@ -255,7 +264,20 @@ class ResultsFrame(wx.Frame):
                                "excluded": "excluded"}[g["review"]["state"]], "yes" if in_curve else "no"))
         self.units = (tl, u.length_unit, u.rate_unit)
         self._fill()
-        self.note.SetLabel(str(d.folder.results))
+        about = [sm.get("detail") or "", "Confidence: the model's, where it is least sure. Checked: what a person "
+                                         "did with the grain."]
+        if not u.timed:
+            about.append("Give the movie's duration in Settings (Cmd-,) for times in minutes.")
+        if not u.scaled:
+            about.append("Give the pixel size in Settings (Cmd-,) for lengths in µm.")
+        self.about.SetLabel(" ".join(about))
+        self.about.Wrap(max(self.GetClientSize()[0] - 40, 400))
+        exists = d.folder.results.exists()
+        self.note.SetLabel("Exported to the movie's results folder" if exists else
+                           "Export writes the tables and figures to the movie's results folder")
+        self.note.SetToolTip(str(d.folder.results))
+        self.show_folder.Enable(exists)
+        self.Layout()
 
     def _fill(self):
         self.table.ClearAll()
@@ -295,8 +317,8 @@ class ResultsFrame(wx.Frame):
 class CompareFrame(wx.Frame):
     """Several analysed movies side by side: germination curves, growth rates, their numbers; Export writes them."""
 
-    COLS = (("Movie", 170), ("Genotype", 80), ("Rep.", 45), ("Grains", 55), ("Germinated", 80), ("T50", 70),
-            ("Growth", 110), ("Final length", 90), ("Lost", 45), ("Checked T50", 90))
+    COLS = (("Movie", 210), ("Genotype", 80), ("Rep.", 45), ("Grains", 55), ("Germinated", 80), ("T50", 110),
+            ("Growth", 150), ("Final length", 90), ("Lost", 45), ("Checked T50", 90))
 
     def __init__(self, parent, ctl, runs: list[dict]):
         super().__init__(parent, title="Compare Movies", size=(1180, 760))
@@ -360,9 +382,14 @@ class CompareFrame(wx.Frame):
             for c, v in enumerate(vals, start=1):
                 self.table.SetItem(i, c, v)
             self.table.SetItemTextColour(i, theme.colour(PALETTE[i % len(PALETTE)]))
-        timed = rows and all(r["timed"] for r in rows)
+        # one time axis and one rate axis: movies in other units (no duration or pixel size given) are left out
+        timed = any(r["timed"] for r in rows)
+        plotted = [i for i, r in enumerate(rows) if r["timed"] == timed]
+        rate_unit = rows[plotted[0]]["rate_unit"] if plotted else ""
+        rated = [i for i in plotted if rows[i]["rate_unit"] == rate_unit]
         series, dots = [], []
-        for i, r in enumerate(rows):
+        for i in plotted:
+            r = rows[i]
             c = PALETTE[i % len(PALETTE)]
             if r["curve"]["t"]:
                 series.append({"x": r["curve"]["t"], "y": r["curve"]["y"], "colour": c, "width": 2.0, "step": True})
@@ -374,14 +401,23 @@ class CompareFrame(wx.Frame):
         self.germ.set(series=series, dots=dots, yrange=(0, 1), xlabel="min" if timed else "frame",
                       ylabel="germinated", yfmt=lambda v: f"{100 * v:.0f}%")
         rdots, meds = [], []
-        for i, r in enumerate(rows):
+        for x, i in enumerate(rated):
+            r = rows[i]
             c = PALETTE[i % len(PALETTE)]
             for k, v in enumerate(v for v in r["rates"] if v is not None):
-                rdots.append((i + ((k * 37) % 21 - 10) / 50.0, v, c, 2.6))
+                rdots.append((x + ((k * 37) % 21 - 10) / 50.0, v, c, 2.6))
             if r["median_rate"] is not None:
-                meds.append({"x": [i - 0.3, i + 0.3], "y": [r["median_rate"]] * 2, "colour": (229, 235, 245),
+                meds.append({"x": [x - 0.3, x + 0.3], "y": [r["median_rate"]] * 2, "colour": (229, 235, 245),
                              "width": 2.4})
-        unit = rows[0]["rate_unit"] if rows else ""
-        self.rate.set(series=meds, dots=rdots, xrange=(-0.6, max(len(rows) - 0.4, 0.6)),
-                      categories=[r["sample_id"] or r["name"] for r in rows], ylabel=f"growth ({unit})")
-        self.note.SetLabel("Solid: model. Dashed: checked onsets. Dots: T50." if rows else "Tick movies to compare.")
+        self.rate.set(series=meds, dots=rdots, xrange=(-0.6, max(len(rated) - 0.4, 0.6)),
+                      categories=[rows[i]["sample_id"] or rows[i]["name"] for i in rated],
+                      ylabel=f"growth ({rate_unit})")
+        note = "Solid: model. Dashed: checked onsets. Dots: T50." if rows else "Tick movies to compare."
+        name = lambda i: rows[i]["sample_id"] or rows[i]["name"]
+        untimed = [name(i) for i in range(len(rows)) if i not in plotted]
+        unscaled = [name(i) for i in plotted if i not in rated]
+        if untimed:
+            note += f" Not plotted: {', '.join(untimed)} (no duration given: set it in that movie's Settings)."
+        if unscaled:
+            note += f" No growth plotted for {', '.join(unscaled)} (lengths in other units: check the pixel sizes)."
+        self.note.SetLabel(note)

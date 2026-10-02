@@ -113,3 +113,44 @@ def test_the_launcher_opens_the_window_on_an_analysis_folder(app, tmp_path):
     finally:
         frame.Destroy()
         _yield()
+
+
+def test_the_side_panel_shows_the_movie_until_a_grain_is_chosen_and_says_what_to_do(app, tmp_path, monkeypatch):
+    from tubetracker.app import window
+    from tubetracker.app.window import MainFrame
+
+    monkeypatch.setattr(window, "reveal", lambda path: None)
+    run = make_run(tmp_path / "runs" / "tiny", {"duration_s": 24000.0, "sample_id": "tiny"})
+    frame = MainFrame(tmp_path / "runs")
+    try:
+        frame.Show()
+        frame.open_path(str(run))
+        frame.reviewer.wait(30)
+        _yield()
+        frame.update_side()
+        side = frame.side
+        assert frame.sel is None and side.overview.IsShown() and not side.grain_panel.IsShown()
+        assert side.overview.vals["grains"].GetLabel().startswith("4") and "of" in frame.time_label.GetLabel()
+        frame.goto_check(1)
+        assert side.grain_panel.IsShown() and not side.overview.IsShown() and side._reason_rows
+        frame.set_tool("tip")
+        assert side.buttons["tip"].GetValue() and "tip" in frame.tool_hint()
+        frame.set_tool(None)
+        assert not side.buttons["tip"].GetValue()
+        frame.deselect()  # Esc
+        assert frame.sel is None and side.overview.IsShown()
+        frame.on_help()
+        _yield()
+        assert frame.help_win is not None and frame.help_win.IsShown()
+        frame.help_win.show("corrections")
+        frame.help_win.Close()
+        _yield()
+        assert frame.help_win is None
+        frame.on_results()
+        _yield()
+        assert not frame.results_win.show_folder.IsEnabled()
+        frame.on_export()
+        assert frame.results_win.show_folder.IsEnabled()
+    finally:
+        frame.Destroy()
+        _yield()

@@ -19,13 +19,16 @@ import wx
 import wx.adv
 import wx.svg
 
+from sparsetrack.render import GROWTH_LAG
+
 from . import theme
 from .canvas import FieldCanvas
 from .charts import Drawn, Timeline
 from .corrections import Reviewer, ReviewError
 from .dialogs import CompareFrame, ResultsFrame, SetupDialog, ShortcutsDialog
+from .guide import HelpFrame
 from .jobs import JobManager
-from .overlay import EMERGED, needs_check, pos_at, state_at
+from .overlay import EMERGED, needs_check, pos_at, state_at, tube_at
 from .panels import AnalysisPanel, SidePanel, StartPanel, bg
 from .runfolder import DEFAULT_RUNS_ROOT, REPO, MOVIE_SUFFIXES, RunFolder, find_runs, folder_for, is_movie, \
     load_prefs, looks_like_run, movie_frame_count, save_prefs
@@ -92,7 +95,7 @@ class MainFrame(wx.Frame):
         self.overlays = {"grains": True, "tubes": True, "names": True}
         self.tool, self.path_pts = None, []
         self.speed = 8
-        self.results_win = None
+        self.results_win = self.help_win = None
         self.pool = ThreadPoolExecutor(max_workers=2)
         self._pending_prefetch = set()
         self._icons = None
@@ -208,6 +211,7 @@ class MainFrame(wx.Frame):
         add(t, "legacy", "Legacy Manual Pipeline...", self.on_legacy)
         mb.Append(t, "Tools")
         h = wx.Menu()
+        add(h, "help", "TubeTracker Help\tF1", self.on_help)
         add(h, "keys", "Keyboard Shortcuts", lambda: ShortcutsDialog(self).ShowModal())
         about = h.Append(wx.ID_ABOUT, "About TubeTracker")
         self.Bind(wx.EVT_MENU, lambda e: self.on_about(), about)
@@ -238,7 +242,8 @@ class MainFrame(wx.Frame):
             rb.Bind(wx.EVT_RADIOBUTTON, lambda e, k=key: self.set_mode(k))
             bar.Add(rb, 0, wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, 10)
             self.mode_btns[key] = rb
-        self.mode_btns["g"].SetToolTip("This time minus 6 bins earlier: growing tips stand out")
+        self.mode_btns["n"].SetToolTip("The movie itself (each time step averages a stretch of frames)")
+        self.mode_btns["h"].SetToolTip("Stretched about the background grey so faint tubes show")
         bar.AddSpacer(12)
         self.ov_boxes = {}
         for key, name in (("grains", "Grains"), ("tubes", "Tubes"), ("names", "Names")):
@@ -249,6 +254,7 @@ class MainFrame(wx.Frame):
             self.ov_boxes[key] = cb
         bar.AddSpacer(12)
         fit = wx.Button(p, label="Fit", style=wx.BU_EXACTFIT)
+        fit.SetToolTip("Show the whole field (F)")
         fit.Bind(wx.EVT_BUTTON, lambda e: self.fit())
         bar.Add(fit, 0, wx.ALIGN_CENTER_VERTICAL)
         self.zoom_label = wx.StaticText(p, label="", size=(48, -1))
@@ -266,7 +272,7 @@ class MainFrame(wx.Frame):
         self.slider = wx.Slider(p, minValue=0, maxValue=1, value=0)
         self.slider.Bind(wx.EVT_SLIDER, lambda e: self.set_bin(self.slider.GetValue()))
         tr.Add(self.slider, 1, wx.LEFT | wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, 8)
-        self.time_label = wx.StaticText(p, label="", size=(170, -1))
+        self.time_label = wx.StaticText(p, label="", size=(190, -1))
         tr.Add(self.time_label, 0, wx.ALIGN_CENTER_VERTICAL)
         stage.Add(tr, 0, wx.EXPAND | wx.ALL, 6)
         self.timeline = Timeline(p, self)
@@ -496,9 +502,16 @@ class MainFrame(wx.Frame):
         self.title.SetLabel("  ".join(x for x in (name, s.get("genotype"), f"rep {s['replicate']}" if s.get("replicate")
                                                   else "") if x))
         self.line.SetLabel(self.summary["line"])
+        self.line.SetToolTip(self.summary.get("detail") or "")
         warns = d.warnings()
+        if not d.units.timed:
+            warns.append({"text": "times in frames", "detail": "Give the movie's duration in Settings (Cmd-,) to see "
+                                                               "times in minutes."})
         self.warn.SetLabel("  ·  ".join(w["text"] for w in warns))
         self.warn.SetToolTip("\n\n".join(w.get("detail") or w["text"] for w in warns))
+        lag = d.units.minutes(GROWTH_LAG * d.fpb)
+        self.mode_btns["g"].SetToolTip(f"What changed over the last {f'{lag:.0f} min' if lag else f'{GROWTH_LAG} time steps'}"
+                                       f": new tube shows dark, so growing tips stand out (G)")
         for key, rb in self.mode_btns.items():
             rb.SetValue(key == self.mode)
         self.update_side(lists=True)
@@ -523,7 +536,9 @@ class MainFrame(wx.Frame):
             return
         d = self.data
         self.slider.SetValue(self.b)
-        self.time_label.SetLabel(f"{d.when(d.frame(self.b))}   bin {self.b}/{d.n_bins - 1}")
+        self.time_label.SetLabel(d.time_of(self.b))
+        self.time_label.SetToolTip(f"Frame {d.frame(self.b):,}: time step {self.b + 1} of {d.n_bins}, each the average "
+                                   f"of {d.fpb} frames")
         self.zoom_label.SetLabel(f"{self.canvas.zoom_percent()}%")
         self.canvas.Refresh()
         self.timeline.Refresh()
@@ -602,21 +617,49 @@ class MainFrame(wx.Frame):
     def zoom_to_selected(self):
         g = self.selected()
         if g is not None:
-            self.canvas.centre_on(*pos_at(g, self.b))
+            self.canvas.centre_on(*self.framing(g))
+
+    def framing(self, g) -> tuple[float, float, float]:
+        """Where to look at a grain: the middle of it and its tube (as long as it gets), and how wide a field."""
+        last = (g["lost"] - 1) if g.get("lost") is not None else self.data.n_bins - 1
+        pts = []
+        for b in {self.b, max(last, 0)}:
+            x, y = pos_at(g, b)
+            pts += [(x - g["r"], y - g["r"]), (x + g["r"], y + g["r"]), *(tube_at(g, b) or [])]
+        xs, ys = [q[0] for q in pts], [q[1] for q in pts]
+        span = max(xs) - min(xs), max(ys) - min(ys)
+        return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, max(190.0, 1.3 * max(span))
 
     # ================================================================ selection, checks, events
     def select(self, gid, zoom: bool = False):
-        if self.data is None or gid not in self._by_id:
+        if self.data is None or (gid is not None and gid not in self._by_id):
             return
+        if gid is None:
+            return self.deselect()
         self.sel = gid
         if self.tool:
             self.set_tool(None)
         if zoom:
-            self.canvas.centre_on(*pos_at(self._by_id[gid], self.b))
+            self.canvas.centre_on(*self.framing(self._by_id[gid]))
         self.side.book.SetSelection(0)
         self.update_side(lists=False)
         self.side.update_lists(self.checks, self.events, self.data, self.sel)
         self.redraw()
+
+    def deselect(self):
+        """Back to the movie at a glance: no grain selected (Esc)."""
+        if self.data is None or self.sel is None:
+            return
+        self.sel = None
+        if self.tool:
+            self.set_tool(None)
+        self.update_side()
+        self.redraw()
+
+    def all_checked(self):
+        if not any(not c["done"] for c in self.checks):
+            self.deselect()
+            self.status("Every grain to check has been looked at. Export (Cmd-E) writes the results.")
 
     def goto_check(self, direction: int):
         items = self.checks
@@ -676,11 +719,20 @@ class MainFrame(wx.Frame):
         cursor = wx.Cursor(wx.CURSOR_CROSS if tool else wx.CURSOR_DEFAULT)
         self.canvas.SetCursor(cursor)
         self.side.view.SetCursor(cursor)
-        if tool == "tip":
-            self.status(f"Click the tip of {self.sel}'s tube (Esc cancels)")
-        elif tool == "path":
-            self.status(f"Click where {self.sel}'s tube leaves the grain, then along it to the tip; Enter saves")
+        self.side.show_tool(tool)
+        self.status(self.tool_hint())
         self.redraw()
+
+    def tool_hint(self) -> str:
+        """What to do with the tool in hand, in a line (shown over the movie)."""
+        if self.tool == "tip":
+            return f"Click the tip of {self.sel}'s tube.   Esc cancels"
+        if self.tool == "path":
+            n = len(self.path_pts)
+            what = (f"Click where {self.sel}'s tube leaves the grain" if not n else
+                    f"Click along the tube to its tip ({n} point{'s' if n > 1 else ''})")
+            return f"{what}.   Enter saves, Backspace takes a point back, Esc cancels"
+        return ""
 
     def on_click(self, ref, grain, zoomed: bool = False):
         if self.tool == "tip":
@@ -688,6 +740,7 @@ class MainFrame(wx.Frame):
             return self.correct("tip", b=self.b, x=ref[0], y=ref[1])
         if self.tool == "path":
             self.path_pts.append(list(ref))
+            self.status(self.tool_hint())
             return self.redraw()
         if grain is not None and grain["id"] != self.sel:
             self.select(grain["id"])
@@ -729,7 +782,7 @@ class MainFrame(wx.Frame):
         self.update_all()
         self.status(f"Saved: {done['message']}")
         if action == "confirm":
-            wx.CallLater(250, self.goto_check, 1)
+            wx.CallLater(250, self.goto_check if any(not c["done"] for c in self.checks) else self.all_checked, 1)
 
     def finish_path(self):
         pts = list(self.path_pts)
@@ -766,7 +819,26 @@ class MainFrame(wx.Frame):
         finally:
             wx.EndBusyCursor()
         self.status(f"Exported to {out['folder']}")
+        if self.results_win:
+            self.results_win.refresh()
         reveal(out["folder"])
+
+    def show_results_folder(self):
+        if self.data is not None and self.data.folder.results.exists():
+            reveal(self.data.folder.results)
+
+    def on_help(self, section: str | None = None):
+        if self.help_win is None:
+            self.help_win = HelpFrame(self, section)
+            self.help_win.Bind(wx.EVT_CLOSE, self._help_closed)
+        elif section:
+            self.help_win.show(section)
+        self.help_win.Show()
+        self.help_win.Raise()
+
+    def _help_closed(self, e):
+        self.help_win = None
+        e.Skip()
 
     def on_compare(self):
         runs = [f.listing() for f in find_runs(self.runs_root)]
@@ -808,14 +880,16 @@ class MainFrame(wx.Frame):
     # ================================================================ keys, status, closing
     def _on_key(self, e):
         focus = wx.Window.FindFocus()
-        if (self.data is None or not self.movie.IsShown() or e.CmdDown() or e.AltDown()
-                or isinstance(focus, (wx.TextCtrl, wx.SpinCtrl, wx.ComboBox))):
+        code, shift = e.GetKeyCode(), e.ShiftDown()
+        typing = isinstance(focus, (wx.TextCtrl, wx.SpinCtrl, wx.ComboBox))
+        if not typing and not e.CmdDown() and (code == wx.WXK_F1 or code == ord("?") or (code == ord("/") and shift)):
+            return self.on_help()
+        if self.data is None or not self.movie.IsShown() or e.CmdDown() or e.AltDown() or typing:
             e.Skip()
             return
-        code, shift = e.GetKeyCode(), e.ShiftDown()
         in_list = isinstance(focus, (wx.ListCtrl, wx.Slider, wx.Choice))
         if code == wx.WXK_ESCAPE:
-            return self.set_tool(None) if self.tool else None
+            return self.set_tool(None) if self.tool else self.deselect()
         if code in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
             if self.tool == "path":
                 return self.finish_path()
@@ -823,6 +897,7 @@ class MainFrame(wx.Frame):
                 return self.on_action("confirm")
         if code == wx.WXK_BACK and self.tool == "path" and self.path_pts:
             self.path_pts.pop()
+            self.status(self.tool_hint())
             return self.redraw()
         if not in_list:
             step = 10 if shift else 1

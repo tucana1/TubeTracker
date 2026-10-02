@@ -235,9 +235,12 @@ class GrowthCurve(Drawn):
     PAD = (38, 8, 8, 18)  # left, right, top, bottom
 
     def __init__(self, parent, ctl):
-        super().__init__(parent, size=(-1, 118))
+        super().__init__(parent, size=(-1, 104))
         self.ctl = ctl
-        self.SetMinSize((200, 118))
+        self.SetMinSize((200, 104))
+        self.SetToolTip("The tube's length over time: pink as shown, dashed grey the model's before your corrections, "
+                        "white dots the lengths you gave, green dashed the onset, blue the time shown. Click to go to "
+                        "a time.")
         self.Bind(wx.EVT_LEFT_DOWN, self.on_click)
 
     def draw(self, gc, w, h):
@@ -256,6 +259,7 @@ class GrowthCurve(Drawn):
             self.line(gc, l, y, w - r, y, theme.GRID)
             self.text(gc, fmt_tick(tick), l - 5, y, align="right", size=8.5)
         self.text(gc, u.length_unit, 2, t + 4, size=8.5)
+        self.text(gc, "min" if u.timed else "frame", 2, h - 7, size=8.5)
         t_end = u.time(ctl.data.frame(nb - 1))
         for tick in nice_ticks(0, t_end, 4):
             frame = tick * 60 / u.s_per_frame if u.timed else tick

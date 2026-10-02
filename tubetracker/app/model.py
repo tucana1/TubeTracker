@@ -160,7 +160,16 @@ class RunData:
         if after is None:
             return f"by {self.when(by)}"
         a, b = self.units.minutes(after), self.units.minutes(by)
-        return f"{a:.0f}-{b:.0f} min" if a is not None else f"frame {int(after)}-{int(by)}"
+        if a is None:
+            return f"frame {int(after)}-{int(by)}"
+        return f"{b:.0f} min" if round(a) == round(b) else f"{a:.0f}-{b:.0f} min"
+
+    def time_of(self, b: int) -> str:
+        """Where bin ``b`` is in the movie, in words: ``37 of 120 min`` (``frame 16,350 of 52,350``)."""
+        m, end = self.units.minutes(self.frame(b)), self.units.minutes(self.frame(self.n_bins - 1))
+        if m is not None:
+            return f"{m:.0f} of {end:.0f} min"
+        return f"frame {self.frame(b):,} of {self.frame(self.n_bins - 1):,}"
 
     def length_words(self, px: float | None) -> str:
         if px is None:
@@ -350,8 +359,10 @@ class RunData:
             fr = int(f.partition(":")[2] or 0)
             add("drawn", f"drawn off the tube at {self.when(fr)}", FLAG_DETAIL["drawn_off_tube"], fr // self.fpb)
         if s["conf"] is not None and s["conf"] < UNSURE:
-            add("unsure", "unsure length", f"The model's least sure reading of this tube ({100 * s['conf']:.0f}% "
-                                           f"confidence), at {self.when(self.frame(s['unsure']))}.", s["unsure"])
+            Lu = float(s["L"][s["unsure"]])
+            reading = f"reads {self.length_words(Lu)}" if Lu >= 2.0 else "reads a tube too short to measure"
+            add("unsure", "unsure length", f"At {self.when(self.frame(s['unsure']))} the model {reading}: its least sure "
+                                           f"reading of this tube ({100 * s['conf']:.0f}% confidence).", s["unsure"])
         if has("onset_at_focus_change"):
             add("focus", "onset at focus change", FLAG_DETAIL["onset_at_focus_change"], onset_bin)
         for f in has("onset_moved_to_front", "onset_from_front", "settled_from_bin"):
@@ -372,6 +383,26 @@ class RunData:
                 seen.add(r["text"])
                 uniq.append(r)
         return uniq
+
+    def notes(self, g: dict) -> list[str]:
+        """What else the analysis found about a grain, as short phrases (its reasons to check aside)."""
+        out = []
+        shown = {r["text"] for r in g.get("check") or []}
+        for f in g["flags"]:
+            name, _, arg = f.partition(":")
+            if name == "tip_continued":
+                out.append(f"tube turns back along the grain (followed {arg.replace('px', '')} px on)")
+            elif name == "tube_at_frame_edge":
+                out.append("tube reaches the edge of the field")
+            elif name == "second_attached_component" and flag_phrase(f) not in shown:
+                out.append("a second change region touches it")
+        d = np.asarray(g["drift"] or [[0.0, 0.0]], float)
+        moved = float(np.max(np.hypot(*(d - d[0]).T))) if len(d) else 0.0
+        if moved >= 3.0:
+            out.append(f"moved {self.length_words(moved)} and was followed")
+        if g["lost"] is not None and g["lost_why"] == "frame":
+            out.append("lost: it left the field")
+        return out
 
     # ---- the whole movie -------------------------------------------------------------------------------
     def grains(self) -> list[dict]:
@@ -457,17 +488,37 @@ class RunData:
         u = self.units
         rate = float(np.median(rates)) if rates else None
         lost = sum(1 for g in iso if g["lost"] is not None)
-        parts = [f"{len(iso)} grains", f"{len(germ)} germinated ({100 * len(germ) / max(len(iso), 1):.0f}%)"]
+        share = population.get("germinated_share")  # the germination curve's end (grains lost before germinating
+        share = len(germ) / max(len(iso), 1) if share is None else share  # count until they were lost)
+        parts = [f"{len(iso)} grains" + (" counted" if len(iso) < len(grains) else ""),
+                 f"{len(germ)} germinated ({100 * share:.0f}%)"]
         if population.get("t50_frame") is not None:
             parts.append(f"T50 {self.when(population['t50_frame'])}")
         if rate is not None:
             parts.append(f"growth {u.rate(rate):.3g} {u.rate_unit}")
         if lost:
             parts.append(f"{lost} lost")
-        return {"n": len(iso), "germinated": len(germ), "t50_frame": population.get("t50_frame"),
+        live = [g for g in grains if not g["excluded"]]
+        apart = sum(1 for g in live if not g["isolated"])
+        unread = sum(1 for g in live if g["isolated"] and g["status"] == "unobservable")
+        left_out = [f"{apart} in clumps or at the edge" if apart else "",
+                    f"{unread} not readable" if unread else "",
+                    f"{len(grains) - len(live)} excluded" if len(live) < len(grains) else ""]
+        detail = (f"Counted: the {len(iso)} grains on their own (not in a clump or at the edge of the field), readable "
+                  f"and not excluded. The germination numbers, the curve and T50 are of these.")
+        if any(left_out):
+            detail += f" Not counted: {', '.join(x for x in left_out if x)}."
+        early = (population.get("counts") or {}).get("lost_before") or 0
+        if early:
+            detail += (f" The share germinated is where the germination curve ends: the {early} grain"
+                       f"{'s' if early > 1 else ''} lost before germinating count only until lost.")
+        if rate is not None:
+            detail += (" Growth: the median over the tubes of the length each gained between reaching 10% and 90% of "
+                       "its final length, over that time.")
+        return {"n": len(iso), "germinated": len(germ), "share": share, "t50_frame": population.get("t50_frame"),
                 "median_rate": rate, "median_final": float(np.median(finals)) if finals else None, "tubes": len(rates),
                 "lost": lost, "reviewed": sum(1 for g in grains if g["review"]["state"] != "model"),
-                "grains": len(grains), "line": "  ·  ".join(parts)}
+                "grains": len(grains), "line": "  ·  ".join(parts), "detail": detail}
 
     def warnings(self) -> list[dict]:
         """Movie-level problems as short phrases (with the sentence as detail)."""

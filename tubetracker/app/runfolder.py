@@ -42,6 +42,14 @@ def is_movie(path: str | Path) -> bool:
     return Path(path).suffix.lower() in MOVIE_SUFFIXES
 
 
+def sample_name(movie_name: str) -> str:
+    """A movie's file name without its movie suffixes (``a.mp4 .mp4`` -> ``a``): the sample ID it starts with."""
+    name = (movie_name or "").strip()
+    while Path(name).suffix.lower() in MOVIE_SUFFIXES and Path(name).stem.strip():
+        name = Path(name).stem.strip()
+    return name
+
+
 @dataclass(frozen=True)
 class RunFolder:
     root: Path

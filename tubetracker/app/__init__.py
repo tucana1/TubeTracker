@@ -9,5 +9,5 @@ folder and its setup), ``model`` (an analysis as the window shows it: grains, tu
 ``overlay`` (where to draw a grain and its tube at a time), ``corrections`` (fixes saved to the review labels file
 through the labelling tool's own store), ``imaging`` (frames and close-ups as 8-bit images), ``jobs`` / ``worker``
 (the analysis in a child process) and ``exports`` (tables and figures, several movies side by side). The window:
-``window``, ``panels``, ``canvas``, ``charts``, ``dialogs``, ``theme``.
+``window``, ``panels``, ``canvas``, ``charts``, ``dialogs``, ``guide`` (the help window), ``theme``.
 """

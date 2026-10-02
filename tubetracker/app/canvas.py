@@ -69,6 +69,17 @@ def label(gc, text, x, y, rgb=(241, 245, 249), bold=False, size=10.5):
     gc.DrawText(text, x, y)
 
 
+def banner(gc, text, w):
+    """A line of instructions across the top of a view (what to click with the tool in hand)."""
+    gc.SetFont(theme.font(12.5, bold=True), theme.colour((241, 245, 249)))
+    tw, th = gc.GetTextExtent(text)[:2]
+    x, y = max((w - tw) / 2, 16.0), 14.0
+    gc.SetPen(theme.pen(theme.DRAW, 1.5))
+    gc.SetBrush(wx.Brush(wx.Colour(5, 8, 15, 220)))
+    gc.DrawRoundedRectangle(x - 12, y - 7, tw + 24, th + 14, 7)
+    gc.DrawText(text, x, y)
+
+
 def polyline(gc, pts):
     path = gc.CreatePath()
     for i, (x, y) in enumerate(pts):
@@ -228,6 +239,8 @@ class FieldCanvas(wx.Panel):
             draw_grains(gc, ctl, self.to_c, self.view[0], w, h)
             if ctl.tool == "path" and ctl.path_pts:
                 draw_path_tool(gc, [self.to_c(*p) for p in ctl.path_pts])
+            if ctl.tool:
+                banner(gc, ctl.tool_hint(), w)
         except Exception as exc:  # noqa: BLE001 - a drawing error must not stop the window
             ctl.status(f"Drawing failed: {exc}")
 
@@ -320,6 +333,7 @@ class GrainView(wx.Panel):
         super().__init__(parent, size=(size, size), style=wx.FULL_REPAINT_ON_RESIZE)
         self.ctl = ctl
         self.zoom_index = 0
+        self.aim = (0.0, 0.0)  # where to look from the grain's centre (towards its tube), kept as it moves
         self.SetBackgroundStyle(wx.BG_STYLE_PAINT)
         self.SetBackgroundColour(theme.colour(theme.CANVAS_BG))
         self.SetMinSize((size, size))
@@ -334,6 +348,8 @@ class GrainView(wx.Panel):
         w = self.GetClientSize()[0]
         half = self.HALVES[self.zoom_index]
         x, y = pos_at(g, self.ctl.b)
+        room = max(half - g["r"] - 4.0, 0.0)  # the grain stays in view
+        x, y = x + float(np.clip(self.aim[0], -room, room)), y + float(np.clip(self.aim[1], -room, room))
         cx, cy = round(x * 2) / 2, round(y * 2) / 2
         return {"half": half, "cx": cx, "cy": cy, "z": w / (2 * half), "w": w}
 
@@ -390,3 +406,15 @@ class GrainView(wx.Panel):
     def set_zoom(self, i):
         self.zoom_index = int(np.clip(i, 0, len(self.HALVES) - 1))
         self.Refresh()
+
+    def fit(self, g: dict, last: int) -> int:
+        """Aim at a grain and its tube at its longest (``last``) and pick the closest zoom that shows both; returns
+        the zoom picked."""
+        x, y = pos_at(g, last)
+        rel = [(px - x, py - y) for px, py in (tube_at(g, last) or [])] + [(-g["r"], -g["r"]), (g["r"], g["r"])]
+        xs, ys = [q[0] for q in rel], [q[1] for q in rel]
+        self.aim = ((min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2)
+        need = max(max(xs) - min(xs), max(ys) - min(ys)) / 2 + 6.0
+        i = next((k for k, half in enumerate(self.HALVES) if need <= half), len(self.HALVES) - 1)
+        self.set_zoom(i)
+        return i
