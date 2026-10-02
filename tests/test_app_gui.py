@@ -173,6 +173,10 @@ def test_the_side_panel_shows_the_movie_until_a_grain_is_chosen_and_says_what_to
         cmp = CompareFrame(frame, frame, [{"folder": str(run), "analysed": True, "sample_id": "tiny", "movie": "tiny",
                                            "genotype": "", "replicate": ""}])
         assert cmp.table.GetItemCount() == 1 and cmp.table.GetItemText(0, 9).endswith("of 4")  # checked, as shown
+        frame.on_export_compare(cmp.chosen(), [cmp._rows[f] for f in cmp.chosen()])  # written as shown
+        lines = (tmp_path / "runs" / "summary" / "summary.csv").read_text().splitlines()
+        assert lines[0].startswith("movie,sample_id") and lines[1].startswith("tiny,tiny")
+        assert (tmp_path / "runs" / "summary" / "summary.png").stat().st_size > 1000
         cmp.Destroy()
     finally:
         frame.Destroy()

@@ -10,8 +10,7 @@ from .overlay import EMERGED
 from .panels import bg
 from .runfolder import sample_name
 
-PALETTE = [(56, 189, 248), (244, 114, 182), (52, 211, 153), (251, 191, 36), (192, 132, 252), (251, 146, 60),
-           (163, 230, 53), (248, 113, 113)]
+PALETTE = theme.PALETTE
 
 
 def fit_columns(table: wx.ListCtrl, least: int = 50) -> None:
@@ -94,7 +93,7 @@ class SetupDialog(wx.Dialog):
         self.spf = wx.TextCtrl(pane, value="" if not spf else f"{spf:g}", size=(80, -1))
         r2 = wx.BoxSizer(wx.HORIZONTAL)
         r2.Add(self.spf, 0)
-        r2.Add(wx.StaticText(pane, label="s per frame (instead of the duration)"), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 5)
+        r2.Add(wx.StaticText(pane, label="s per frame (instead of the real time)"), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 5)
         ps.Add(wx.StaticText(pane, label="Frame interval"), 0, wx.ALIGN_CENTER_VERTICAL)
         ps.Add(r2, 0)
         self.flat = wx.CheckBox(pane, label="Even out uneven illumination before finding grains" +
@@ -284,7 +283,7 @@ class ResultsFrame(wx.Frame):
         about = [sm.get("detail") or "", "Confidence: the model's, where it is least sure. Checked: what a person "
                                          "did with the grain."]
         if not u.timed:
-            about.append("Give the movie's duration in Settings (Cmd-,) for times in minutes.")
+            about.append("Give the real time the recording took in Settings (Cmd-,) for times in minutes.")
         if not u.scaled:
             about.append("Give the pixel size in Settings (Cmd-,) for lengths in µm.")
         self.about.SetLabel(" ".join(about))
@@ -343,7 +342,7 @@ class CompareFrame(wx.Frame):
         self.ctl = ctl
         self.SetIcons(ctl.icons())
         self.runs = [r for r in runs if r["analysed"]]
-        self._rows = {}  # folder -> its row (read once: a movie's numbers take a moment)
+        self._rows, self._stamps = {}, {}  # folder -> its row, and when its analysis and checks last changed
         p = wx.Panel(self)
         bg(p)
         s = wx.BoxSizer(wx.HORIZONTAL)
@@ -354,8 +353,7 @@ class CompareFrame(wx.Frame):
             self.pick.Check(i)
         left.Add(self.pick, 1, wx.EXPAND)
         export = wx.Button(p, label="Export")
-        export.SetToolTip("Write summary.csv and summary.png (the model's numbers and the checked onsets) to the runs "
-                          "folder's summary folder")
+        export.SetToolTip("Write summary.csv and summary.png, as shown here, to the runs folder's summary folder")
         left.Add(export, 0, wx.EXPAND | wx.TOP, 8)
         s.Add(left, 0, wx.EXPAND | wx.ALL, 14)
         right = wx.BoxSizer(wx.VERTICAL)
@@ -375,7 +373,8 @@ class CompareFrame(wx.Frame):
         s.Add(right, 1, wx.EXPAND | wx.TOP | wx.RIGHT | wx.BOTTOM, 14)
         p.SetSizer(s)
         self.pick.Bind(wx.EVT_CHECKLISTBOX, lambda e: self.refresh())
-        export.Bind(wx.EVT_BUTTON, lambda e: ctl.on_export_compare(self.chosen()))
+        self.Bind(wx.EVT_ACTIVATE, lambda e: (self.refresh() if e.GetActive() else None, e.Skip()))
+        export.Bind(wx.EVT_BUTTON, lambda e: ctl.on_export_compare(self.chosen(), [self._rows[f] for f in self.chosen()]))
         self.refresh()
 
     @staticmethod
@@ -386,13 +385,21 @@ class CompareFrame(wx.Frame):
     def chosen(self) -> list[str]:
         return [self.runs[i]["folder"] for i in self.pick.GetCheckedItems()]
 
+    @staticmethod
+    def _stamp(folder: str) -> tuple:
+        from .runfolder import RunFolder
+        f = RunFolder(folder)
+        return tuple(p.stat().st_mtime if p.exists() else 0.0 for p in (f.predictions, f.review_labels, f.setup_path))
+
     def refresh(self):
         folders = self.chosen()
-        todo = [f for f in folders if f not in self._rows]
+        stamps = {f: self._stamp(f) for f in folders}  # checks made meanwhile show when the window comes back
+        todo = [f for f in folders if f not in self._rows or self._stamps.get(f) != stamps[f]]
         if todo:
             wx.BeginBusyCursor()
             try:
                 self._rows.update(zip(todo, self.ctl.compare_rows(todo)))
+                self._stamps.update({f: stamps[f] for f in todo})
             finally:
                 wx.EndBusyCursor()
         rows = [self._rows[f] for f in folders]
@@ -408,8 +415,9 @@ class CompareFrame(wx.Frame):
                     str(r["lost"]), f"{r['checked']} of {r['all']}")
             for c, v in enumerate(vals, start=1):
                 self.table.SetItem(i, c, v)
-            self.table.SetItemTextColour(i, theme.colour(PALETTE[i % len(PALETTE)]))
+            self.table.SetItemTextColour(i, theme.colour(theme.readable(PALETTE[i % len(PALETTE)])))
         fit_columns(self.table)
+        self.table.SetColumnWidth(0, min(self.table.GetColumnWidth(0), 220))
         # one time axis and one rate axis: movies in other units (no duration or pixel size given) are left out
         timed = any(r["timed"] for r in rows)
         plotted = [i for i, r in enumerate(rows) if r["timed"] == timed]
@@ -443,7 +451,9 @@ class CompareFrame(wx.Frame):
         untimed = [name(i) for i in range(len(rows)) if i not in plotted]
         unscaled = [name(i) for i in plotted if i not in rated]
         if untimed:
-            note += f" Not plotted: {', '.join(untimed)} (no duration given: set it in that movie's Settings)."
+            note += f" Not plotted: {', '.join(untimed)} (no real time given: set it in that movie's Settings)."
         if unscaled:
             note += f" No growth plotted for {', '.join(unscaled)} (lengths in other units: check the pixel sizes)."
         self.note.SetLabel(note)
+        self.note.Wrap(max(self.GetClientSize()[0] - 300, 400))
+        self.Layout()

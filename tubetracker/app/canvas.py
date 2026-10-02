@@ -266,7 +266,9 @@ class FieldCanvas(wx.Panel):
         gc.DrawBitmap(to_bitmap(small), dx, dy, dw, dh)
 
     # ---- mouse ------------------------------------------------------------------------------------------
-    def grain_at(self, cx, cy):
+    def grain_at(self, cx, cy, pad_px: float = 8.0):
+        """The grain at a point of the canvas: within its radius and ``pad_px`` screen pixels (at least 6 px of the
+        field)."""
         x, y = self.to_ref(cx, cy)
         best, bd = None, 1e9
         for g in self.ctl.grains:
@@ -274,7 +276,7 @@ class FieldCanvas(wx.Panel):
             d = math.hypot(gx - x, gy - y)
             if d < bd:
                 best, bd = g, d
-        return best if best is not None and bd <= best["r"] + max(6.0, 8.0 / self.view[0]) else None
+        return best if best is not None and bd <= best["r"] + max(6.0, pad_px / self.view[0]) else None
 
     def on_down(self, e):
         self.SetFocus()
@@ -313,7 +315,8 @@ class FieldCanvas(wx.Panel):
         if self.view is None:
             return
         ref = self.to_ref(e.GetX(), e.GetY())
-        self.ctl.on_click(ref, self.grain_at(e.GetX(), e.GetY()))
+        self.ctl.on_click(ref, self.grain_at(e.GetX(), e.GetY()),
+                          empty=self.grain_at(e.GetX(), e.GetY(), pad_px=30.0) is None)
 
     def on_dclick(self, e):
         g = self.grain_at(e.GetX(), e.GetY())

@@ -16,7 +16,7 @@ def _hex(rgb) -> str:
 
 
 def _swatch(rgb, word: str) -> str:
-    return f'<font color="{_hex(rgb)}"><b>{word}</b></font>'
+    return f'<font color="{_hex(theme.readable(rgb))}"><b>{word}</b></font>'
 
 
 def page_html(fg, bg, accent) -> str:
@@ -155,8 +155,8 @@ count until they were lost.</li>
 history (long tubes and tubes still growing are more often right; a reading that stood still for long is
 suspect). It orders the checks; it does not make checking safe to skip.</li>
 </ul>
-<p>Times are in minutes once the movie's duration is given (else in frames); lengths in µm once the pixel size is
-given (else in pixels).</p>
+<p>Times are in minutes once the real time the recording took is given (else in frames); lengths in µm once the
+pixel size is given (else in pixels).</p>
 
 <a name="files"></a><h3>Files</h3>
 <p>Each movie has a folder of its own (File &gt; Open Analysis Folder shows them):</p>
@@ -167,8 +167,8 @@ the model elsewhere.</li>
 <li><b>review</b>: your corrections.</li>
 <li><b>analysis</b>: the model's own readings and tables.</li>
 </ul>
-<p><b>Compare Movies</b> (File menu) puts several analysed movies side by side and exports summary.csv and
-summary.png. <b>Analyse Again</b> (Movie menu) runs the analysis anew; the current one and its checks are kept in
+<p><b>Compare Movies</b> (File menu) puts several analysed movies side by side, each as the app shows it, and its
+Export writes the same table and curves as summary.csv and summary.png. <b>Analyse Again</b> (Movie menu) runs the analysis anew; the current one and its checks are kept in
 the folder's <i>earlier</i> folder.</p>
 
 <a name="keys"></a><h3>Keys</h3>
@@ -191,7 +191,7 @@ class HelpFrame(wx.Frame):
         self.html.SetBackgroundColour(bg)
         self.html.SetStandardFonts(theme.font().GetPointSize() + 1)
         self.html.SetPage(page_html(fg.GetAsString(wx.C2S_HTML_SYNTAX), bg.GetAsString(wx.C2S_HTML_SYNTAX),
-                                    _hex(theme.SELECTED)))
+                                    _hex(theme.readable(theme.SELECTED))))
         s = wx.BoxSizer(wx.VERTICAL)
         s.Add(self.html, 1, wx.EXPAND)
         self.SetSizer(s)

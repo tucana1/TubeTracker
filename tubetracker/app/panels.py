@@ -71,7 +71,8 @@ class StartPanel(wx.Panel):
         outer.Add(self.hint, 0, wx.LEFT | wx.TOP, 24)
         lab = wx.StaticText(self, label="Movies")
         lab.SetFont(theme.font(13, bold=True))
-        outer.Add(lab, 0, wx.LEFT | wx.TOP, 18)
+        outer.AddSpacer(18)
+        outer.Add(lab, 0, wx.LEFT, 24)
         self.list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
         for i, (name, width) in enumerate(self.COLS):
             self.list.InsertColumn(i, name, width=width)
@@ -198,7 +199,7 @@ class AnalysisPanel(wx.Panel):
             text = {"done": "done", "skipped": "already done", "running": "..."}.get(p["state"], p["state"]) if p else ""
             if p and p["state"] == "running" and job["state"] in ("failed", "cancelled"):
                 text = job["state"]
-            if p and p["state"] == "running" and job["n"]:
+            if p and p["state"] == "running" and job["n"] and job["state"] == "running":
                 text = f"{job['k']} of {job['n']}"
             state.SetLabel(text)
             now = bool(p) and p["state"] == "running"
@@ -378,6 +379,7 @@ class SidePanel(wx.Panel):
         self.checks.Bind(wx.EVT_LIST_ITEM_SELECTED,
                          lambda e: None if self._filling else wx.CallAfter(ctl.open_check, e.GetIndex()))
         self.checks.Bind(wx.EVT_MOTION, self._check_tip)
+        self.events.Bind(wx.EVT_SIZE, lambda e: (self._fit_events(), e.Skip()))
         self._check_rows, self._tip_row = [], None
         self.events.Bind(wx.EVT_LIST_ITEM_SELECTED,
                          lambda e: None if self._filling else wx.CallAfter(ctl.goto_event_index, e.GetIndex()))
@@ -396,17 +398,17 @@ class SidePanel(wx.Panel):
         head = wx.BoxSizer(wx.HORIZONTAL)
         self.gid = wx.StaticText(p, label="")
         self.gid.SetFont(theme.font(17, bold=True))
-        head.Add(self.gid, 0, wx.ALIGN_BOTTOM)
-        self.gstate = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
-        self.gstate.SetMinSize((60, -1))
-        self.gstate.SetForegroundColour(theme.muted_fg())
-        head.Add(self.gstate, 1, wx.LEFT | wx.ALIGN_BOTTOM, 10)
+        head.Add(self.gid, 1, wx.ALIGN_CENTER_VERTICAL)
         self.back = wx.Button(p, label="Movie (Esc)", style=wx.BU_EXACTFIT)
         self.back.SetWindowVariant(wx.WINDOW_VARIANT_SMALL)
         self.back.SetToolTip("Back to the movie's numbers (or click an empty place on the movie)")
         self.back.Bind(wx.EVT_BUTTON, lambda e: self.ctl.deselect())
         head.Add(self.back, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 6)
         s.Add(head, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
+        self.gstate = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
+        self.gstate.SetMinSize((60, -1))
+        self.gstate.SetForegroundColour(theme.muted_fg())
+        s.Add(self.gstate, 0, wx.EXPAND | wx.LEFT | wx.RIGHT, 10)
         self.reasons = wx.BoxSizer(wx.VERTICAL)  # why to check it: a link to the time and a sentence, each
         self._reasons_key, self._reason_rows, self._active = None, [], None
         s.Add(self.reasons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
@@ -463,7 +465,8 @@ class SidePanel(wx.Panel):
             lab = wx.StaticText(p, label=name)
             lab.SetForegroundColour(theme.muted_fg())
             lab.SetToolTip(tips[key])
-            val = wx.StaticText(p, label="")
+            val = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
+            val.SetMinSize((40, -1))
             val.SetToolTip(tips[key])
             stats.Add(lab, 0)
             stats.Add(val, 0, wx.EXPAND)
@@ -494,6 +497,12 @@ class SidePanel(wx.Panel):
         self.zoom.SetSelection(self.view.fit(g, max(last, 0)))
 
     # ---- updates ------------------------------------------------------------------------------------
+    def _fit_events(self):
+        """The event column fills the list (no sideways scrolling)."""
+        w = self.events.GetClientSize()[0] - self.events.GetColumnWidth(0) - 4
+        if w > 60 and w != self.events.GetColumnWidth(1):
+            self.events.SetColumnWidth(1, w)
+
     def _check_tip(self, e):
         """The whole of a check's reasons, with their sentences, on hover (the list cuts them short)."""
         row, _ = self.checks.HitTest(e.GetPosition())
@@ -528,7 +537,7 @@ class SidePanel(wx.Panel):
             muted = theme.muted_fg()
             for i, c in enumerate(checks):
                 self.checks.InsertItem(i, c["gid"])
-                self.checks.SetItem(i, 1, " · ".join(c["reasons"]) + ("" if c["isolated"] else " (not counted)"))
+                self.checks.SetItem(i, 1, " · ".join((["not counted"] if not c["isolated"] else []) + c["reasons"]))
                 self.checks.SetItem(i, 2, "" if c["conf"] is None else f"{100 * c['conf']:.0f}%")
                 if c["done"]:
                     self.checks.SetItemTextColour(i, muted)
@@ -537,6 +546,7 @@ class SidePanel(wx.Panel):
             self._check_rows = checks
             self.events.DeleteAllItems()
             self.events.SetColumnWidth(0, 80 if data.units.timed else 110)
+            self._fit_events()
             for i, ev in enumerate(events):
                 self.events.InsertItem(i, data.when(data.frame(ev["bin"])))
                 self.events.SetItem(i, 1, ev["text"])
@@ -558,7 +568,7 @@ class SidePanel(wx.Panel):
                 link = wx.adv.HyperlinkCtrl(p, label=r["text"], url=f"tubetracker:bin/{r['bin']}",
                                             style=wx.adv.HL_ALIGN_LEFT | wx.NO_BORDER)
                 for set_colour in (link.SetNormalColour, link.SetVisitedColour):
-                    set_colour(theme.colour(theme.WARN_TEXT))
+                    set_colour(theme.colour(theme.readable(theme.WARN_TEXT)))
                 link.SetHoverColour(theme.colour(theme.CHECK))
                 link.SetBackgroundColour(theme.window_bg())
                 link.SetToolTip(f"Go to {data.when(data.frame(r['bin']))}" + (f": {r['detail']}" if r.get("detail")
@@ -621,7 +631,7 @@ class SidePanel(wx.Panel):
             self._show_reasons(g, data, b)
             L = g["L"][b]
             if st == "germinated":
-                now = data.length_words(L) if L >= MIN_TUBE_PX else "no tube yet"
+                now = data.length_words(L) if L >= MIN_TUBE_PX else f"tube under {MIN_TUBE_PX:g} px"
             else:
                 now = {"notyet": "not germinated yet", "never": "", "lost": "lost", "excluded": "excluded",
                        "unobservable": "not readable"}[st]
@@ -635,10 +645,12 @@ class SidePanel(wx.Panel):
                 onset = {"emerged_at_start": "before start", "no_emergence_by_end": "none",
                          "unobservable": "-"}.get(g["status"], "-")
             grown = g["status"] in EMERGED and not g["excluded"]
-            self.stats["onset"].SetLabel(onset + ("  (checked)" if g["review"]["onset"] != "model" else ""))
+            self.stats["onset"].SetLabel(onset)
             frames = (f": not there at frame {int(g['onset_after']):,}, there at frame {int(g['onset_by']):,}"
                       if g["onset_after"] is not None and g["onset_by"] is not None else "")
-            self.stats["onset"].SetToolTip(f"When the tube first showed{frames}")
+            self.stats["onset"].SetToolTip(f"When the tube first showed{frames}" +
+                                           (f" ({g['review']['onset']} by you)" if g["review"]["onset"] != "model"
+                                            else ""))
             self.stats["final"].SetLabel(data.length_words(g["final"]) if grown else "-")
             rate = u.rate(g["rate"]) if grown and g["rate"] else None
             self.stats["rate"].SetLabel(f"{rate:.3g} {u.rate_unit}" if rate is not None else "-")

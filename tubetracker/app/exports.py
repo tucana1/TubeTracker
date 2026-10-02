@@ -249,15 +249,63 @@ def compare_rows(folders: list[RunFolder]) -> list[dict]:
     return [compare_row(f) for f in folders]
 
 
-def export_summary(folders: list[RunFolder], out: Path, log=lambda *a: None) -> dict:
-    from sparsetrack.summary import write_summary
-
-    units = []
-    for f in folders:
-        u = Units.from_setup(f.load_setup(), f.n_frames())
-        units.append(u.pair())
-    extra = [{"sample_id": f.load_setup().get("sample_id", ""), "genotype": f.load_setup().get("genotype", ""),
-              "replicate": f.load_setup().get("replicate", "")} for f in folders]
+def export_summary(folders: list[RunFolder], out: Path, rows: list[dict] | None = None, log=lambda *a: None) -> dict:
+    """``summary.csv`` and ``summary.png`` in ``out``: the movies side by side as the Compare window shows them (each
+    as the app shows it, in its own units)."""
+    rows = rows if rows is not None else compare_rows(folders)
     out.mkdir(parents=True, exist_ok=True)
-    write_summary([f.root for f in folders], out, units=units, log=log, extra=extra)
+    head = ["movie", "sample_id", "genotype", "replicate", "grains_counted", "germinated_share", "t50", "time_unit",
+            "median_growth", "growth_unit", "median_final_length", "length_unit", "lost_partway", "grains_checked",
+            "grains_total"]
+    write_csv(out / "summary.csv", head, [
+        [r["name"], r["sample_id"], r["genotype"], r["replicate"], r["grains"], _num(r["germinated"], 3), _num(r["t50"], 1),
+         r["time_unit"], _num(r["median_rate"], 4), r["rate_unit"], _num(r["median_final"], 2), r["length_unit"],
+         r["lost"], r["checked"], r["all"]] for r in rows])
+    comparison_figure(rows, out / "summary.png")
     return {"folder": str(out), "files": [str(out / "summary.csv"), str(out / "summary.png")]}
+
+
+def comparison_figure(rows: list[dict], path: Path) -> None:
+    """Germination curves (one time unit: movies without a duration are left out if any has one) and growth rates."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    timed = any(r["timed"] for r in rows)
+    plotted = [r for r in rows if r["timed"] == timed]
+    rate_unit = plotted[0]["rate_unit"] if plotted else ""
+    rated = [r for r in plotted if r["rate_unit"] == rate_unit]
+    from . import theme
+    colour = lambda r: "#%02x%02x%02x" % theme.readable(theme.PALETTE[rows.index(r) % len(theme.PALETTE)],
+                                                        (255, 255, 255), least=3.0)
+    fig, (a1, a2) = plt.subplots(1, 2, figsize=(11, 4.2), dpi=150, gridspec_kw={"width_ratios": [3, 2]})
+    fig.patch.set_facecolor(report.SURFACE)
+    for ax in (a1, a2):
+        _axes(ax)
+    for r in plotted:
+        c = colour(r)
+        a1.plot(r["curve"]["t"], r["curve"]["y"], color=c, linewidth=2, label=r["sample_id"] or r["name"])
+        if r["t50"] is not None:
+            a1.plot([r["t50"]], [0.5], "o", color=c, markersize=5)
+    a1.set_ylim(0, 1.02)
+    a1.set_xlabel("Time (min)" if timed else "Source frame", fontsize=9, color=report.INK2)
+    a1.set_ylabel("Fraction germinated", fontsize=9, color=report.INK2)
+    if plotted:
+        a1.legend(fontsize=7, frameon=False)
+    for x, r in enumerate(rated):
+        c = colour(r)
+        rates = [v for v in r["rates"] if v is not None]
+        a2.plot([x + ((k * 37) % 21 - 10) / 50.0 for k in range(len(rates))], rates, "o", color=c, markersize=3)
+        if r["median_rate"] is not None:
+            a2.plot([x - 0.3, x + 0.3], [r["median_rate"]] * 2, color=report.INK, linewidth=2)
+    a2.set_xticks(range(len(rated)))
+    a2.set_xticklabels([r["sample_id"] or r["name"] for r in rated], fontsize=7, rotation=20, ha="right")
+    a2.set_ylabel(f"Growth ({rate_unit})", fontsize=9, color=report.INK2)
+    left_out = [r["sample_id"] or r["name"] for r in rows if r not in plotted]
+    note = "Each movie as the app shows it: checks where given, the model elsewhere. Dots on the curves: T50."
+    if left_out:
+        note += f" Not plotted (no real time given): {', '.join(left_out)}."
+    fig.text(0.01, 0.01, note, fontsize=7, color=report.MUTED)
+    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.savefig(path, facecolor=report.SURFACE)
+    plt.close(fig)

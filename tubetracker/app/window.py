@@ -28,7 +28,7 @@ from .corrections import Reviewer, ReviewError
 from .dialogs import CompareFrame, ResultsFrame, SetupDialog, ShortcutsDialog
 from .guide import HelpFrame
 from .jobs import JobManager
-from .overlay import EMERGED, needs_check, pos_at, state_at, tube_at
+from .overlay import EMERGED, MIN_TUBE_PX, needs_check, pos_at, state_at, tube_at
 from .panels import AnalysisPanel, SidePanel, StartPanel, bg
 from .runfolder import DEFAULT_RUNS_ROOT, REPO, MOVIE_SUFFIXES, RunFolder, find_runs, folder_for, is_movie, \
     load_prefs, looks_like_run, movie_frame_count, save_prefs
@@ -42,7 +42,7 @@ class Legend(Drawn):
     them all)."""
 
     ITEMS = (("germinated", "germinated"), ("notyet", "not yet"), ("never", "never"), ("lost", "lost"),
-             ("tube", "tube"), ("tip", "tip"), ("check", "to check"), ("excluded", "excluded"),
+             ("excluded", "excluded"), ("tube", "tube"), ("tip", "tip"), ("check", "to check"),
              ("unobservable", "not readable"))
 
     def __init__(self, parent):
@@ -151,6 +151,7 @@ class MainFrame(wx.Frame):
         self.Bind(wx.EVT_TIMER, lambda e: self._poll(), self.poll)
         self.Bind(wx.EVT_TIMER, lambda e: self._tick(), self.player)
         self.Bind(wx.EVT_CHAR_HOOK, self._on_key)
+        self.Bind(wx.EVT_SIZE, lambda e: (self._fit_warn() if self.data is not None else None, e.Skip()))
         self.Bind(wx.EVT_CLOSE, self._on_close)
         self.show_start()
         self.poll.Start(600)
@@ -243,7 +244,7 @@ class MainFrame(wx.Frame):
         add(c, "revert", "Back to Model's Answer (U)", lambda: self.on_action("revert"))
         mb.Append(c, "Grain")
         t = wx.Menu()
-        add(t, "legacy", "Old Manual Pipeline (Hough Grains, Tip Templates)...", self.on_legacy)
+        add(t, "legacy", "Old Manual Pipeline...", self.on_legacy)
         mb.Append(t, "Tools")
         h = wx.Menu()
         add(h, "help", "TubeTracker Help\tF1", self.on_help)
@@ -265,7 +266,7 @@ class MainFrame(wx.Frame):
         self.line.SetForegroundColour(theme.muted_fg())
         head.Add(self.line, 1, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 16)
         self.warn = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
-        self.warn.SetForegroundColour(theme.colour(theme.WARN_TEXT))
+        self.warn.SetForegroundColour(theme.colour(theme.readable(theme.WARN_TEXT, theme.rgb(theme.panel_bg()))))
         head.Add(self.warn, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 16)
         outer.Add(head, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
         body = wx.BoxSizer(wx.HORIZONTAL)
@@ -281,8 +282,10 @@ class MainFrame(wx.Frame):
         self.mode_btns["h"].SetToolTip("Stretched about the background grey so faint tubes show")
         bar.AddSpacer(12)
         self.ov_boxes = {}
-        for key, name in (("grains", "Grains"), ("tubes", "Tubes"), ("names", "Names")):
+        for key, name, tip in (("tubes", "Tubes", "Draw the tubes (off: the movie as it is under them)"),
+                               ("names", "Names", "The grains' names (I)")):
             cb = wx.CheckBox(p, label=name)
+            cb.SetToolTip(tip)
             cb.SetValue(True)
             cb.Bind(wx.EVT_CHECKBOX, lambda e, k=key: self.toggle_overlay(k))
             bar.Add(cb, 0, wx.RIGHT | wx.ALIGN_CENTER_VERTICAL, 10)
@@ -547,10 +550,10 @@ class MainFrame(wx.Frame):
         self.line.SetToolTip(self.summary.get("detail") or "")
         warns = d.warnings()
         if not d.units.timed:
-            warns.append({"text": "times in frames", "detail": "Give the movie's duration in Settings (Cmd-,) to see "
-                                                               "times in minutes."})
+            warns.insert(0, {"text": "times in frames", "detail": "Give the real time the recording took in Settings "
+                                                                  "(Cmd-,) to see times in minutes."})
         self.warn.SetLabel("  ·  ".join(w["text"] for w in warns))
-        self.warn.SetMaxSize((max(self.GetClientSize()[0] // 3, 200), -1))
+        self._fit_warn()
         self.warn.SetToolTip("\n\n".join(w.get("detail") or w["text"] for w in warns))
         lag = d.units.minutes(GROWTH_LAG * d.fpb)
         self.mode_btns["g"].SetToolTip(f"What changed over the last {f'{lag:.0f} min' if lag else f'{GROWTH_LAG} time steps'}"
@@ -562,6 +565,10 @@ class MainFrame(wx.Frame):
         self.movie.Layout()
         if self.results_win:
             self.results_win.refresh()
+
+    def _fit_warn(self):
+        self.warn.SetMaxSize((max(self.GetClientSize()[0] // 3, 200), -1))
+        self.movie.Layout()
 
     def update_side(self, lists: bool = True):
         if self.data is None:
@@ -648,7 +655,8 @@ class MainFrame(wx.Frame):
 
     def toggle_overlay(self, key):
         self.overlays[key] = not self.overlays[key]
-        self.ov_boxes[key].SetValue(self.overlays[key])
+        if key in self.ov_boxes:
+            self.ov_boxes[key].SetValue(self.overlays[key])
         self._items[f"ov_{key}"].Check(self.overlays[key])
         self.redraw()
 
@@ -749,9 +757,11 @@ class MainFrame(wx.Frame):
         L = g["L"][self.b]
         words = {"germinated": "germinated", "notyet": "not yet germinated", "never": "never germinated",
                  "lost": "lost", "excluded": "excluded", "unobservable": "not readable"}[st]
-        tip = f"{g['id']}: {words}" + (f", {self.data.length_words(L)}" if L > 0.5 else "")
+        tip = f"{g['id']}: {words}" + (f", {self.data.length_words(L)}" if L >= MIN_TUBE_PX else "")
+        if not g["isolated"]:
+            tip += " (not counted)"
         if needs_check(g):
-            tip += "\n" + " · ".join(r["text"] for r in g["check"])
+            tip += "\nto check: " + " · ".join(r["text"] for r in g["check"])
         return tip
 
     # ================================================================ corrections
@@ -788,7 +798,7 @@ class MainFrame(wx.Frame):
             return f"{what}.   Enter saves, Backspace takes a point back, Esc cancels"
         return ""
 
-    def on_click(self, ref, grain, zoomed: bool = False):
+    def on_click(self, ref, grain, zoomed: bool = False, empty: bool = True):
         if self.tool == "tip":
             self.set_tool(None)
             return self.correct("tip", b=self.b, x=ref[0], y=ref[1])
@@ -798,7 +808,7 @@ class MainFrame(wx.Frame):
             return self.redraw()
         if grain is not None and grain["id"] != self.sel:
             self.select(grain["id"])
-        elif grain is None and not zoomed:  # an empty place on the movie
+        elif grain is None and empty and not zoomed:  # an empty place on the movie
             self.deselect()
 
     GRAIN_MENU = (("confirm", "Confirm"), None, ("onset", "Onset Here"), ("no_onset", "Never Germinated"), None,
@@ -933,12 +943,12 @@ class MainFrame(wx.Frame):
         from .exports import compare_rows
         return compare_rows([RunFolder(f) for f in folders])
 
-    def on_export_compare(self, folders: list[str]):
+    def on_export_compare(self, folders: list[str], rows: list[dict] | None = None):
         from .exports import export_summary
         if not folders:
             return
         try:
-            out = export_summary([RunFolder(f) for f in folders], self.runs_root / "summary")
+            out = export_summary([RunFolder(f) for f in folders], self.runs_root / "summary", rows)
         except Exception as exc:  # noqa: BLE001 - reported
             return self.error(f"Export failed: {exc}")
         self.status(f"Exported to {out['folder']}")
