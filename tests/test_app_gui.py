@@ -133,6 +133,9 @@ def test_the_side_panel_shows_the_movie_until_a_grain_is_chosen_and_says_what_to
         assert side.overview.vals["grains"].GetLabel().startswith("4") and "of" in frame.time_label.GetLabel()
         frame.goto_check(1)
         assert side.grain_panel.IsShown() and not side.overview.IsShown() and side._reason_rows
+        menu = frame.grain_menu()  # right-click on a grain
+        assert menu.GetMenuItemCount() > 10
+        menu.Destroy()
         frame.set_tool("tip")
         assert side.buttons["tip"].GetValue() and "tip" in frame.tool_hint()
         frame.set_tool(None)

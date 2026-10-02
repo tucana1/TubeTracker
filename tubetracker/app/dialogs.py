@@ -121,7 +121,7 @@ class SetupDialog(wx.Dialog):
         elif spf and self.n_frames:
             self.derived.SetLabel(f"{spf * self.n_frames / 3600:.2f} h in all")
         else:
-            self.derived.SetLabel("times in frames")
+            self.derived.SetLabel("blank: times in frames")
         self.Layout()
 
     def values(self) -> dict:
@@ -215,6 +215,7 @@ class ResultsFrame(wx.Frame):
         export.Bind(wx.EVT_BUTTON, lambda e: ctl.on_export())
         self.show_folder.Bind(wx.EVT_BUTTON, lambda e: ctl.show_results_folder())
         self.table.Bind(wx.EVT_LIST_COL_CLICK, self._sort_by)
+        self.Bind(wx.EVT_CHAR_HOOK, lambda e: self.Close() if e.GetKeyCode() == wx.WXK_ESCAPE else e.Skip())
         self.table.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self._open)
         self.grow.on_pick = self._pick_curve
         self.refresh()

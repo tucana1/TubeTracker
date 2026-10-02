@@ -16,22 +16,26 @@ python3 -m venv .venv
 **Open it** by double-clicking `TubeTracker.command` (or `./Start_TubeTracker_local`, or
 `.venv/bin/python -m tubetracker`). Everything happens in its window:
 
-1. **Open** a movie (File > Open Movie; .mp4 or .avi), or one analysed before from the start screen.
+1. **Open** a movie (File > Open Movie, or drop it on the window; .mp4 or .avi), or one analysed before from the
+   start screen.
 2. **Settings** (asked the first time, Movie > Settings later): how long the movie ran (the time per frame
    follows from its frame count), the pixel size in um (optional), sample ID, genotype, replicate. Times are then
    in minutes and lengths in um throughout.
 3. **Analyse.** SparseTrack runs in the background, step by step with a progress bar and Cancel: a few minutes
    the first time a movie is read, then roughly 10-30 s per grain. The movie opens when it is done.
-4. **Look.** Every grain is outlined by its state at the time shown (germinated, not yet, never, lost partway,
-   excluded), with its tube drawn to its length then along the tube's middle, the tip and the exit; grains and
-   their tubes move with the grain as it drifts. Play, scrub, scroll to zoom, drag to
-   pan; View > Growth shows the time minus 6 bins earlier, where growing tips stand out. The timeline under the
-   movie holds the germination curve with T50, germinations, grains lost partway, tubes that stop growing, the
-   least sure readings and focus changes; click one to go there.
-5. **Check.** N goes to the next grain to check, the model's least sure first (short reasons in the side panel,
-   details on hover), zoomed in at the time to look at. Enter confirms; O sets the onset at the time shown; T and
-   a click set the tip (its length is read along the tube); D draws the tube; B marks a burst; X or K excludes a
-   grain (not a grain, clump); Cmd-Z undoes. Help > Keyboard Shortcuts lists the rest. Answers are saved at once.
+4. **Look.** The side panel shows the movie at a glance (grains counted, germinated, T50, growth, checks left).
+   Every grain is outlined by its state at the time shown (germinated, not yet, never, lost partway, excluded),
+   with its tube drawn to its length then along the tube's middle, the tip and the exit; grains and their tubes
+   move with the grain as it drifts. Play, scrub, scroll to zoom, drag to pan; the Growth view shows what changed
+   over the last six time steps, where growing tips stand out. The timeline under the movie holds the germination
+   curve with T50, germinations, grains lost partway, tubes that stop growing, the grains to check and focus
+   changes; click one to go there.
+5. **Check.** N goes to the next grain to check, the model's least sure first, framed with its tube at the time to
+   look at. The side panel says why (click a reason to go to its time). Enter confirms; then by what is wrong:
+   Onset (O here, Shift-O never), Tube (T and a click set the tip, its length read along the tube; D draws it;
+   None here) and Grain (B burst, X not a grain, K clump); right-click a grain for the same. Cmd-Z undoes, Esc
+   goes back to the movie's numbers. Answers are saved at once. Help > TubeTracker Help (F1) explains everything
+   on screen, the numbers and the files.
 6. **Export** (File > Export Results): `results/grains.csv` (per grain: onset, final length, growth rate, the
    model's confidence, whether you checked it, the sample's metadata), `results/growth.csv` (length at every
    time), `germination.png` (with T50) and `growth_curves.png`. File > Results shows the same in the app;

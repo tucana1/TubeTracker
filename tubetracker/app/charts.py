@@ -81,7 +81,7 @@ class Drawn(wx.Panel):
 
 
 # ------------------------------------------------------------------------------------------------ timeline
-LANES = (("germination", "Germination"), ("lost", "Lost"), ("stall", "Stopped"), ("unsure", "Unsure"))
+LANES = (("germination", "Germination"), ("lost", "Lost"), ("stall", "Stopped"), ("check", "To check"))
 
 
 class Timeline(Drawn):

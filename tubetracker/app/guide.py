@@ -34,8 +34,8 @@ def page_html(fg, bg, accent) -> str:
 
 <a name="start"></a><h3>Getting started</h3>
 <ol>
-<li><b>Open Movie</b> (Cmd-O). Say how long the movie ran, and the pixel size if you know it (lengths are in pixels
-without it). Both can be changed later in <b>Settings</b> (Cmd-,).</li>
+<li><b>Open Movie</b> (Cmd-O), or drop a movie on the window. Say how long the movie ran, and the pixel size if
+you know it (lengths are in pixels without it). Both can be changed later in <b>Settings</b> (Cmd-,).</li>
 <li>The analysis runs by itself; the window shows how far it is. It can take a while for a long movie, and other
 movies can be opened meanwhile.</li>
 <li>When it is done, the movie opens with every grain and tube drawn on it, and the side panel shows its numbers.</li>
@@ -75,7 +75,7 @@ line marks <b>T50</b>. Below it, one lane per kind of event:</p>
 <li><b>Lost</b>: a grain burst, drifted out of view or was swept off.</li>
 <li><b>Stopped</b>: a tube that stopped growing (no growth for 15 time steps before the end or its grain's loss,
 and at least 8 px long).</li>
-<li><b>Unsure</b>: the model's least sure reading of a tube not yet checked.</li>
+<li><b>To check</b>: the grains still to check, at the time the check list opens them.</li>
 </ul>
 <p>Dashed purple lines are focus changes. Click a mark to go to that grain and time; click or drag elsewhere to
 move in time. The Events tab lists the same events.</p>
@@ -122,6 +122,7 @@ grain</b> (X): debris and the like; press X again to include it. <b>Clump</b> (K
 leave the grain out of the numbers.</li>
 <li><b>Back to Model's Answer</b> (U, in the Grain menu) forgets everything said about the grain.</li>
 </ul>
+<p>Right-click a grain for the same corrections. The Undo button's tip says what it would take back.</p>
 <p>A length you give pins the growth curve at that time: between your lengths the curve keeps the shape of the
 model's, and after the last one it grows as the model's did. It never shrinks. One or two lengths where the tube is
 long are usually enough.</p>
@@ -183,6 +184,7 @@ class HelpFrame(wx.Frame):
         s.Add(self.html, 1, wx.EXPAND)
         self.SetSizer(s)
         self.html.Bind(wx.html.EVT_HTML_LINK_CLICKED, self._link)
+        self.Bind(wx.EVT_CHAR_HOOK, lambda e: self.Close() if e.GetKeyCode() == wx.WXK_ESCAPE else e.Skip())
         if section:
             self.show(section)
         self.CentreOnParent()

@@ -155,7 +155,7 @@ class AnalysisPanel(wx.Panel):
         for b in (self.start, self.cancel, self.settings):
             row.Add(b, 0, wx.RIGHT, 8)
         col.Add(row, 0, wx.BOTTOM, 18)
-        self.logpane = wx.CollapsiblePane(self, label="Log")
+        self.logpane = wx.CollapsiblePane(self, label="Details")
         self.log = wx.TextCtrl(self.logpane.GetPane(), style=wx.TE_MULTILINE | wx.TE_READONLY, size=(620, 200))
         self.log.SetFont(wx.Font(wx.FontInfo(10).Family(wx.FONTFAMILY_TELETYPE)))
         ps = wx.BoxSizer(wx.VERTICAL)
@@ -192,7 +192,8 @@ class AnalysisPanel(wx.Panel):
             name_.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT) if p
                                       else theme.muted_fg())
         if not job:
-            message = "Not analysed yet."
+            message = ("Not analysed yet. The analysis reads the movie, finds the grains and follows every tube; it "
+                       "runs on its own,\nand other movies can be opened meanwhile (Cmd-W goes back to the list).")
         elif job["state"] == "queued":
             message = "Waiting for another analysis to finish."
         elif job["state"] == "failed":
@@ -273,6 +274,10 @@ class Overview(wx.Panel):
         d, sm = ctl.data, ctl.summary
         if d is None or sm is None:
             return
+        key = (width, sm["line"], sm["reviewed"], d.units.rate_unit, tuple(c["done"] for c in ctl.checks))
+        if key == getattr(self, "_shown", None):  # as the time moves, nothing here changes
+            return
+        self._shown = key
         u = d.units
         n, total = sm["n"], sm["grains"]
         v = self.vals
@@ -467,8 +472,10 @@ class SidePanel(wx.Panel):
             self.nav_label.SetLabel("Nothing flagged")
         elif cur is None:
             self.nav_label.SetLabel(f"{left} to check" if left else "All checked")
+        elif checks[cur]["done"]:  # looked at: it has moved to the end of the list
+            self.nav_label.SetLabel(f"Checked  ·  {left} left" if left else "All checked")
         else:
-            self.nav_label.SetLabel(f"Check {cur + 1} of {len(checks)}" + (f"  ({left} left)" if left else ""))
+            self.nav_label.SetLabel(f"Check {cur + 1} of {len(checks)}  ({left} left)")
         self.progress.SetValue(int(1000 * (len(checks) - left) / len(checks)) if checks else 0)
         self.prev.Enable(bool(checks))
         self.next.Enable(bool(checks))
@@ -585,6 +592,7 @@ class SidePanel(wx.Panel):
             self.stats["conf"].SetLabel("-" if g["conf"] is None else f"{100 * g['conf']:.0f}%")
             for key, btn in self.buttons.items():
                 btn.Enable(ready if key != "undo" else ready and self.ctl.can_undo())
+            self.buttons["undo"].SetToolTip(self.ctl.undo_words())
             self.buttons["not_a_grain"].SetLabel("Include (X)" if g["excluded"] else "Not a grain (X)")
             self.show_tool(self.ctl.tool)
             notes = data.notes(g)

@@ -21,7 +21,7 @@ DRAW = (34, 211, 238)
 FOCUS = (192, 132, 252)
 HALO = (0, 0, 0, 180)
 WARN_TEXT = (180, 110, 0)
-EVENT = {"germination": STATE["germinated"], "lost": STATE["lost"], "stall": (203, 213, 225), "unsure": CHECK,
+EVENT = {"germination": STATE["germinated"], "lost": STATE["lost"], "stall": (203, 213, 225), "check": CHECK,
          "focus": FOCUS, "t50": SELECTED}
 DASHED = ("lost", "excluded", "unobservable")
 

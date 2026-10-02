@@ -113,6 +113,7 @@ def test_events_mark_germinations_losses_stalls_focus_and_t50(data):
     assert ("germination", "g001") in kinds and ("germination", "g003") in kinds
     assert ("lost", "g003") in kinds and ("focus", None) in kinds and ("t50", None) in kinds
     assert ("stall", "g004") in kinds  # 20 px from bin 8 on: stood still for over 15 bins
+    assert {gid for kind, gid in kinds if kind == "check"} == {c["gid"] for c in data.checks(grains) if not c["done"]}
     assert [e["bin"] for e in ev] == sorted(e["bin"] for e in ev)
     assert stall_bin([0, 5, 10, 10, 10], 4) is None  # too short a stand-still
 

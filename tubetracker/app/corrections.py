@@ -295,6 +295,10 @@ class Reviewer:
     def undo_depth(self) -> int:
         return len(self._undo)
 
+    def last(self) -> tuple[str, str] | None:
+        """The grain and the kind of the answer Undo would take back."""
+        return (self._undo[-1][0], self._undo[-1][1]) if self._undo else None
+
 
 def labels_age(folder) -> float | None:
     """When the review labels file was last written (s since the epoch), if there is one."""

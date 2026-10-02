@@ -83,6 +83,19 @@ class Legend(Drawn):
         gc.DrawText("to check", x + 14, y - gc.GetTextExtent("to check")[1] / 2)
 
 
+class Drop(wx.FileDropTarget):
+    """A movie or analysis folder dropped on the window opens."""
+
+    def __init__(self, ctl):
+        super().__init__()
+        self.ctl = ctl
+
+    def OnDropFiles(self, x, y, names):
+        if names:
+            wx.CallAfter(self.ctl.open_path, names[0])
+        return True
+
+
 class MainFrame(wx.Frame):
     def __init__(self, runs_root: str | Path = DEFAULT_RUNS_ROOT):
         super().__init__(None, title="TubeTracker", size=(1440, 900))
@@ -96,6 +109,7 @@ class MainFrame(wx.Frame):
         self.tool, self.path_pts = None, []
         self.speed = 8
         self.results_win = self.help_win = None
+        self.notice_text, self._notice_id = None, 0
         self.pool = ThreadPoolExecutor(max_workers=2)
         self._pending_prefetch = set()
         self._icons = None
@@ -112,6 +126,9 @@ class MainFrame(wx.Frame):
         self.root.SetSizer(s)
         self.CreateStatusBar(2)
         self.SetStatusWidths([-3, -2])
+        for win in (self.root, self.start, self.start.list, self.analysis, self.canvas):
+            win.SetDropTarget(Drop(self))
+        self._restore_geometry()
         self.poll = wx.Timer(self)
         self.player = wx.Timer(self)
         self.Bind(wx.EVT_TIMER, lambda e: self._poll(), self.poll)
@@ -154,6 +171,7 @@ class MainFrame(wx.Frame):
         add(f, "open", "Open Movie...\tCtrl+O", self.on_open_movie)
         add(f, "open_folder", "Open Analysis Folder...\tCtrl+Shift+O", self.on_open_folder)
         add(f, "close", "Close Movie\tCtrl+W", self.close_movie)
+        add(f, "finder", "Show in Finder", lambda: reveal(self.folder.root) if self.folder else None)
         f.AppendSeparator()
         add(f, "results", "Results...\tCtrl+R", self.on_results)
         add(f, "export", "Export Results\tCtrl+E", self.on_export)
@@ -296,6 +314,7 @@ class MainFrame(wx.Frame):
                     "mode_n", "mode_h", "mode_g", "ov_grains", "ov_tubes", "ov_names"):
             self._items[key].Enable(on_movie)
         self._items["close"].Enable(which is not self.start)
+        self._items["finder"].Enable(which is not self.start)
         self._items["settings"].Enable(which is not self.start)
         self._items["cancel"].Enable(False)
 
@@ -557,7 +576,7 @@ class MainFrame(wx.Frame):
             return
         if self.tool == "path" and self.path_pts:
             self.set_tool(None)
-            self.status("Drawing cancelled: the time changed")
+            self.notice("Drawing cancelled: the time changed")
         self.b = b
         self.redraw()
         g = self.selected()
@@ -659,12 +678,12 @@ class MainFrame(wx.Frame):
     def all_checked(self):
         if not any(not c["done"] for c in self.checks):
             self.deselect()
-            self.status("Every grain to check has been looked at. Export (Cmd-E) writes the results.")
+            self.notice("Every grain to check has been looked at. Export (Cmd-E) writes the results.", ok=True)
 
     def goto_check(self, direction: int):
         items = self.checks
         if not items:
-            return self.status("Nothing to check")
+            return self.notice("Nothing to check")
         cur = next((i for i, c in enumerate(items) if c["gid"] == self.sel), None)
         n = len(items)
         for k in range(1, n + 1):
@@ -713,6 +732,15 @@ class MainFrame(wx.Frame):
     def can_undo(self) -> bool:
         return self.reviewer is not None and self.reviewer.ready() and self.reviewer.undo_depth() > 0
 
+    UNDO_WORDS = {"confirm": "the confirmation", "onset": "the onset", "no_onset": "never germinated",
+                  "tip": "the tip", "path": "the drawn tube", "no_tube": "no tube", "burst": "the burst",
+                  "exclude": "the exclusion", "include": "including it", "revert": "going back to the model"}
+
+    def undo_words(self) -> str:
+        last = self.reviewer.last() if self.can_undo() else None
+        return f"Take back {self.UNDO_WORDS.get(last[1], last[1])} on {last[0]} (Cmd-Z)" if last else \
+            "Nothing to take back"
+
     def set_tool(self, tool):
         self.tool = tool
         self.path_pts = []
@@ -745,13 +773,35 @@ class MainFrame(wx.Frame):
         if grain is not None and grain["id"] != self.sel:
             self.select(grain["id"])
 
+    GRAIN_MENU = (("confirm", "Confirm"), None, ("onset", "Onset Here"), ("no_onset", "Never Germinated"), None,
+                  ("tip", "Set Tip"), ("path", "Draw Tube"), ("no_tube", "No Tube Here"), None,
+                  ("burst", "Burst or Gone Here"), ("not_a_grain", "Not a Grain"), ("clump", "Clump"), None,
+                  ("revert", "Back to Model's Answer"))
+
+    def grain_menu(self) -> wx.Menu:
+        """The selected grain's corrections as a menu (right-click on it)."""
+        menu = wx.Menu()
+        g = self.selected()
+        ready = self.reviewer is not None and self.reviewer.ready()
+        for entry in self.GRAIN_MENU:
+            if entry is None:
+                menu.AppendSeparator()
+                continue
+            key, text = entry
+            if key == "not_a_grain" and g is not None and g["excluded"]:
+                text = "Include Again"
+            item = menu.Append(wx.ID_ANY, text)
+            item.Enable(ready)
+            menu.Bind(wx.EVT_MENU, lambda e, k=key: self.on_action(k), item)
+        return menu
+
     def on_action(self, key):
         if self.data is None:
             return
         if key == "undo":
             return self.correct("undo")
         if self.selected() is None:
-            return self.status("Select a grain first")
+            return self.notice("Select a grain first: click it, or press N")
         if key in ("tip", "path"):
             return self.set_tool(None if self.tool == key else key)
         if key == "not_a_grain" and self.selected()["excluded"]:
@@ -768,19 +818,19 @@ class MainFrame(wx.Frame):
 
     def correct(self, action, **kw):
         if self.reviewer is None or not self.reviewer.ready():
-            return self.status("Corrections are not ready yet")
+            return self.notice("Corrections are not ready yet: try again in a moment")
         wx.BeginBusyCursor()
         try:
             done = self.reviewer.act(self.sel, action, **kw)
         except ReviewError as exc:
-            return self.status(str(exc))
+            return self.notice(str(exc))
         finally:
             wx.EndBusyCursor()
         self.recompute()
         if action == "undo" and done.get("gid") and done["gid"] != self.sel:
             self.select(done["gid"], zoom=True)
         self.update_all()
-        self.status(f"Saved: {done['message']}")
+        self.notice(f"Saved: {done['message']}", ok=True)
         if action == "confirm":
             wx.CallLater(250, self.goto_check if any(not c["done"] for c in self.checks) else self.all_checked, 1)
 
@@ -788,7 +838,7 @@ class MainFrame(wx.Frame):
         pts = list(self.path_pts)
         self.set_tool(None)
         if len(pts) < 2:
-            return self.status("Click at least where the tube leaves the grain and its tip")
+            return self.notice("Click at least where the tube leaves the grain and its tip")
         self.correct("path", b=self.b, points=pts)
 
     # ================================================================ results, export, compare
@@ -923,6 +973,20 @@ class MainFrame(wx.Frame):
     def status(self, text: str, field: int = 0):
         self.SetStatusText(text, field)
 
+    def notice(self, text: str, ok: bool = False, secs: float = 3.5):
+        """Say what just happened (or why it could not), over the movie for a moment and in the status bar."""
+        self.status(text)
+        self.notice_text = (text, ok)
+        self._notice_id += 1
+        wx.CallLater(int(secs * 1000), self._end_notice, self._notice_id)
+        self.canvas.Refresh()
+
+    def _end_notice(self, which: int):
+        if not self or which != self._notice_id:  # the window is gone, or a newer notice is up
+            return
+        self.notice_text = None
+        self.canvas.Refresh()
+
     def error(self, text: str):
         wx.MessageBox(text, "TubeTracker", wx.OK | wx.ICON_WARNING, self)
 
@@ -935,7 +999,31 @@ class MainFrame(wx.Frame):
         self._shutdown()
         e.Skip()
 
+    def _restore_geometry(self):
+        """Where the window was last time (if that is still on a screen)."""
+        rect = load_prefs(self.runs_root).get("window")
+        if not rect or len(rect) != 4:
+            return
+        x, y, w, h = (int(v) for v in rect)
+        if wx.Display.GetFromPoint(wx.Point(x + 40, y + 20)) != wx.NOT_FOUND:
+            self.SetSize(x, y, max(w, 1100), max(h, 700))
+        if load_prefs(self.runs_root).get("maximized"):
+            self.Maximize()
+
+    def _save_geometry(self):
+        try:
+            if self.IsMaximized():
+                save_prefs(self.runs_root, maximized=True)
+            else:
+                r = self.GetRect()
+                save_prefs(self.runs_root, window=[r.x, r.y, r.width, r.height], maximized=False)
+        except OSError:
+            pass  # a read-only runs folder: the window opens at its default place next time
+
     def _shutdown(self):
+        if not getattr(self, "_geometry_saved", False):
+            self._geometry_saved = True
+            self._save_geometry()
         for t in (self.poll, self.player):
             if t.IsRunning():
                 t.Stop()

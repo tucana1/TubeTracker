@@ -449,7 +449,7 @@ class RunData:
 
     def events(self, grains: list[dict], population: dict) -> list[dict]:
         """What happened when (short phrases): germinations, grains lost partway, tubes that stopped growing, the
-        readings the model is least sure of, focus changes, T50."""
+        grains to check (at the time the check list opens them), focus changes, T50."""
         out = []
         for g in grains:
             if g["excluded"]:
@@ -462,9 +462,9 @@ class RunData:
                             "text": f"{gid} {'burst' if g['lost_why'] == 'burst' else 'lost'}"})
             if g["stall"] is not None:
                 out.append({"kind": "stall", "bin": g["stall"], "gid": gid, "text": f"{gid} stops growing"})
-            if g["conf"] is not None and g["conf"] < UNSURE and not g["done"]:
-                out.append({"kind": "unsure", "bin": g["unsure"], "gid": gid,
-                            "text": f"{gid} unsure ({100 * g['conf']:.0f}%)"})
+            if g["check"] and not g["done"]:  # where the check list opens it
+                out.append({"kind": "check", "bin": g["check"][0]["bin"], "gid": gid,
+                            "text": f"{gid} to check: {g['check'][0]['text']}"})
         for f in self.pred.get("focus_changes") or []:
             out.append({"kind": "focus", "bin": int(f["bin"]), "gid": None, "text": "focus change"})
         if population.get("t50_bin") is not None:

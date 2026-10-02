@@ -69,12 +69,12 @@ def label(gc, text, x, y, rgb=(241, 245, 249), bold=False, size=10.5):
     gc.DrawText(text, x, y)
 
 
-def banner(gc, text, w):
-    """A line of instructions across the top of a view (what to click with the tool in hand)."""
+def banner(gc, text, w, y=14.0, edge=theme.DRAW):
+    """A line across a view: what to click with the tool in hand (at the top), or what just happened."""
     gc.SetFont(theme.font(12.5, bold=True), theme.colour((241, 245, 249)))
     tw, th = gc.GetTextExtent(text)[:2]
-    x, y = max((w - tw) / 2, 16.0), 14.0
-    gc.SetPen(theme.pen(theme.DRAW, 1.5))
+    x = max((w - tw) / 2, 16.0)
+    gc.SetPen(theme.pen(edge, 1.5))
     gc.SetBrush(wx.Brush(wx.Colour(5, 8, 15, 220)))
     gc.DrawRoundedRectangle(x - 12, y - 7, tw + 24, th + 14, 7)
     gc.DrawText(text, x, y)
@@ -164,6 +164,7 @@ class FieldCanvas(wx.Panel):
         self.Bind(wx.EVT_LEFT_UP, self.on_up)
         self.Bind(wx.EVT_MOTION, self.on_motion)
         self.Bind(wx.EVT_LEFT_DCLICK, self.on_dclick)
+        self.Bind(wx.EVT_RIGHT_DOWN, self.on_right)
         self.Bind(wx.EVT_MOUSEWHEEL, self.on_wheel)
         if hasattr(wx, "EVT_MAGNIFY"):
             self.Bind(wx.EVT_MAGNIFY, self.on_magnify)
@@ -241,6 +242,9 @@ class FieldCanvas(wx.Panel):
                 draw_path_tool(gc, [self.to_c(*p) for p in ctl.path_pts])
             if ctl.tool:
                 banner(gc, ctl.tool_hint(), w)
+            if ctl.notice_text:
+                text, ok = ctl.notice_text
+                banner(gc, text, w, y=h - 40.0, edge=theme.STATE["germinated"] if ok else theme.CHECK)
         except Exception as exc:  # noqa: BLE001 - a drawing error must not stop the window
             ctl.status(f"Drawing failed: {exc}")
 
@@ -296,6 +300,8 @@ class FieldCanvas(wx.Panel):
         if gid != self._hover:
             self._hover = gid
             self.SetToolTip(self.ctl.grain_tip(g) if g else "")
+            if not self.ctl.tool:
+                self.SetCursor(wx.Cursor(wx.CURSOR_HAND if g else wx.CURSOR_DEFAULT))
 
     def on_up(self, e):
         if self.HasCapture():
@@ -313,6 +319,15 @@ class FieldCanvas(wx.Panel):
         g = self.grain_at(e.GetX(), e.GetY())
         if g:
             self.ctl.select(g["id"], zoom=True)
+
+    def on_right(self, e):
+        """A grain's corrections, at the time shown (it is selected first)."""
+        if self.view is None or self.ctl.data is None:
+            return
+        g = self.grain_at(e.GetX(), e.GetY())
+        if g is not None:
+            self.ctl.select(g["id"])
+            self.PopupMenu(self.ctl.grain_menu(), e.GetPosition())
 
     def on_wheel(self, e):
         rot = e.GetWheelRotation()
