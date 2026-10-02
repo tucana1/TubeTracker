@@ -149,6 +149,8 @@ class Timeline(Drawn):
             y = lane_top + lanes[ev["kind"]] * self.LANE_H + self.LANE_H / 2
             sel = ev.get("gid") == ctl.sel and ctl.sel is not None
             alpha = 255 if sel or ctl.sel is None else 150
+            if not ev.get("counted", True) and not sel:  # in a clump or at the edge: not in the numbers
+                alpha = 70
             gc.SetBrush(wx.Brush(theme.colour(theme.EVENT[ev["kind"]], alpha)))
             gc.SetPen(wx.Pen(wx.Colour(255, 255, 255), 1) if sel else wx.TRANSPARENT_PEN)
             path = gc.CreatePath()

@@ -12,7 +12,7 @@ import wx.adv
 from . import theme
 from .canvas import GrainView
 from .charts import GrowthCurve
-from .overlay import EMERGED, state_at
+from .overlay import EMERGED, MIN_TUBE_PX, state_at
 from .runfolder import REPO
 
 STATE_WORDS = {"germinated": "germinated", "notyet": "not yet germinated", "never": "never germinated",
@@ -24,6 +24,15 @@ REVIEW_WORDS = {"model": "not checked", "partly checked": "partly checked", "che
 def bg(win, colour=None):
     win.SetBackgroundColour(colour or theme.panel_bg())
     return win
+
+
+def fmt_left(s: float) -> str:
+    """A time still to go, as roughly as it is known: ``40 s``, ``7 min``, ``1 h 20 min``."""
+    s = int(round(s or 0))
+    if s < 60:
+        return f"{s} s"
+    m = int(round(s / 60))
+    return f"{m // 60} h {m % 60} min" if m >= 60 else f"{m} min"
 
 
 def fmt_secs(s: float) -> str:
@@ -152,7 +161,9 @@ class AnalysisPanel(wx.Panel):
         self.start = wx.Button(self, label="Analyse")
         self.cancel = wx.Button(self, label="Cancel")
         self.settings = wx.Button(self, label="Settings...")
-        for b in (self.start, self.cancel, self.settings):
+        self.back = wx.Button(self, label="Back to Movies")
+        self.back.SetToolTip("The list of movies (the analysis goes on meanwhile)")
+        for b in (self.start, self.cancel, self.settings, self.back):
             row.Add(b, 0, wx.RIGHT, 8)
         col.Add(row, 0, wx.BOTTOM, 18)
         self.logpane = wx.CollapsiblePane(self, label="Details")
@@ -170,6 +181,7 @@ class AnalysisPanel(wx.Panel):
         self.start.Bind(wx.EVT_BUTTON, lambda e: ctl.on_analyse())
         self.cancel.Bind(wx.EVT_BUTTON, lambda e: ctl.on_cancel_analysis())
         self.settings.Bind(wx.EVT_BUTTON, lambda e: ctl.on_settings())
+        self.back.Bind(wx.EVT_BUTTON, lambda e: ctl.close_movie())
         self.logpane.Bind(wx.EVT_COLLAPSIBLEPANE_CHANGED, lambda e: self.Layout())
 
     def show(self, name: str, job: dict | None):
@@ -183,7 +195,9 @@ class AnalysisPanel(wx.Panel):
         bold = plain.Bold()
         for key, (name_, state) in self.rows.items():
             p = phases.get(key)
-            text = {"done": "done", "skipped": "already done", "running": "..."}.get(p["state"], "") if p else ""
+            text = {"done": "done", "skipped": "already done", "running": "..."}.get(p["state"], p["state"]) if p else ""
+            if p and p["state"] == "running" and job["state"] in ("failed", "cancelled"):
+                text = job["state"]
             if p and p["state"] == "running" and job["n"]:
                 text = f"{job['k']} of {job['n']}"
             state.SetLabel(text)
@@ -192,8 +206,8 @@ class AnalysisPanel(wx.Panel):
             name_.SetForegroundColour(wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT) if p
                                       else theme.muted_fg())
         if not job:
-            message = ("Not analysed yet. The analysis reads the movie, finds the grains and follows every tube; it "
-                       "runs on its own,\nand other movies can be opened meanwhile (Cmd-W goes back to the list).")
+            message = ("Not analysed yet. The analysis reads the movie, finds the grains and follows every tube. It "
+                       "runs on its own:\nother movies can be opened meanwhile.")
         elif job["state"] == "queued":
             message = "Waiting for another analysis to finish."
         elif job["state"] == "failed":
@@ -209,7 +223,7 @@ class AnalysisPanel(wx.Panel):
             self.gauge.Pulse()
         else:
             self.gauge.SetValue(0)
-        eta = f"  ·  about {fmt_secs(job['eta'])} left" if job and job.get("eta") else ""
+        eta = f"  ·  about {fmt_left(job['eta'])} left" if job and job.get("eta") else ""
         self.detail.SetLabel(f"{fmt_secs(job['elapsed'])}{eta}" if job and job["elapsed"] else "")
         text = "\n".join((job or {}).get("log", []))
         if self.log.GetValue() != text:
@@ -260,6 +274,10 @@ class Overview(wx.Panel):
                                               "pinch to zoom. Help (F1) says what everything means.")
         self.hint.SetForegroundColour(theme.muted_fg())
         s.Add(self.hint, 0, wx.ALL, 12)
+        self.made = wx.StaticText(self, label="")
+        self.made.SetForegroundColour(theme.muted_fg())
+        self.made.SetFont(theme.font(11))
+        s.Add(self.made, 0, wx.LEFT | wx.RIGHT | wx.BOTTOM, 12)
         self.SetSizer(s)
         self.go.Bind(wx.EVT_BUTTON, lambda e: self._go())
 
@@ -284,7 +302,8 @@ class Overview(wx.Panel):
         v["grains"].SetLabel(f"{total}" + (f"  ({n} counted)" if n < total else ""))
         for key in ("grains",):
             v[key].SetToolTip(sm.get("detail") or "")
-        v["germinated"].SetLabel(f"{sm['germinated']}  ({100 * sm['share']:.0f}%)")
+        v["germinated"].SetLabel(f"{sm['germinated']} of {n}  ·  {100 * sm['share']:.0f}% by the curve" if sm["by_curve"]
+                                 else f"{sm['germinated']} of {n}  ({100 * sm['share']:.0f}%)")
         v["germinated"].SetToolTip(sm.get("detail") or "")
         v["t50"].SetLabel(d.when(sm["t50_frame"]) if sm["t50_frame"] is not None else "not reached")
         v["growth"].SetLabel(f"{u.rate(sm['median_rate']):.3g} {u.rate_unit}" if sm["median_rate"] else "-")
@@ -297,9 +316,10 @@ class Overview(wx.Panel):
                                f"first.")
             self.go.SetLabel("Start Checking (N)" if left == len(ctl.checks) else "Next Check (N)")
         else:
-            self.todo.SetLabel("All checked." if ctl.checks else "Nothing flagged for checking.")
+            self.todo.SetLabel("Every flagged grain has been checked." if ctl.checks else "Nothing flagged for checking.")
             self.go.SetLabel("Export Results")
-        for t in (self.todo, self.hint):
+        self.made.SetLabel(d.made())
+        for t in (self.todo, self.hint, self.made):
             t.SetLabel(t.GetLabel().replace("\n", " "))
             t.Wrap(max(width - 28, 200))
         self.Layout()
@@ -311,7 +331,7 @@ class SidePanel(wx.Panel):
 
     # the answers by what they are about: (key, label, tooltip); Confirm and Undo sit above them
     ROWS = (("Onset", (("onset", "Here (O)", "The tube is first visible at this time"),
-                       ("no_onset", "Never (⇧O)", "The grain never germinated"))),
+                       ("no_onset", "Never (Shift-O)", "The grain never germinated"))),
             ("Tube", (("tip", "Set tip (T)", "Then click the tube's tip at this time (Esc cancels)"),
                       ("path", "Draw (D)", "Then click where the tube leaves the grain and along it to its tip; Enter "
                                            "saves, Esc cancels"),
@@ -357,6 +377,8 @@ class SidePanel(wx.Panel):
         # the lists are rebuilt when a grain is opened: open it after the list's own event has finished
         self.checks.Bind(wx.EVT_LIST_ITEM_SELECTED,
                          lambda e: None if self._filling else wx.CallAfter(ctl.open_check, e.GetIndex()))
+        self.checks.Bind(wx.EVT_MOTION, self._check_tip)
+        self._check_rows, self._tip_row = [], None
         self.events.Bind(wx.EVT_LIST_ITEM_SELECTED,
                          lambda e: None if self._filling else wx.CallAfter(ctl.goto_event_index, e.GetIndex()))
         self._filling = False
@@ -375,9 +397,15 @@ class SidePanel(wx.Panel):
         self.gid = wx.StaticText(p, label="")
         self.gid.SetFont(theme.font(17, bold=True))
         head.Add(self.gid, 0, wx.ALIGN_BOTTOM)
-        self.gstate = wx.StaticText(p, label="")
+        self.gstate = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
+        self.gstate.SetMinSize((60, -1))
         self.gstate.SetForegroundColour(theme.muted_fg())
         head.Add(self.gstate, 1, wx.LEFT | wx.ALIGN_BOTTOM, 10)
+        self.back = wx.Button(p, label="Movie (Esc)", style=wx.BU_EXACTFIT)
+        self.back.SetWindowVariant(wx.WINDOW_VARIANT_SMALL)
+        self.back.SetToolTip("Back to the movie's numbers (or click an empty place on the movie)")
+        self.back.Bind(wx.EVT_BUTTON, lambda e: self.ctl.deselect())
+        head.Add(self.back, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 6)
         s.Add(head, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
         self.reasons = wx.BoxSizer(wx.VERTICAL)  # why to check it: a link to the time and a sentence, each
         self._reasons_key, self._reason_rows, self._active = None, [], None
@@ -385,8 +413,9 @@ class SidePanel(wx.Panel):
         self.view = GrainView(p, self.ctl, size=280)
         s.Add(self.view, 0, wx.ALIGN_CENTER_HORIZONTAL | wx.TOP, 8)
         zrow = wx.BoxSizer(wx.HORIZONTAL)
-        self.now = wx.StaticText(p, label="")
-        zrow.Add(self.now, 1, wx.ALIGN_CENTER_VERTICAL)
+        self.now = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
+        self.now.SetMinSize((60, -1))
+        zrow.Add(self.now, 1, wx.ALIGN_CENTER_VERTICAL | wx.RIGHT, 6)
         self.zoom = wx.Choice(p, choices=["Near", "Wide", "Far"])
         self.zoom.SetSelection(0)
         self.zoom.SetToolTip("How much of the grain's surroundings the close-up shows (or scroll on it)")
@@ -465,6 +494,17 @@ class SidePanel(wx.Panel):
         self.zoom.SetSelection(self.view.fit(g, max(last, 0)))
 
     # ---- updates ------------------------------------------------------------------------------------
+    def _check_tip(self, e):
+        """The whole of a check's reasons, with their sentences, on hover (the list cuts them short)."""
+        row, _ = self.checks.HitTest(e.GetPosition())
+        if row != self._tip_row:
+            self._tip_row = row
+            c = self._check_rows[row] if 0 <= row < len(self._check_rows) else None
+            self.checks.SetToolTip("\n".join(f"{t}: {d}" if d else t for t, d in zip(c["reasons"], c["details"]))
+                                   + ("" if c["isolated"] else "\nIn a clump or at the edge: not counted.")
+                                   if c else "")
+        e.Skip()
+
     def update_nav(self, checks: list[dict], sel: str | None):
         left = sum(1 for c in checks if not c["done"])
         cur = next((i for i, c in enumerate(checks) if c["gid"] == sel), None)
@@ -474,8 +514,8 @@ class SidePanel(wx.Panel):
             self.nav_label.SetLabel(f"{left} to check" if left else "All checked")
         elif checks[cur]["done"]:  # looked at: it has moved to the end of the list
             self.nav_label.SetLabel(f"Checked  ·  {left} left" if left else "All checked")
-        else:
-            self.nav_label.SetLabel(f"Check {cur + 1} of {len(checks)}  ({left} left)")
+        else:  # the ones not yet looked at come first: count on from the ones done
+            self.nav_label.SetLabel(f"Check {len(checks) - left + cur + 1} of {len(checks)}")
         self.progress.SetValue(int(1000 * (len(checks) - left) / len(checks)) if checks else 0)
         self.prev.Enable(bool(checks))
         self.next.Enable(bool(checks))
@@ -488,13 +528,15 @@ class SidePanel(wx.Panel):
             muted = theme.muted_fg()
             for i, c in enumerate(checks):
                 self.checks.InsertItem(i, c["gid"])
-                self.checks.SetItem(i, 1, " · ".join(c["reasons"]))
+                self.checks.SetItem(i, 1, " · ".join(c["reasons"]) + ("" if c["isolated"] else " (not counted)"))
                 self.checks.SetItem(i, 2, "" if c["conf"] is None else f"{100 * c['conf']:.0f}%")
                 if c["done"]:
                     self.checks.SetItemTextColour(i, muted)
                 if c["gid"] == sel:
                     self.checks.Select(i)
+            self._check_rows = checks
             self.events.DeleteAllItems()
+            self.events.SetColumnWidth(0, 80 if data.units.timed else 110)
             for i, ev in enumerate(events):
                 self.events.InsertItem(i, data.when(data.frame(ev["bin"])))
                 self.events.SetItem(i, 1, ev["text"])
@@ -567,20 +609,25 @@ class SidePanel(wx.Panel):
             self.gid.SetLabel(g["id"])
             self.gid.SetToolTip(f"{g['id']}: at x {g['x']:.0f}, y {g['y']:.0f} px in the first frames, "
                                 f"{2 * g['r']:.0f} px across")
-            where = [] if g["isolated"] else ([f"clump of {g['clump']}"] if g["clump"] > 1 else ["near edge"])
-            self.gstate.SetLabel("  ·  ".join([STATE_WORDS[st], *where, REVIEW_WORDS[g["review"]["state"]]]))
-            self.gstate.SetToolTip("Not counted: grains in a clump or at the edge of the field are left out of the "
-                                   "movie's numbers" if where else "")
+            where = [] if g["isolated"] else ([f"clump of {g['clump']}, not counted"] if g["clump"] > 1 else
+                                              ["at the edge, not counted"])
+            if g["excluded"]:
+                words = [f"excluded ({g['excluded'].replace('_', ' ')})"]
+            else:
+                words = [STATE_WORDS[st], *where, REVIEW_WORDS[g["review"]["state"]]]
+            self.gstate.SetLabel("  ·  ".join(words))
+            self.gstate.SetToolTip("  ·  ".join(words) + ("\nGrains in a clump or at the edge of the field are left out "
+                                                         "of the movie's numbers." if where else ""))
             self._show_reasons(g, data, b)
             L = g["L"][b]
             if st == "germinated":
-                now = data.length_words(L) if L > 0.5 else "tube too short to measure"
+                now = data.length_words(L) if L >= MIN_TUBE_PX else "no tube yet"
             else:
                 now = {"notyet": "not germinated yet", "never": "", "lost": "lost", "excluded": "excluded",
                        "unobservable": "not readable"}[st]
             yours = any(t["bin"] == b for t in g.get("human") or [])
-            self.now.SetLabel("  ·  ".join(x for x in (data.when(data.frame(b)), now, "checked" if yours else "")
-                                           if x))
+            self.now.SetLabel("  ·  ".join(x for x in (data.when(data.frame(b)), now) if x))
+            self.now.SetToolTip("The time shown and the tube's length then" + (" (yours)" if yours else ""))
             u = data.units
             if g["status"] == "emerged_within" and g["onset_by"] is not None:
                 onset = data.when_range(g["onset_after"], g["onset_by"])

@@ -38,49 +38,66 @@ MODES = (("n", "Movie"), ("h", "Contrast"), ("g", "Growth"))
 
 
 class Legend(Drawn):
+    """What the marks on the movie mean, right-aligned; on a narrow window the last entries are left out (Help has
+    them all)."""
+
     ITEMS = (("germinated", "germinated"), ("notyet", "not yet"), ("never", "never"), ("lost", "lost"),
-             ("excluded", "excluded"))
+             ("tube", "tube"), ("tip", "tip"), ("check", "to check"), ("excluded", "excluded"),
+             ("unobservable", "not readable"))
 
     def __init__(self, parent):
         super().__init__(parent, size=(-1, 22))
-        self.SetMinSize((520, 22))
+        self.SetMinSize((40, 22))
         self.SetBackgroundColour(theme.panel_bg())
+        self.SetToolTip("What the marks on the movie mean (Help, F1, says more)")
+
+    def _mark(self, gc, key, x, y):
+        """Draw one entry's mark at x; returns its width."""
+        if key == "tube":
+            gc.SetPen(theme.pen(theme.TUBE, 3))
+            gc.StrokeLine(x, y, x + 14, y)
+            return 14
+        if key == "tip":
+            gc.SetPen(wx.TRANSPARENT_PEN)
+            gc.SetBrush(wx.Brush(theme.colour(theme.TIP)))
+            gc.DrawEllipse(x, y - 4, 8, 8)
+            return 8
+        if key == "check":  # the canvas' to-check diamond
+            mark = gc.CreatePath()
+            mark.MoveToPoint(x + 5, y - 5)
+            mark.AddLineToPoint(x + 10, y)
+            mark.AddLineToPoint(x + 5, y + 5)
+            mark.AddLineToPoint(x, y)
+            mark.CloseSubpath()
+            gc.SetPen(wx.TRANSPARENT_PEN)
+            gc.SetBrush(wx.Brush(theme.colour(theme.CHECK)))
+            gc.FillPath(mark)
+            return 10
+        style = wx.PENSTYLE_SHORT_DASH if key in theme.DASHED else wx.PENSTYLE_SOLID
+        gc.SetBrush(wx.TRANSPARENT_BRUSH)
+        gc.SetPen(theme.pen((60, 60, 60), 4))
+        gc.DrawEllipse(x, y - 5, 10, 10)
+        gc.SetPen(theme.pen(theme.STATE[key], 2, style))
+        gc.DrawEllipse(x, y - 5, 10, 10)
+        return 10
 
     def _paint(self, e):
         dc = wx.PaintDC(self)
         dc.SetBackground(wx.Brush(theme.panel_bg()))
         dc.Clear()
         gc = wx.GraphicsContext.Create(dc)
-        x, y = 4.0, self.GetClientSize()[1] / 2
-        fg = wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT)
-        gc.SetFont(theme.font(10), fg)
-        for key, name in self.ITEMS:
-            style = wx.PENSTYLE_SHORT_DASH if key in theme.DASHED else wx.PENSTYLE_SOLID
-            gc.SetBrush(wx.TRANSPARENT_BRUSH)
-            gc.SetPen(theme.pen((60, 60, 60), 4))
-            gc.DrawEllipse(x, y - 5, 10, 10)
-            gc.SetPen(theme.pen(theme.STATE[key], 2, style))
-            gc.DrawEllipse(x, y - 5, 10, 10)
-            gc.DrawText(name, x + 14, y - gc.GetTextExtent(name)[1] / 2)
-            x += 20 + gc.GetTextExtent(name)[0] + 8
-        gc.SetPen(theme.pen(theme.TUBE, 3))
-        gc.StrokeLine(x, y, x + 14, y)
-        gc.DrawText("tube", x + 18, y - gc.GetTextExtent("tube")[1] / 2)
-        x += 18 + gc.GetTextExtent("tube")[0] + 10
-        gc.SetPen(wx.TRANSPARENT_PEN)
-        gc.SetBrush(wx.Brush(theme.colour(theme.TIP)))
-        gc.DrawEllipse(x, y - 4, 8, 8)
-        gc.DrawText("tip", x + 12, y - gc.GetTextExtent("tip")[1] / 2)
-        x += 12 + gc.GetTextExtent("tip")[0] + 10
-        mark = gc.CreatePath()  # the canvas' to-check diamond
-        mark.MoveToPoint(x + 5, y - 5)
-        mark.AddLineToPoint(x + 10, y)
-        mark.AddLineToPoint(x + 5, y + 5)
-        mark.AddLineToPoint(x, y)
-        mark.CloseSubpath()
-        gc.SetBrush(wx.Brush(theme.colour(theme.CHECK)))
-        gc.FillPath(mark)
-        gc.DrawText("to check", x + 14, y - gc.GetTextExtent("to check")[1] / 2)
+        w, h = self.GetClientSize()
+        y = h / 2
+        gc.SetFont(theme.font(10), wx.SystemSettings.GetColour(wx.SYS_COLOUR_WINDOWTEXT))
+        widths = [{"tube": 14, "tip": 8}.get(key, 10) + 4 + gc.GetTextExtent(name)[0] + 12 for key, name in self.ITEMS]
+        n = len(self.ITEMS)
+        while n and sum(widths[:n]) > w - 4:
+            n -= 1
+        x = w - 4 - sum(widths[:n]) + 12
+        for (key, name), width in zip(self.ITEMS[:n], widths[:n]):
+            mw = self._mark(gc, key, x, y)
+            gc.DrawText(name, x + mw + 4, y - gc.GetTextExtent(name)[1] / 2)
+            x += width
 
 
 class Drop(wx.FileDropTarget):
@@ -226,7 +243,7 @@ class MainFrame(wx.Frame):
         add(c, "revert", "Back to Model's Answer (U)", lambda: self.on_action("revert"))
         mb.Append(c, "Grain")
         t = wx.Menu()
-        add(t, "legacy", "Legacy Manual Pipeline...", self.on_legacy)
+        add(t, "legacy", "Old Manual Pipeline (Hough Grains, Tip Templates)...", self.on_legacy)
         mb.Append(t, "Tools")
         h = wx.Menu()
         add(h, "help", "TubeTracker Help\tF1", self.on_help)
@@ -243,13 +260,13 @@ class MainFrame(wx.Frame):
         self.title = wx.StaticText(p, label="")
         self.title.SetFont(theme.font(14, bold=True))
         head.Add(self.title, 0, wx.ALIGN_CENTER_VERTICAL)
-        self.line = wx.StaticText(p, label="")
+        self.line = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
+        self.line.SetMinSize((120, -1))
         self.line.SetForegroundColour(theme.muted_fg())
-        head.Add(self.line, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 16)
-        head.AddStretchSpacer()
-        self.warn = wx.StaticText(p, label="")
+        head.Add(self.line, 1, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 16)
+        self.warn = wx.StaticText(p, label="", style=wx.ST_ELLIPSIZE_END)
         self.warn.SetForegroundColour(theme.colour(theme.WARN_TEXT))
-        head.Add(self.warn, 0, wx.ALIGN_CENTER_VERTICAL)
+        head.Add(self.warn, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 16)
         outer.Add(head, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.TOP, 10)
         body = wx.BoxSizer(wx.HORIZONTAL)
         stage = wx.BoxSizer(wx.VERTICAL)
@@ -278,8 +295,7 @@ class MainFrame(wx.Frame):
         self.zoom_label = wx.StaticText(p, label="", size=(48, -1))
         self.zoom_label.SetForegroundColour(theme.muted_fg())
         bar.Add(self.zoom_label, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 8)
-        bar.AddStretchSpacer()
-        bar.Add(Legend(p), 0, wx.ALIGN_CENTER_VERTICAL)
+        bar.Add(Legend(p), 1, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 8)
         stage.Add(bar, 0, wx.EXPAND | wx.ALL, 6)
         self.canvas = FieldCanvas(p, self)
         stage.Add(self.canvas, 1, wx.EXPAND)
@@ -448,8 +464,9 @@ class MainFrame(wx.Frame):
     def on_analyse_again(self):
         if self.folder is None:
             return
-        if wx.MessageBox("Analyse this movie again? The current analysis and its checks are kept in its "
-                         "'earlier' folder.", "Analyse Again", wx.OK | wx.CANCEL | wx.ICON_QUESTION, self) != wx.OK:
+        if wx.MessageBox("Analyse this movie again? The current analysis and your checks are kept in its "
+                         "'earlier' folder; the new analysis starts unchecked.", "Analyse Again",
+                         wx.OK | wx.CANCEL | wx.ICON_QUESTION, self) != wx.OK:
             return
         folder = self.folder
         self.close_movie()
@@ -533,6 +550,7 @@ class MainFrame(wx.Frame):
             warns.append({"text": "times in frames", "detail": "Give the movie's duration in Settings (Cmd-,) to see "
                                                                "times in minutes."})
         self.warn.SetLabel("  ·  ".join(w["text"] for w in warns))
+        self.warn.SetMaxSize((max(self.GetClientSize()[0] // 3, 200), -1))
         self.warn.SetToolTip("\n\n".join(w.get("detail") or w["text"] for w in warns))
         lag = d.units.minutes(GROWTH_LAG * d.fpb)
         self.mode_btns["g"].SetToolTip(f"What changed over the last {f'{lag:.0f} min' if lag else f'{GROWTH_LAG} time steps'}"
@@ -653,7 +671,7 @@ class MainFrame(wx.Frame):
             pts += [(x - g["r"], y - g["r"]), (x + g["r"], y + g["r"]), *(tube_at(g, b) or [])]
         xs, ys = [q[0] for q in pts], [q[1] for q in pts]
         span = max(xs) - min(xs), max(ys) - min(ys)
-        return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, max(190.0, 1.3 * max(span))
+        return (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2, max(360.0, 1.4 * max(span))
 
     # ================================================================ selection, checks, events
     def select(self, gid, zoom: bool = False):
@@ -690,6 +708,8 @@ class MainFrame(wx.Frame):
         items = self.checks
         if not items:
             return self.notice("Nothing to check")
+        if all(c["done"] for c in items):
+            self.notice("Every flagged grain has been checked: these are ones you looked at", ok=True)
         cur = next((i for i, c in enumerate(items) if c["gid"] == self.sel), None)
         n = len(items)
         for k in range(1, n + 1):
@@ -778,6 +798,8 @@ class MainFrame(wx.Frame):
             return self.redraw()
         if grain is not None and grain["id"] != self.sel:
             self.select(grain["id"])
+        elif grain is None and not zoomed:  # an empty place on the movie
+            self.deselect()
 
     GRAIN_MENU = (("confirm", "Confirm"), None, ("onset", "Onset Here"), ("no_onset", "Never Germinated"), None,
                   ("tip", "Set Tip"), ("path", "Draw Tube"), ("no_tube", "No Tube Here"), None,
@@ -808,6 +830,11 @@ class MainFrame(wx.Frame):
             return self.correct("undo")
         if self.selected() is None:
             return self.notice("Select a grain first: click it, or press N")
+        if key == "path" and self.tool == "path" and self.path_pts:
+            if len(self.path_pts) >= 2:
+                return self.finish_path()
+            self.set_tool(None)
+            return self.notice("Drawing cancelled")
         if key in ("tip", "path"):
             return self.set_tool(None if self.tool == key else key)
         if key == "not_a_grain" and self.selected()["excluded"]:
@@ -943,7 +970,7 @@ class MainFrame(wx.Frame):
         if self.data is None or not self.movie.IsShown() or e.CmdDown() or e.AltDown() or typing:
             e.Skip()
             return
-        in_list = isinstance(focus, (wx.ListCtrl, wx.Slider, wx.Choice))
+        in_list = isinstance(focus, wx.ListCtrl)  # it keeps its arrows, Enter and type-ahead (N and P still go)
         if code == wx.WXK_ESCAPE:
             return self.set_tool(None) if self.tool else self.deselect()
         if code in (wx.WXK_RETURN, wx.WXK_NUMPAD_ENTER):
@@ -955,6 +982,9 @@ class MainFrame(wx.Frame):
             self.path_pts.pop()
             self.status(self.tool_hint())
             return self.redraw()
+        if isinstance(focus, (wx.Slider, wx.Choice)) and code in (wx.WXK_LEFT, wx.WXK_RIGHT, wx.WXK_UP, wx.WXK_DOWN):
+            e.Skip()  # the slider moves in time itself; the zoom choice changes itself
+            return
         if not in_list:
             step = 10 if shift else 1
             nav = {wx.WXK_SPACE: self.toggle_play, wx.WXK_LEFT: lambda: self.set_bin(self.b - step),

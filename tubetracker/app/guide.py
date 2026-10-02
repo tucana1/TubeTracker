@@ -34,8 +34,9 @@ def page_html(fg, bg, accent) -> str:
 
 <a name="start"></a><h3>Getting started</h3>
 <ol>
-<li><b>Open Movie</b> (Cmd-O), or drop a movie on the window. Say how long the movie ran, and the pixel size if
-you know it (lengths are in pixels without it). Both can be changed later in <b>Settings</b> (Cmd-,).</li>
+<li><b>Open Movie</b> (Cmd-O), or drop a movie on the window. Give the real time the recording took (not how
+long the movie plays), and the pixel size if you know it (lengths are in pixels without it). Both can be changed
+later in <b>Settings</b> (Cmd-,).</li>
 <li>The analysis runs by itself; the window shows how far it is. It can take a while for a long movie, and other
 movies can be opened meanwhile.</li>
 <li>When it is done, the movie opens with every grain and tube drawn on it, and the side panel shows its numbers.</li>
@@ -52,18 +53,21 @@ results folder.</li>
 away), {_swatch(S["excluded"], "excluded")} (dashed, crossed: not a grain or a clump) and
 {_swatch(S["unobservable"], "not readable")} (dashed).</p>
 <p>The {_swatch(theme.TUBE, "pink line")} is the tube as measured at that time, from where it leaves the grain
-(white dot) to its {_swatch(theme.TIP, "tip")} (yellow dot). On the selected grain a faint dashed line shows the
-route the tube is measured along. An {_swatch(theme.CHECK, "amber diamond")} marks a grain to check.</p>
+(white dot) to its {_swatch(theme.TIP, "tip")} (yellow dot); a tube shorter than 2 px counts as none. In the
+close-up, a faint dashed line shows the path the tube is measured along. An
+{_swatch(theme.CHECK, "amber diamond")} marks a grain to check. Grains in a clump or at the edge of the field are
+drawn too, but are not counted in the movie's numbers.</p>
 <p>Views (above the movie, or C):</p>
 <ul>
-<li><b>Movie</b>: the movie itself. Each time step is an average of a few hundred frames, which makes faint tubes
-clearer than in single frames.</li>
+<li><b>Movie</b>: the movie itself. Each time step averages the movie over a few hundred frames, which makes faint
+tubes clearer than in single frames.</li>
 <li><b>Contrast</b>: the same, stretched about the background grey so faint tubes show.</li>
 <li><b>Growth</b> (G): what changed over the last six time steps. New tube shows dark, so growing tips stand
 out.</li>
 </ul>
-<p>Drag to move the movie, scroll or pinch to zoom, F to fit it, Z to zoom to the selected grain; double-click a
-grain to zoom to it. The close-up on the right follows the selected grain as it moves.</p>
+<p>Drag to move the movie, scroll or pinch to zoom (or = and -), F to fit it, Z to zoom to the selected grain;
+double-click a grain to zoom to it. Click a grain to select it; click an empty place, or press Esc, to go back to
+the movie's numbers. The close-up on the right follows the selected grain as it moves.</p>
 <p>The slider, Left and Right (Shift: ten steps), Home and End move in time; Space plays.</p>
 
 <a name="timeline"></a><h3>The timeline</h3>
@@ -77,28 +81,33 @@ line marks <b>T50</b>. Below it, one lane per kind of event:</p>
 and at least 8 px long).</li>
 <li><b>To check</b>: the grains still to check, at the time the check list opens them.</li>
 </ul>
+<p>Marks of grains that are not counted (in a clump or at the edge) are faint.</p>
 <p>Dashed purple lines are focus changes. Click a mark to go to that grain and time; click or drag elsewhere to
 move in time. The Events tab lists the same events.</p>
 
 <a name="checking"></a><h3>Checking</h3>
-<p>The model marks the grains a person should look at. N and P go through them (the ones not yet looked at first,
-then the least sure first); the Checks tab lists them all. The side panel says why each was marked; click a reason
-to go to its time.</p>
+<p>The model marks the grains a person should look at. N and P go through them: the ones not yet looked at first,
+counted grains before those in clumps or at the edge, and the least sure first. The Checks tab lists them all
+(hover over one for its reasons in full). The side panel says why each was marked; click a reason to go to its
+time.</p>
 <ul>
 <li><b>unsure length</b>: the model's least sure reading of the tube. Is there a tube, and does it reach as far as
 drawn?</li>
 <li><b>drawn off the tube</b>: most of the tube drawn then does not lie on a tube. The reading may have taken
 another tube or lost its own.</li>
-<li><b>onset moved back</b>, <b>onset from growth front</b>, <b>onset at focus change</b>, <b>settling at
+<li><b>onset moved back</b>, <b>onset from later growth</b>, <b>onset at focus change</b>, <b>settling at
 start</b>: check when the tube first shows.</li>
 <li><b>lost at</b>: check that the grain really burst or left.</li>
-<li><b>touches</b>, <b>reaches another grain</b>, <b>shares change region</b>: the tube may run into a
+<li><b>touches</b>, <b>reaches another grain</b>, <b>shares growth with a neighbour</b>: the tube may run into a
 neighbour's; check its length.</li>
 <li><b>not followed</b>: the grain moved in a way that could not be followed, so it was read at its first
 place.</li>
-<li><b>route covers</b>, <b>second change region</b>, <b>no usable route</b>: the route explains little of what
-changed round the grain; the tube may curl or be shared.</li>
-<li><b>no grain rim</b>: probably debris (Not a grain, X).</li>
+<li><b>growth off the tube</b>, <b>no tube path found</b>: much of what grew round the grain is not on the tube
+drawn; the tube may curl or branch, or another may be close.</li>
+<li><b>growth but no onset</b>, <b>too short for a tube</b>: something grew next to the grain, but no tube was
+seen leaving it, or it never got longer than 8 px.</li>
+<li><b>no grain outline</b>: probably debris (Not a grain, X). Confirm does not take such a grain: say what it
+is.</li>
 </ul>
 <p>Look at the grain at a few times (move in time, or click its growth curve). If the onset and the tube are right,
 <b>Confirm</b> (Enter): the grain counts as checked and the next one opens. If not, correct it (below), then
@@ -122,7 +131,8 @@ grain</b> (X): debris and the like; press X again to include it. <b>Clump</b> (K
 leave the grain out of the numbers.</li>
 <li><b>Back to Model's Answer</b> (U, in the Grain menu) forgets everything said about the grain.</li>
 </ul>
-<p>Right-click a grain for the same corrections. The Undo button's tip says what it would take back.</p>
+<p>Right-click a grain on the movie for the same corrections. The Undo button's tip says what it would take
+back. Pressing D again while drawing saves the tube, as Enter does.</p>
 <p>A length you give pins the growth curve at that time: between your lengths the curve keeps the shape of the
 model's, and after the last one it grows as the model's did. It never shrinks. One or two lengths where the tube is
 long are usually enough.</p>
@@ -132,7 +142,9 @@ long are usually enough.</p>
 <ul>
 <li><b>Counted grains</b>: the grains on their own (not in a clump or at the edge of the field), readable and not
 excluded. The germination numbers, the curve and T50 are of these.</li>
-<li><b>Germinated</b>: the share of counted grains whose tube appeared during the movie or before it.</li>
+<li><b>Germinated</b>: the counted grains whose tube appeared, during the movie or before it. Their share is
+where the germination curve ends: grains lost before they germinated count only until they were lost, so when
+there are such grains it is not simply germinated over counted ("by the curve").</li>
 <li><b>Onset</b>: when the tube first showed: absent at one time step, visible at the next.</li>
 <li><b>T50</b>: the time by which half the counted grains had surely germinated. Grains lost before germinating
 count until they were lost.</li>

@@ -35,7 +35,7 @@ from sparsetrack.bench.server import EXCLUDE_REASONS, Bench, trace_bins
 from sparsetrack.review import asked_bins, prefill
 
 from .model import RunData
-from .overlay import project, to_length
+from .overlay import MIN_TUBE_PX, project, to_length
 
 SNAP_PX = 10.0      # a tip click farther than this from the tube's route (along its length) is not on it
 EXTEND_PX = 60.0    # ...but beyond the route's end, the tube may be carried on straight to the click this far
@@ -166,6 +166,10 @@ class Reviewer:
         on = lab.get("onset")
         if not on:
             raise ReviewError(f"{gid} has no onset answer to confirm.")
+        if d.model[gid].get("status") == "unobservable" and on.get("review_origin", "human") != "human":
+            # the model could not read it (its pre-filled answer is "never germinated"): confirming would count it
+            raise ReviewError(f"{gid} could not be read. Not a grain: X. A grain: O where its tube appears, or "
+                              f"Shift-O if it never germinated.")
         self.bench.set_onset(gid, {k: on.get(k) for k in ("verdict", "first_visible_bin", "last_absent_bin")})
         if on["verdict"] not in ("emerged_within", "emerged_at_start"):
             return f"{gid}: confirmed as not germinated"
@@ -181,7 +185,7 @@ class Reviewer:
             L = float(shown["L"][b])
             if t and t.get("review_origin") == "model" and abs(float(t.get("length_px") or 0.0) - L) <= 0.05:
                 self._trace(gid, b, t["state"], t.get("path_xy_view") or [], view=t.get("view", "model"))
-            elif L >= 2.0:
+            elif L >= MIN_TUBE_PX:
                 route, _ = d.route(gid, b)
                 self._trace(gid, b, "full", to_length(route, L), view="app-confirm")
             else:
@@ -226,7 +230,7 @@ class Reviewer:
             raise ReviewError(f"That point is {dist:.0f} px from {gid}'s tube route: click on the tube, or draw "
                               f"the tube's path (D).")
         L = float(np.sum(np.hypot(*np.diff(np.asarray(pts, float), axis=0).T))) if len(pts) > 1 else 0.0
-        if L < 2.0:
+        if L < MIN_TUBE_PX:
             self._trace(gid, b, "no_tube")
             return f"{gid}: no tube at {d.when(d.frame(b))}"
         rec = self._trace(gid, b, "full", pts, view="app-tip")

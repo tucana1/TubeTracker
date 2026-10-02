@@ -120,3 +120,24 @@ def test_export_writes_the_tables_in_the_movies_units_with_corrections(reviewer)
                 if r["grain"] == "g001" and r["bin"] == "30"]
     assert float(reviewed[0]["length_px"]) == pytest.approx(30.0, abs=0.1)  # the review export has it too
     assert out["folder"] == str(results)
+
+
+def test_confirm_does_not_count_a_grain_the_model_could_not_read(tmp_path):
+    """The model pre-fills an unreadable grain as never germinated: Enter must not turn debris into a counted grain."""
+    run = make_run(tmp_path / "run", {"duration_s": 24000.0})
+    pred_path = run / "analysis" / "predictions.json"
+    pred = json.loads(pred_path.read_text())
+    g2 = next(g for g in pred["grains"] if g["id"] == "g002")
+    g2["status"], g2["flags"] = "unobservable", ["no_grain"]
+    pred_path.write_text(json.dumps(pred))
+    r = Reviewer(RunData(RunFolder(run)))
+    r.start(background=False)
+    with pytest.raises(ReviewError, match="could not be read"):
+        r.act("g002", "confirm")
+    assert r.data.grain("g002")["status"] == "unobservable"  # still not counted
+    r.act("g002", "exclude", reason="not_a_grain")  # what it says to do instead
+    assert r.data.grain("g002")["excluded"] == "not_a_grain"
+    r.act("g002", "include")
+    r.act("g002", "no_onset")  # a person who says it is a grain that never germinated is believed
+    r.act("g002", "confirm")
+    assert r.data.grain("g002")["status"] == "no_emergence_by_end"

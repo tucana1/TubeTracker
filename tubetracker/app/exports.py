@@ -13,8 +13,9 @@ model elsewhere), in the movie's units:
 It also refreshes SparseTrack's reviewed exports in ``<run>/review/`` (``sparsetrack.review.export``). The model's
 own tables stay in ``<run>/analysis/``.
 
-``export_summary`` puts several movies side by side (``sparsetrack.summary.write_summary``, each movie in its own
-units, with its sample metadata).
+``compare_row`` reads a movie as the app shows it, for the Compare window; ``export_summary`` puts several movies
+side by side in files (``sparsetrack.summary.write_summary``: the model's results and the checked onsets, each movie
+in its own units, with its sample metadata).
 """
 
 from __future__ import annotations
@@ -210,41 +211,42 @@ def movie_label(folder: RunFolder) -> str:
     return " · ".join(bits)
 
 
-def compare_rows(folders: list[RunFolder]) -> list[dict]:
-    """Several movies side by side, as ``sparsetrack summary`` reads them (the model's results, and the reviewed
-    onsets where a person has checked), each in its own units, with its germination curve for plotting."""
-    from sparsetrack.summary import envelope, movie_row
+def compare_row(folder: RunFolder) -> dict:
+    """One movie for a side-by-side comparison, as the app shows it (a person's checks where they gave them, the
+    model's readings elsewhere) and in its own units, with its germination curve for plotting."""
+    import json
 
-    rows = []
-    for f in folders:
-        u = Units.from_setup(f.load_setup(), f.n_frames())
-        r = movie_row(f.root, None)  # frames and px; converted below with the movie's own units
-        spf = u.s_per_frame
-        to_t = (lambda fr: fr * spf / 60.0) if spf else (lambda fr: fr)
-        curve = envelope(r["_intervals"], r["last_frame"]) if r["_intervals"] and r["last_frame"] else ([], [])
-        checked = bool(r.get("onsets_checked"))  # a review with nothing checked yet is still the model's
-        rcurve = (envelope(r["_reviewed_intervals"], r["last_frame"]) if checked and r.get("_reviewed_intervals")
-                  and r["last_frame"] else ([], []))
-        if not checked:
-            r["reviewed_t50_frame"] = r["reviewed_germinated"] = None
-        fpb = r["frames_per_bin"]
-        rates = [x / fpb for x in r["_rates"]]  # px per frame
-        s = f.load_setup()
-        rows.append({
-            "folder": str(f.root), "name": f.name, "label": movie_label(f), "sample_id": s.get("sample_id", ""),
-            "genotype": s.get("genotype", ""), "replicate": s.get("replicate", ""), "timed": u.timed,
-            "scaled": u.scaled, "grains": r["grains"], "germinated": r["germinated"],
-            "t50": None if r["t50_frame"] is None else to_t(r["t50_frame"]),
-            "reviewed_t50": None if r.get("reviewed_t50_frame") is None else to_t(r["reviewed_t50_frame"]),
-            "reviewed_germinated": r.get("reviewed_germinated"), "onsets_checked": r.get("onsets_checked"),
-            "median_rate": u.rate(float(np.median(rates))) if rates else None, "rate_unit": u.rate_unit,
-            "median_final": u.length(r["final_length_px"]) if r["final_length_px"] is not None else None,
-            "length_unit": u.length_unit, "time_unit": u.time_unit, "lost": r["lost_partway"],
-            "rates": [u.rate(x) for x in rates],
-            "curve": {"t": [to_t(x) for x in curve[0]], "y": list(curve[1])},
-            "reviewed_curve": {"t": [to_t(x) for x in rcurve[0]], "y": list(rcurve[1])},
-        })
-    return rows
+    doc = model_doc = None
+    labels = folder.review_labels
+    if labels.exists():
+        try:
+            doc = json.loads(labels.read_text())
+            model = labels.with_suffix(".model.json")
+            model_doc = json.loads(model.read_text()) if model.exists() else None
+        except (OSError, ValueError):
+            doc = model_doc = None
+    d = RunData(folder, doc, model_doc)
+    grains = d.grains()
+    pop = d.population(grains)
+    sm = d.summary(grains, pop)
+    u, s = d.units, d.setup
+    counted = [g for g in grains if g["isolated"] and not g["excluded"] and g["status"] != "unobservable"]
+    return {
+        "folder": str(folder.root), "name": folder.name, "label": movie_label(folder),
+        "sample_id": s.get("sample_id", ""), "genotype": s.get("genotype", ""), "replicate": s.get("replicate", ""),
+        "timed": u.timed, "scaled": u.scaled, "time_unit": u.time_unit, "length_unit": u.length_unit,
+        "rate_unit": u.rate_unit, "grains": sm["n"], "germinated": sm["share"],
+        "t50": None if pop["t50_frame"] is None else u.time(pop["t50_frame"]),
+        "median_rate": None if sm["median_rate"] is None else u.rate(sm["median_rate"]),
+        "median_final": None if sm["median_final"] is None else u.length(sm["median_final"]),
+        "lost": sm["lost"], "checked": sm["reviewed"], "all": sm["grains"],
+        "rates": [u.rate(g["rate"]) for g in counted if g["status"] in EMERGED and g["rate"]],
+        "curve": {"t": [u.time(d.frame(b)) for b in range(d.n_bins)], "y": list(pop["certain"])},
+    }
+
+
+def compare_rows(folders: list[RunFolder]) -> list[dict]:
+    return [compare_row(f) for f in folders]
 
 
 def export_summary(folders: list[RunFolder], out: Path, log=lambda *a: None) -> dict:

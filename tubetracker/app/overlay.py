@@ -10,6 +10,7 @@ from __future__ import annotations
 import math
 
 EMERGED = ("emerged_within", "emerged_at_start")
+MIN_TUBE_PX = 2.0  # shorter is no tube: not drawn, not measured, and confirmed as none (corrections.confirm)
 
 
 def path_length(pts) -> float:
@@ -131,7 +132,7 @@ def shift(pts, d) -> list:
 def tube_at(g: dict, b: int) -> list | None:
     """The tube at bin ``b`` where it is in the field (the route cut to the tube's length then), or None."""
     L = g["L"][b] if b < len(g["L"]) else 0.0
-    if L <= 0.5 or g.get("excluded"):
+    if L < MIN_TUBE_PX or g.get("excluded"):
         return None
     route, _ = route_at(g, b)
     if len(route) < 2:

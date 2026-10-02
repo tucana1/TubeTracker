@@ -77,49 +77,52 @@ def stall_bin(L, last: int) -> int | None:
 
 # a model flag as a short phrase (None: not shown as a phrase) and in a sentence
 PHRASES = {
-    "reader": "read from tube maps", "shared_change_split": "shares change region", "drift_rejected": "not followed",
-    "onset_at_focus_change": "onset at focus change", "onset_moved_to_front": "onset moved back",
-    "onset_from_front": "onset from growth front", "contact_censored": "reaches another grain",
-    "no_grain": "no grain rim", "front_too_short": "too short for a tube", "degenerate_path": "no usable route",
-    "tube_map_without_onset": "change without onset", "second_attached_component": "second change region",
-    "path_by_growth": "route chosen by growth", "flood_found_no_tube": "no tube in maps", "route_given": "route given",
-    "grain_lost_after": "lost partway", "settled_from_bin": "settling at start",
-    "touches": "touches {}", "rotates": "turns {}", "tip_continued": "tip continued {}", "onset_lookback": "onset back {} bins",
+    "reader": "read from the tube model", "shared_change_split": "shares growth with a neighbour",
+    "drift_rejected": "not followed", "onset_at_focus_change": "onset at focus change",
+    "onset_moved_to_front": "onset moved back", "onset_from_front": "onset from later growth",
+    "contact_censored": "reaches another grain", "no_grain": "no grain outline", "front_too_short": "too short for a tube",
+    "degenerate_path": "no tube path found", "tube_map_without_onset": "growth but no onset",
+    "second_attached_component": "a second growth touches it", "path_by_growth": "path chosen by growth",
+    "flood_found_no_tube": "no tube found", "route_given": "path given", "grain_lost_after": "lost partway",
+    "settled_from_bin": "settling at start", "touches": "touches {}", "rotates": "turns {}",
+    "tip_continued": "tip followed on {}", "onset_lookback": "onset moved back {} steps",
 }
 
 
 def flag_phrase(flag: str) -> str:
     name, _, arg = flag.partition(":")
     if name == "path_coverage":
-        return f"route covers {100 * float(arg or 0):.0f}%"
+        return f"growth off the tube ({100 * float(arg or 0):.0f}% on it)"
     if name == "rotates":
         arg = arg.replace("deg", "°")
     return PHRASES.get(name, flag.replace("_", " ")).format(arg)
 
 
 FLAG_DETAIL = {
-    "reader": "Its surroundings are crowded or noisy, so it was read from the tube-probability maps.",
-    "shared_change_split": "It shares a region of change with a neighbour; the region was split between them.",
+    "reader": "Its surroundings are crowded or noisy, so it was read with the tube model's help.",
+    "shared_change_split": "Its growth runs into a neighbour's; what grew was split between them.",
     "drift_rejected": "The grain moved in a way that could not be followed; it was read at its first place.",
-    "onset_at_focus_change": "The movie's focus changed then: the tube may have emerged earlier, unseen.",
-    "onset_moved_to_front": "The onset was moved back to where the growth began.",
-    "onset_from_front": "No clear stub at the exit: the onset comes from the growth front.",
+    "onset_at_focus_change": "The movie's focus changed then: the tube may have come out earlier, unseen.",
+    "onset_moved_to_front": "The onset was moved back to when the tube was first seen growing.",
+    "onset_from_front": "No clear stub showed at first: the onset was read back from where the tube was later seen "
+                        "growing.",
     "contact_censored": "The tube reaches another grain; its length stops there.",
-    "no_grain": "No grain rim in the early frames: probably debris.",
+    "no_grain": "No grain outline in the first frames: probably debris (Not a grain, X).",
     "front_too_short": "What grew never got longer than 8 px.",
-    "degenerate_path": "No usable route for a tube could be traced.",
-    "tube_map_without_onset": "Change next to the grain, but no onset.",
-    "second_attached_component": "A second region of change touches the grain.",
-    "path_by_growth": "Several routes were possible; the one that grew most like a tube was kept.",
-    "touches": "Its tube region touches a neighbour's: the length may include part of the other tube.",
+    "degenerate_path": "No path for a tube could be traced from the grain.",
+    "tube_map_without_onset": "Something grew next to the grain, but no tube was seen leaving it.",
+    "second_attached_component": "Something else that grew touches the grain: a second tube, or a neighbour's.",
+    "path_by_growth": "Several paths were possible; the one that grew most like a tube was kept.",
+    "touches": "Its tube runs into a neighbour's: the length may include part of the other tube.",
     "rotates": "The grain and its tube turn during the movie.",
     "grain_lost_after": "It burst, drifted out of view or was swept off; its numbers are held from then.",
     "settled_from_bin": "The grain was still settling at the start and is read from later on.",
     "tip_continued": "The tube turned back along its grain; the reading followed it on.",
-    "onset_lookback": "The onset was walked back to when the tube first showed at the exit.",
-    "path_coverage": "The route explains little of the change round the grain: the tube may curl or be shared.",
-    "drawn_off_tube": "Most of the tube drawn then is not on the tube the network sees: the reading may have taken "
-                      "another tube or lost its own.",
+    "onset_lookback": "The onset was moved back to when the tube first showed at the grain.",
+    "path_coverage": "Much of what grew round the grain is not on the tube drawn: the tube may curl or branch, or "
+                     "another may be close.",
+    "drawn_off_tube": "Most of the tube drawn then does not lie on a tube in the movie: the reading may have taken "
+                      "another tube, or lost its own.",
 }
 
 
@@ -360,7 +363,7 @@ class RunData:
             add("drawn", f"drawn off the tube at {self.when(fr)}", FLAG_DETAIL["drawn_off_tube"], fr // self.fpb)
         if s["conf"] is not None and s["conf"] < UNSURE:
             Lu = float(s["L"][s["unsure"]])
-            reading = f"reads {self.length_words(Lu)}" if Lu >= 2.0 else "reads a tube too short to measure"
+            reading = f"reads {self.length_words(Lu)}" if Lu >= overlay.MIN_TUBE_PX else "reads no tube yet"
             add("unsure", "unsure length", f"At {self.when(self.frame(s['unsure']))} the model {reading}: its least sure "
                                            f"reading of this tube ({100 * s['conf']:.0f}% confidence).", s["unsure"])
         if has("onset_at_focus_change"):
@@ -384,6 +387,24 @@ class RunData:
                 uniq.append(r)
         return uniq
 
+    def made(self) -> str:
+        """When and with which SparseTrack the movie was analysed, in words (and whether this one is newer)."""
+        import re
+        import time as _time
+
+        from sparsetrack import __version__
+        m = re.search(r"\b(\d+\.\d+(?:\.\d+)?)\b", self.pred.get("method") or "")
+        version = m.group(1) if m else ""
+        when = ""
+        try:
+            when = _time.strftime("%-d %b %H:%M", _time.strptime(self.pred.get("created", "")[:19], "%Y-%m-%dT%H:%M:%S"))
+        except ValueError:
+            pass
+        out = "Analysed" + (f" {when}" if when else "") + (f" with SparseTrack {version}" if version else "") + "."
+        if version and version != __version__:
+            out += f" Analyse Again (Movie menu) would use {__version__}."
+        return out
+
     def notes(self, g: dict) -> list[str]:
         """What else the analysis found about a grain, as short phrases (its reasons to check aside)."""
         out = []
@@ -395,7 +416,7 @@ class RunData:
             elif name == "tube_at_frame_edge":
                 out.append("tube reaches the edge of the field")
             elif name == "second_attached_component" and flag_phrase(f) not in shown:
-                out.append("a second change region touches it")
+                out.append(flag_phrase(f))
         d = np.asarray(g["drift"] or [[0.0, 0.0]], float)
         moved = float(np.max(np.hypot(*(d - d[0]).T))) if len(d) else 0.0
         if moved >= 3.0:
@@ -455,6 +476,7 @@ class RunData:
             if g["excluded"]:
                 continue
             gid = g["id"]
+            n0 = len(out)
             if g["status"] == "emerged_within" and g["onset"] is not None:
                 out.append({"kind": "germination", "bin": g["onset"], "gid": gid, "text": f"{gid} germinates"})
             if g["lost"] is not None:
@@ -465,6 +487,11 @@ class RunData:
             if g["check"] and not g["done"]:  # where the check list opens it
                 out.append({"kind": "check", "bin": g["check"][0]["bin"], "gid": gid,
                             "text": f"{gid} to check: {g['check'][0]['text']}"})
+            counted = g["isolated"] and g["status"] != "unobservable"
+            for ev in out[n0:]:
+                ev["counted"] = counted
+                if not counted:
+                    ev["text"] += " (not counted)"
         for f in self.pred.get("focus_changes") or []:
             out.append({"kind": "focus", "bin": int(f["bin"]), "gid": None, "text": "focus change"})
         if population.get("t50_bin") is not None:
@@ -478,7 +505,8 @@ class RunData:
         key = lambda g: (g["done"], not g["isolated"], g["conf"] is None, g["conf"] if g["conf"] is not None else 1.0,
                          g["id"])
         return [{"gid": g["id"], "bin": g["check"][0]["bin"], "reasons": [r["text"] for r in g["check"]],
-                 "conf": g["conf"], "done": g["done"], "isolated": g["isolated"]} for g in sorted(items, key=key)]
+                 "details": [r["detail"] for r in g["check"]], "conf": g["conf"], "done": g["done"],
+                 "isolated": g["isolated"]} for g in sorted(items, key=key)]
 
     def summary(self, grains: list[dict], population: dict) -> dict:
         iso = [g for g in grains if g["isolated"] and not g["excluded"] and g["status"] != "unobservable"]
@@ -490,8 +518,9 @@ class RunData:
         lost = sum(1 for g in iso if g["lost"] is not None)
         share = population.get("germinated_share")  # the germination curve's end (grains lost before germinating
         share = len(germ) / max(len(iso), 1) if share is None else share  # count until they were lost)
+        by_curve = abs(share - len(germ) / max(len(iso), 1)) > 0.005
         parts = [f"{len(iso)} grains" + (" counted" if len(iso) < len(grains) else ""),
-                 f"{len(germ)} germinated ({100 * share:.0f}%)"]
+                 f"{len(germ)} germinated ({100 * share:.0f}%{' by the curve' if by_curve else ''})"]
         if population.get("t50_frame") is not None:
             parts.append(f"T50 {self.when(population['t50_frame'])}")
         if rate is not None:
@@ -511,11 +540,13 @@ class RunData:
         early = (population.get("counts") or {}).get("lost_before") or 0
         if early:
             detail += (f" The share germinated is where the germination curve ends: the {early} grain"
-                       f"{'s' if early > 1 else ''} lost before germinating count only until lost.")
+                       f"{'s' if early > 1 else ''} lost before germinating count{'' if early > 1 else 's'} only "
+                       f"until lost, so it is not simply germinated over counted.")
         if rate is not None:
             detail += (" Growth: the median over the tubes of the length each gained between reaching 10% and 90% of "
                        "its final length, over that time.")
-        return {"n": len(iso), "germinated": len(germ), "share": share, "t50_frame": population.get("t50_frame"),
+        return {"n": len(iso), "germinated": len(germ), "share": share, "by_curve": by_curve,
+                "t50_frame": population.get("t50_frame"),
                 "median_rate": rate, "median_final": float(np.median(finals)) if finals else None, "tubes": len(rates),
                 "lost": lost, "reviewed": sum(1 for g in grains if g["review"]["state"] != "model"),
                 "grains": len(grains), "line": "  ·  ".join(parts), "detail": detail}
@@ -526,17 +557,20 @@ class RunData:
         grains = [g for g in self.pred.get("grains", []) if g["id"] in isolated]
         out = []
         for f in self.pred.get("focus_changes") or []:
-            out.append({"text": f"focus change at {self.when(f['frame'])}", "bin": int(f["bin"])})
+            when = self.when(f["frame"])
+            out.append({"text": f"focus change at {when}", "bin": int(f["bin"]),
+                        "detail": f"The movie's focus changed at {when}: tubes may look different from then on, and "
+                                  f"onsets right at it are among the grains to check."})
         unfollowed = sum(1 for g in grains if "drift_rejected" in g.get("flags", []))
         lost = sum(1 for g in grains if any(f.startswith("grain_lost") for f in g.get("flags", [])))
         if grains and unfollowed / len(grains) > 0.25:
-            out.append({"text": f"{unfollowed} of {len(grains)} grains not followed", "bin": None})
+            out.append({"text": f"{unfollowed} of {len(grains)} grains not followed", "bin": None,
+                        "detail": "Many grains moved in ways that could not be followed, so they were read where they "
+                                  "first were: their tubes may be drawn off. Check a few."})
         if grains and lost / len(grains) > 0.25:
-            out.append({"text": f"{lost} of {len(grains)} grains lost partway", "bin": None})
-        details = report.movie_warnings(self.pred, isolated)
-        for w in out:
-            w["detail"] = next((d for d in details if w["text"].split()[0] in d or "focus" in w["text"] and "focus" in d),
-                               "")
+            out.append({"text": f"{lost} of {len(grains)} grains lost partway", "bin": None,
+                        "detail": "Many grains burst, drifted out of view or were swept off: their numbers stop when "
+                                  "they were lost."})
         return out
 
     def route(self, gid: str, b: int) -> tuple[list, bool]:

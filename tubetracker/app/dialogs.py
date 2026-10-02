@@ -14,6 +14,15 @@ PALETTE = [(56, 189, 248), (244, 114, 182), (52, 211, 153), (251, 191, 36), (192
            (163, 230, 53), (248, 113, 113)]
 
 
+def fit_columns(table: wx.ListCtrl, least: int = 50) -> None:
+    """Each column as wide as its widest entry or its heading, whichever is wider."""
+    for c in range(table.GetColumnCount()):
+        table.SetColumnWidth(c, wx.LIST_AUTOSIZE)
+        content = table.GetColumnWidth(c)
+        table.SetColumnWidth(c, wx.LIST_AUTOSIZE_USEHEADER)
+        table.SetColumnWidth(c, max(content, table.GetColumnWidth(c), least))
+
+
 def _num(text: str) -> float | None:
     text = (text or "").strip().replace(",", ".")
     if not text:
@@ -54,7 +63,12 @@ class SetupDialog(wx.Dialog):
         self.derived = wx.StaticText(self, label="")
         self.derived.SetForegroundColour(theme.muted_fg())
         row.Add(self.derived, 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 14)
-        grid.Add(wx.StaticText(self, label="Duration"), 0, wx.ALIGN_CENTER_VERTICAL)
+        real = wx.StaticText(self, label="Real time")
+        tip = ("How long the recording took in real time, from the first frame to the last (not how long the movie "
+               "plays): the time between frames follows from it")
+        for c in (real, self.hours, self.minutes):
+            c.SetToolTip(tip)
+        grid.Add(real, 0, wx.ALIGN_CENTER_VERTICAL)
         grid.Add(row, 0, wx.EXPAND)
         um = setup.get("um_per_px") if setup.get("um_per_px") is not None else prefs.get("um_per_px")
         self.um = wx.TextCtrl(self, value="" if um in (None, "") else f"{um:g}", size=(80, -1))
@@ -83,7 +97,8 @@ class SetupDialog(wx.Dialog):
         r2.Add(wx.StaticText(pane, label="s per frame (instead of the duration)"), 0, wx.ALIGN_CENTER_VERTICAL | wx.LEFT, 5)
         ps.Add(wx.StaticText(pane, label="Frame interval"), 0, wx.ALIGN_CENTER_VERTICAL)
         ps.Add(r2, 0)
-        self.flat = wx.CheckBox(pane, label="Even out uneven illumination before finding grains")
+        self.flat = wx.CheckBox(pane, label="Even out uneven illumination before finding grains" +
+                                ("" if not prepared else " (only before the first analysis)"))
         self.flat.SetValue(bool(setup.get("flatfield")))
         self.flat.Enable(not prepared)
         ps.Add(wx.StaticText(pane, label=""), 0)
@@ -147,6 +162,7 @@ KEYS = (("Space", "Play / pause"), ("Left, Right", "Previous / next time (Shift:
         ("Enter", "Confirm the grain"), ("O", "Onset here"), ("Shift-O", "Never germinated"), ("T", "Set the tip"),
         ("D", "Draw the tube (Enter saves)"), ("B", "Burst or gone here"), ("X", "Not a grain (again: include)"),
         ("K", "Clump"), ("U", "Back to the model's answer"), ("Cmd-Z", "Undo"),
+        ("Backspace", "Take back a point while drawing"), ("=, -", "Zoom in / out"),
         ("Esc", "Cancel the tool, else back to the movie's numbers"), ("F1, ?", "Help"))
 
 
@@ -298,6 +314,7 @@ class ResultsFrame(wx.Frame):
                     "" if r[5] is None else f"{100 * r[5]:.0f}%", r[6], r[7])
             for c, v in enumerate(vals, start=1):
                 self.table.SetItem(i, c, v)
+        fit_columns(self.table)
         self._shown = rows
 
     def _sort_by(self, e):
@@ -319,13 +336,14 @@ class CompareFrame(wx.Frame):
     """Several analysed movies side by side: germination curves, growth rates, their numbers; Export writes them."""
 
     COLS = (("Movie", 210), ("Genotype", 80), ("Rep.", 45), ("Grains", 55), ("Germinated", 80), ("T50", 110),
-            ("Growth", 150), ("Final length", 90), ("Lost", 45), ("Checked T50", 90))
+            ("Growth", 150), ("Final length", 90), ("Lost", 45), ("Checked", 80))
 
     def __init__(self, parent, ctl, runs: list[dict]):
         super().__init__(parent, title="Compare Movies", size=(1180, 760))
         self.ctl = ctl
         self.SetIcons(ctl.icons())
         self.runs = [r for r in runs if r["analysed"]]
+        self._rows = {}  # folder -> its row (read once: a movie's numbers take a moment)
         p = wx.Panel(self)
         bg(p)
         s = wx.BoxSizer(wx.HORIZONTAL)
@@ -336,7 +354,8 @@ class CompareFrame(wx.Frame):
             self.pick.Check(i)
         left.Add(self.pick, 1, wx.EXPAND)
         export = wx.Button(p, label="Export")
-        export.SetToolTip("Write summary.csv and summary.png to the runs folder's summary folder")
+        export.SetToolTip("Write summary.csv and summary.png (the model's numbers and the checked onsets) to the runs "
+                          "folder's summary folder")
         left.Add(export, 0, wx.EXPAND | wx.TOP, 8)
         s.Add(left, 0, wx.EXPAND | wx.ALL, 14)
         right = wx.BoxSizer(wx.VERTICAL)
@@ -369,7 +388,14 @@ class CompareFrame(wx.Frame):
 
     def refresh(self):
         folders = self.chosen()
-        rows = self.ctl.compare_rows(folders) if folders else []
+        todo = [f for f in folders if f not in self._rows]
+        if todo:
+            wx.BeginBusyCursor()
+            try:
+                self._rows.update(zip(todo, self.ctl.compare_rows(todo)))
+            finally:
+                wx.EndBusyCursor()
+        rows = [self._rows[f] for f in folders]
         self.table.DeleteAllItems()
         f = lambda v, nd=1: "" if v is None else f"{v:.{nd}f}"
         for i, r in enumerate(rows):
@@ -379,10 +405,11 @@ class CompareFrame(wx.Frame):
                     "" if r["t50"] is None else f"{r['t50']:.0f} {r['time_unit']}",
                     "" if r["median_rate"] is None else f"{r['median_rate']:.3g} {r['rate_unit']}",
                     "" if r["median_final"] is None else f"{f(r['median_final'])} {r['length_unit']}",
-                    str(r["lost"]), "" if r.get("reviewed_t50") is None else f"{r['reviewed_t50']:.0f}")
+                    str(r["lost"]), f"{r['checked']} of {r['all']}")
             for c, v in enumerate(vals, start=1):
                 self.table.SetItem(i, c, v)
             self.table.SetItemTextColour(i, theme.colour(PALETTE[i % len(PALETTE)]))
+        fit_columns(self.table)
         # one time axis and one rate axis: movies in other units (no duration or pixel size given) are left out
         timed = any(r["timed"] for r in rows)
         plotted = [i for i, r in enumerate(rows) if r["timed"] == timed]
@@ -393,10 +420,7 @@ class CompareFrame(wx.Frame):
             r = rows[i]
             c = PALETTE[i % len(PALETTE)]
             if r["curve"]["t"]:
-                series.append({"x": r["curve"]["t"], "y": r["curve"]["y"], "colour": c, "width": 2.0, "step": True})
-            if r["reviewed_curve"]["t"]:
-                series.append({"x": r["reviewed_curve"]["t"], "y": r["reviewed_curve"]["y"], "colour": c,
-                               "width": 1.2, "dashed": True, "step": True})
+                series.append({"x": r["curve"]["t"], "y": r["curve"]["y"], "colour": c, "width": 2.0})
             if r["t50"] is not None:
                 dots.append((r["t50"], 0.5, c, 4.5))
         self.germ.set(series=series, dots=dots, yrange=(0, 1), xlabel="min" if timed else "frame",
@@ -413,7 +437,8 @@ class CompareFrame(wx.Frame):
         self.rate.set(series=meds, dots=rdots, xrange=(-0.6, max(len(rated) - 0.4, 0.6)),
                       categories=[rows[i]["sample_id"] or rows[i]["name"] for i in rated],
                       ylabel=f"growth ({rate_unit})")
-        note = "Solid: model. Dashed: checked onsets. Dots: T50." if rows else "Tick movies to compare."
+        note = ("Each movie as it shows in the app: your checks where you gave them, the model elsewhere. Dots: T50."
+                if rows else "Tick movies to compare.")
         name = lambda i: rows[i]["sample_id"] or rows[i]["name"]
         untimed = [name(i) for i in range(len(rows)) if i not in plotted]
         unscaled = [name(i) for i in plotted if i not in rated]

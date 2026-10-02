@@ -140,6 +140,21 @@ def test_the_side_panel_shows_the_movie_until_a_grain_is_chosen_and_says_what_to
         assert side.buttons["tip"].GetValue() and "tip" in frame.tool_hint()
         frame.set_tool(None)
         assert not side.buttons["tip"].GetValue()
+        frame.on_click((5.0, 155.0), None)  # an empty place on the movie
+        assert frame.sel is None and side.overview.IsShown()
+        frame.goto_check(1)
+        first = side.nav_label.GetLabel()
+        frame.on_action("confirm")
+        _yield()
+        frame.goto_check(1)
+        assert first.startswith("Check 1 of") and side.nav_label.GetLabel().startswith("Check 2 of")
+        frame.select("g001")
+        frame.set_bin(30)
+        frame.on_action("path")
+        frame.on_click((68.0, 50.0), None)
+        frame.on_click((90.0, 50.0), None)
+        frame.on_action("path")  # D again: saved as Enter would
+        assert frame.tool is None and any(t["bin"] == 30 for t in frame._by_id["g001"]["human"])
         frame.deselect()  # Esc
         assert frame.sel is None and side.overview.IsShown()
         frame.on_help()
@@ -154,6 +169,11 @@ def test_the_side_panel_shows_the_movie_until_a_grain_is_chosen_and_says_what_to
         assert not frame.results_win.show_folder.IsEnabled()
         frame.on_export()
         assert frame.results_win.show_folder.IsEnabled()
+        from tubetracker.app.dialogs import CompareFrame
+        cmp = CompareFrame(frame, frame, [{"folder": str(run), "analysed": True, "sample_id": "tiny", "movie": "tiny",
+                                           "genotype": "", "replicate": ""}])
+        assert cmp.table.GetItemCount() == 1 and cmp.table.GetItemText(0, 9).endswith("of 4")  # checked, as shown
+        cmp.Destroy()
     finally:
         frame.Destroy()
         _yield()
