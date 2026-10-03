@@ -9,7 +9,8 @@ length-and-tip also needs the tip within max(5 px, 10%) of the apex (reference c
 
 Methods:
   M0  SparseTrack 0.8.8 alone (length and tip + drift);
-  M1  the app's curve: sparsetrack.review.reviewed_curve through the person's lengths; tip on the app's route
+  M1  the app's curve until 3 Oct 2026 (the model's rescaled to the person's lengths, frozen as
+      prototypes.review_curve.curves.rescaled_curve); tip on the app's route
       (tubetracker.app.overlay.route_at: the first traced route at or after the bin, else the last one carried on
       along the model's route, cut to the length, moved with the analysis' drift);
   M2  the image fill (fill.read_lengths) on the carried route's kymograph, through the person's lengths;
@@ -36,7 +37,8 @@ import numpy as np
 from prototypes.review_fill.build import OUT, baseline, full_traces, grains, labels, series_index
 from prototypes.review_fill.fill import arclen, dense, point_at, read_lengths
 from sparsetrack.report import turned_path
-from sparsetrack.review import lengths_by_bin, reviewed_curve
+from prototypes.review_curve.curves import rescaled_curve
+from sparsetrack.review import lengths_by_bin
 from tubetracker.app.overlay import continued, to_length
 
 ROUTE = {"P1": "l", "P2": "f", "P3": "j"}  # P2: "f" = beyond the trace, 0.8.8's route per bin; "e" = carried
@@ -153,7 +155,7 @@ class Grain:
         return L, t
 
     def m1_curve(self, anchors: list, fv: int) -> np.ndarray:
-        return reviewed_curve(self.model_px, fv, [(b, L) for b, L, _ in anchors])
+        return rescaled_curve(self.model_px, fv, [(b, L) for b, L, _ in anchors])
 
     def lin_curve(self, anchors: list, fv: int) -> np.ndarray:
         """Reference (ML): straight lines from zero at the onset through the person's lengths, on at the last

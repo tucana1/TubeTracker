@@ -113,18 +113,43 @@ def test_an_ordinary_labels_file_is_not_a_review(tmp_path):
     assert st["review"] is None and st["progress"]["onset_checked"] == 1  # a person's own answers count as checked
 
 
-def test_reviewed_curve_goes_through_checked_lengths_shaped_like_the_model():
-    from sparsetrack.review import reviewed_curve
+def test_reviewed_curve_keeps_the_models_readings_away_from_the_checked_lengths():
+    from sparsetrack.review import CORRECTION_BINS, reviewed_curve
 
-    model = np.r_[np.zeros(5), np.linspace(2, 40, 20), np.full(5, 40.0)]  # grows from bin 5, stops at bin 24
+    assert CORRECTION_BINS == 20
+    model = np.r_[np.zeros(5), np.linspace(2, 110, 55)]  # grows 2 px per bin from bin 5
     same = reviewed_curve(model, 5, [])
     assert np.allclose(same, np.maximum.accumulate(model))  # nothing checked: the model's curve
-    L = reviewed_curve(model, 5, [(14, 30.0), (29, 60.0)])  # the person read longer tubes
-    assert L[14] == pytest.approx(30.0) and L[29] == pytest.approx(60.0) and L[4] == 0.0
-    assert np.all(np.diff(L) >= 0) and L[26] == pytest.approx(60.0)  # the model stopped at 24: so does the curve
+    L = reviewed_curve(model, 5, [(30, 60.0)])  # the model read 52 there
+    assert L[30] == pytest.approx(60.0) and L[4] == 0.0 and np.all(np.diff(L) >= 0)
+    assert np.allclose(L[:11], model[:11]) and np.allclose(L[50:], model[50:])  # 20 bins away: the model's own
+    assert L[20] == pytest.approx(model[20] + 4.0) and L[40] == pytest.approx(model[40] + 4.0)  # halfway: half
+    flat = reviewed_curve(np.r_[model[:45], np.full(15, 80.0)], 5, [(30, 60.0)])  # the model stops at 80 by bin 44:
+    assert flat[44] == pytest.approx(82.4) and np.all(flat[44:] == flat[44])   # what the curve reached, it keeps
+    two = reviewed_curve(model, 5, [(20, 40.0), (40, 60.0)])  # between two checked lengths it stays between them
+    assert two[20] == pytest.approx(40.0) and two[40] == pytest.approx(60.0) and two[30:40].max() <= 60.0
+    assert np.all(np.diff(two) >= 0)
+    held = reviewed_curve(model, 5, [(20, 40.0), (30, 35.0)])  # a later length shorter: the curve never shrinks
+    assert held[30] == pytest.approx(40.0) and np.all(np.diff(held) >= 0)
     later = reviewed_curve(model, 12, [(20, 10.0)])  # onset moved later: nothing before it
     assert later[:12].max() == 0.0 and later[20] == pytest.approx(10.0)
     assert np.all(reviewed_curve(model, None, [(20, 10.0)]) == 0.0)  # no germination
+
+
+def test_reviewed_curve_grows_on_from_where_the_model_stalled():
+    """Movie 2's g005: 0.8.8 lost the tip at 96 px (its length right until then), the person traced 257 px at the end;
+    rescaling the whole curve to 257 px had made every earlier length 2.7 times too long."""
+    from sparsetrack.review import reviewed_curve
+
+    model = np.r_[np.zeros(5), np.linspace(2, 52, 26), np.full(49, 52.0)]  # grows to bin 30, then stalls
+    L = reviewed_curve(model, 5, [(75, 100.0)])
+    assert np.allclose(L[:30], model[:30])  # before the stall: the model's readings
+    assert L[75] == pytest.approx(100.0) and L[52] == pytest.approx(52.0 + 48.0 * (52 - 29) / 46, abs=0.01)
+    assert np.all(np.diff(L[29:76]) > 0.9)  # grows steadily through the stall
+    small = reviewed_curve(model, 5, [(75, 56.0)])  # within tolerance of the model's 52: only the last 20 bins move
+    assert np.allclose(small[:55], model[:55]) and small[75] == pytest.approx(56.0)
+    none = reviewed_curve(np.zeros(60), 10, [(40, 31.0)])  # the model saw no tube: straight from the onset
+    assert none[9] == 0.0 and none[40] == pytest.approx(31.0) and none[25] == pytest.approx(16.0)
 
 
 def test_export_writes_the_reviewed_growth_curves(reviewed):

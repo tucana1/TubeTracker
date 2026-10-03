@@ -29,6 +29,8 @@ import numpy as np
 
 REVIEW_HINTS = ("touches:", "shared_change_split", "reader:flood", "drift_rejected", "rotates:", "grain_lost_after",
                 "onset_at_focus_change")
+CORRECTION_BINS = 20  # a checked length corrects the model's curve over this many bins either side of it
+STALL_PX = 2.0        # the model had stopped growing from the first bin since which it grew at most this much
 
 
 # ---------------------------------------------------------------------------- pre-fill
@@ -253,31 +255,60 @@ def population_input(doc: dict, checked_only: bool = False) -> dict:
     return {"grains": grains}
 
 
-def reviewed_curve(model_px, fv: int | None, anchors: list[tuple[int, float]]) -> np.ndarray:
+def reviewed_curve(model_px, fv: int | None, anchors: list[tuple[int, float]], window: int = CORRECTION_BINS,
+                   stall_px: float = STALL_PX) -> np.ndarray:
     """A grain's length at every bin after review: zero before the first visible bin ``fv`` (None: never
-    germinated), through the lengths a person checked (``anchors``: (bin, px)), and between them shaped
-    like the model's own curve (its growth rescaled to reach each checked length; straight where the model
-    did not grow). After the last checked length it grows as the model's did. Never shrinks."""
+    germinated), through the lengths a person checked (``anchors``: (bin, px)), never shrinking; elsewhere the
+    model's own readings, corrected only near the checked lengths. At each checked length the model's error there
+    ramps in over the ``window`` bins before it and fades out over the ``window`` bins after. Where the model read
+    shorter than the person by more than the scoring tolerance (max(2 px, 10%)) and had stopped growing before (it
+    grew at most ``stall_px`` since bin s: it lost the tube's tip, or never saw the tube), the missing growth is
+    spread from s instead. Between two checked lengths the curve stays between them.
+
+    Until 3 Oct 2026 the model's whole curve was rescaled to the checked lengths, which made lengths far from them
+    worse than the model's own: after one late check, 0.8.8 alone had 5 / 6 / 4 more traced lengths in tolerance
+    than the rescaled curve on the three labelled movies; this curve has the model's (and one more on movie 1),
+    simulated reviews in prototypes/review_curve."""
     m = np.maximum.accumulate(np.nan_to_num(np.asarray(model_px, float)))
     n = len(m)
-    out = np.zeros(n)
     if fv is None or fv >= n:
-        return out
-    pts = sorted((b, float(L)) for b, L in anchors if fv <= b < n)
-    if fv > 0:
-        pts = [(fv - 1, 0.0)] + pts
-    elif pts:  # there from the start: the model's shape up to the first checked length
-        b1, L1 = pts[0]
-        pts = [(0, m[0] * L1 / m[b1] if m[b1] > 0 else L1)] + pts
-    else:
-        pts = [(0, m[0])]
-    for (a, La), (b, Lb) in zip(pts, pts[1:]):
-        seg = np.arange(a, b + 1)
-        dm = m[b] - m[a]
-        frac = (m[seg] - m[a]) / dm if dm > 1e-6 else (seg - a) / max(b - a, 1)
-        out[seg] = La + frac * (Lb - La)
-    b_last, L_last = pts[-1]
-    out[b_last:] = L_last + (m[b_last:] - m[b_last])
+        return np.zeros(n)
+    fv = max(int(fv), 0)
+    m[:fv] = 0.0
+    pts: list[tuple[int, float]] = []  # the checked lengths from the onset on, never shorter than an earlier one
+    for b, L in sorted((int(b), float(L)) for b, L in anchors if fv <= int(b) < n):
+        L = max(L, pts[-1][1]) if pts else L
+        if pts and pts[-1][0] == b:
+            pts[-1] = (b, L)
+        else:
+            pts.append((b, L))
+    if not pts:
+        return m
+    w = max(int(window), 1)
+    err = [L - m[b] for b, L in pts]
+    corr = np.zeros(n)
+    prev = fv - 1
+    for k, (b, L) in enumerate(pts):
+        start = max(b - w, prev)
+        if err[k] > max(2.0, 0.1 * L):  # short beyond tolerance: from where the model stopped growing
+            s = b
+            while s > max(prev, 0) and m[b] - m[s - 1] <= stall_px:
+                s -= 1
+            start = min(start, s)
+        seg = np.arange(prev + 1, b + 1)
+        fade = err[k - 1] * np.clip(1.0 - (seg - prev) / w, 0.0, 1.0) if k else 0.0
+        ramp = np.clip((seg - start) / max(b - start, 1), 0.0, 1.0)
+        corr[seg] = (1.0 - ramp) * fade + ramp * err[k]
+        prev = b
+    tail = np.arange(prev + 1, n)
+    corr[tail] = err[-1] * np.clip(1.0 - (tail - prev) / w, 0.0, 1.0)
+    out = m + corr
+    lo_b, lo_L = fv - 1, 0.0
+    for b, L in pts:  # the band the checked lengths allow: at most the next one, at least the last one
+        out[lo_b + 1:b] = np.clip(out[lo_b + 1:b], lo_L, L)
+        out[b] = L
+        lo_b, lo_L = b, L
+    out[lo_b + 1:] = np.maximum(out[lo_b + 1:], lo_L)
     out[:fv] = 0.0
     return np.maximum.accumulate(np.maximum(out, 0.0))
 
@@ -325,8 +356,8 @@ def write_reviewed_growth(doc: dict, pred: dict, out: Path, um: float | None, sp
         w.writerow(["grain", "bin", "frame", "minutes", "length_px", "length_um", "checked_lengths"])
         w.writerows(rows)
     write_growth_curves({"grains": curves}, out, [c["id"] for c in curves],
-                        title="Tube length (px) against source frame after review: the model's curve through the "
-                              "lengths you checked (dots); line = onset.")
+                        title="Tube length (px) against source frame after review: the model's readings, corrected "
+                              "near the lengths you checked (dots); line = onset.")
     return len(curves)
 
 

@@ -13,7 +13,8 @@ unchanged, the image fill (M2) beats the app's rescaled curve (M1) on movie 2 wi
   on all three movies: lengths +5 / +6 / +4 (ld / m2 / m1), length-and-tip +10 (+2..+18) / +11 (+5..+17) / +7
   (0..+15). Rescaling the whole curve to one late length inflates or shrinks every earlier length when the model's
   curve has the wrong shape (m2 g005: 0.8.8 stalled at 96 px, the person traced 257 px at bin 349, so bin 244 became
-  204 px against the person's 76; 0.8.8 itself read 76).
+  204 px against the person's 76; 0.8.8 itself read 76). Acted on: prototypes/review_curve, now the default reviewed
+  curve (M1 below is the old one, frozen as `prototypes.review_curve.curves.rescaled_curve`).
 - **The image fill's tips are much better where it reads the right tube** (length-and-tip M2 - M1: ld P1 +12, P2
   +13, m2 P1 +15): its tip lies on the carried tube, not on a fixed route moved by the grain's drift.
 
@@ -83,7 +84,7 @@ grain 0.3-0.5 s (the carry is kept); the app runs it in a background thread and 
   latest); **P3** both (same grains as P2). Contact traces may be traced, never scored.
 - Onset (the same review state for every method): 0.8.8's, unless it comes after the person's first trace or 0.8.8
   read no germination; then the person gives theirs (the app makes them set it).
-- **M0** 0.8.8 alone (length; tip + drift). **M1** the app's curve (`reviewed_curve` through the person's lengths;
+- **M0** 0.8.8 alone (length; tip + drift). **M1** the app's curve then (`rescaled_curve` through the person's lengths;
   tip on the app's route, `overlay.route_at`). **M2** (`fill.py`): each trace becomes a route (the trace, on along
   0.8.8's route at that bin if its apex lies on it, then straight 40 px), carried through the movie with composed DIS
   flow as a tube (`carry_front`'s `carry_inext`, flows on a 10-bin grid so a grain's traces share them); one route

@@ -133,9 +133,10 @@ leave the grain out of the numbers.</li>
 </ul>
 <p>Right-click a grain on the movie for the same corrections. The Undo button's tip says what it would take
 back. Pressing D again while drawing saves the tube, as Enter does.</p>
-<p>A length you give pins the growth curve at that time: between your lengths the curve keeps the shape of the
-model's, and after the last one it grows as the model's did. It never shrinks. One or two lengths where the tube is
-long are usually enough.</p>
+<p>A length you give pins the growth curve at that time and bends it there: away from your lengths the curve keeps
+the model's own readings. Where the model had stopped growing short of a length you gave, the curve grows from where
+the model stopped. It never shrinks. Give a length wherever the curve is wrong; a length where the model was right
+changes nothing far from it.</p>
 <p>Corrections are kept in the movie's review folder and are there the next time the movie is opened.</p>
 
 <a name="numbers"></a><h3>The numbers</h3>
