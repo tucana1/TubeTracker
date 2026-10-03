@@ -1,0 +1,119 @@
+Junction takeovers and bending-penalised minimal paths (3 Oct 2026; SparseTrack 0.8.8 baseline)
+==========================================================================================
+
+Question: where a tube meets, touches or crosses another, the flood's reading follows the other tube. Do
+bending-penalised (orientation-lifted) minimal paths choose the right branch, and does putting that into the flood
+help end to end?
+
+Answer: the right branch is the straight one, and on the tube map minimal paths choose it with or without a bending
+penalty. The flood's takeovers are a claim/timing problem (what arrives at its tip, and when; obstacles), not a
+path-geometry problem. A lift across older crossing tubes along a bending-penalised path (Params.flood_lift_px)
+fixes part of one route (m2 g005) and changes no score on any movie: left off.
+
+1. Takeover cases (find_cases.py: missed FULL traces whose drawn route leaves the human route onto tube material;
+   reflood.py + viz.py look at each with the flood's claimed tube and arrival map; claim_cov.py, timing.py)
+
+   movie 2:
+   - g005@349 (-161 px, the worst m2 error): its claim reaches an older crossing tube 96-101 px along its 257 px
+     tube at bin 256; the 4 px bridge cannot span it; the continuation arrives 14-16 px ahead from bin ~267 (median
+     271); further on its route crosses census grain g037's disc (blocked).
+   - g038@244/@349: took a tube passing its rim at the start (both arrive together, ~bin 48-70); its own tube is
+     claimed late (bins 144-159) and stops where it crosses that older passing tube; at 349 its route runs 36 px
+     through census grain g041's disc.
+   - g052@244/@349 (contact traces, not scored): the true route runs through census grain g061's disc (blocked),
+     and at 349 lies on pixels that arrived at bins 272-294 (the tube moved); the crossing tube was claimed from
+     bin 89.
+   - g092@349 (contact): the tube moved (the human route from 70 px on lies on pixels that arrived at bins 323-334);
+     the far end branches onto a tube claimed from bin 141.
+   - g011@349: its human route is fully claimed; a passing tube that reaches its stalled tip is claimed too (it runs
+     27 px past the apex).
+   movie 1: g065@349 started on a tube passing its rim; g014@244 hairpins (~150 deg) at its apex onto a crossing
+   tube (fully claimed); g011/g026/g030@140 are route-shape misses inside fat blobs (tip right), not takeovers.
+   Sparse movie: none.
+
+   Traces passing within ~6 px of another tube (P map at the trace bin): m2 13/62 full traces (10 missed), m1 11/58
+   (9 missed), ld 1/116. Full traces running through another census grain's blocked disc (r + 2 px): m2 8/62
+   (g005, g038, g048, g052 x2, g054, g064, g092), m1 3/58, ld 1/116.
+
+   Decision or claim? Share of the human route (beyond 5 px) inside the flood's claimed tube at the trace bin:
+   g005@349 0.38, g038@244 0.43, g038@349 0.13, g052@244 0.64 (the rest blocked), g052@349 0.11, g092@349 0.47,
+   g064@349 0.52, m1 g065@349 0.00. Only m2 g011@349 and m1 g014@244 had the whole human route claimed with the
+   tip elsewhere (both run on past the apex). In the others the right branch was never claimed, so no choice among
+   claimed branches (which is where a bending cost in the route/tip decision would act) could fix them.
+
+2. Offline route test (route_test.py, lifted.py; P map at the trace bin, field frame, the map blurred 1.5 px so
+   routes keep to the band's middle; route exit -> apex; lifted graph: 16 grid directions, a turn of one step
+   (22.5 deg) before each move, cost = length / (P or oriented P + 0.05) + w x radians turned; oriented P = the
+   map's mean along a 13 px line in the move's direction; scipy.sparse.csgraph.dijkstra)
+
+   share of the human trace within 2 / 4 px of the route; global decision = apex vs other end by excess cost per px
+
+   14 takeover traces              cov<=2px  cov<=4px  global decision
+   plain geodesic 1/(P+0.05)         0.70      0.94       8/14
+   lifted, isotropic, w 5 px/rad     0.61      0.93       8/14
+   lifted, isotropic, w 20           0.59      0.89      10/14
+   lifted, oriented, w 0             0.71      0.97       9/14
+   lifted, oriented, w 5             0.66      0.95       9/14
+   lifted, oriented, w 20            0.61      0.89      11/14
+   all 22 traces near another tube: plain 0.75 / 0.94, 13/22; oriented w0 0.75 / 0.96, 14/22; oriented w20
+   0.66 / 0.90, 16/22.
+
+   Junction decision (from the junction J, arriving in the human route's direction: which branch is cheaper over
+   ~20 px): 21 of 25 junctions right for every variant, plain included; the 3 wrong for every variant are not
+   junctions (the "other" branch ends 2-7 px from the human one: an exit offset or a parallel route on the same
+   tube); 1 (m2 g064@349) is right for all but oriented w0. Bending widens the margin where the plain one is thin
+   (m2 g005@349 21 vs 30 -> 30 vs 83 with oriented w20; g048@349 68 vs 70 -> 76 vs 141; g069@244 46 vs 52 -> 39 vs
+   59). With equal-distance branch ends (route_dec.py, 6 junctions; run cut short for CPU) every variant 6/6.
+   Turn angles at the junctions (angles.py): the human branch is the straighter in 25/26 (median turn 3 deg vs 67
+   deg onto the other branch).
+
+   So geometry is not what goes wrong: minimal paths on the map follow the human route and prefer the straight
+   branch with or without a bending penalty; the penalty makes routes cut corners (2 px coverage 0.70 -> 0.61) and
+   makes the junction choice more decisive.
+
+3. In the tracker: Params.flood_lift_px (learned.lifted_path, learned._lift_join; off by default; commit d309bb6).
+   A tube stopped for flood_lift_stall bins at material already there goes on across it to a piece arriving at most
+   flood_lift_px ahead (within 60 deg of its direction), along the bending-penalised minimal path from its far end
+   (flood_lift_w 10 px per radian), if that path turns at most flood_lift_turn_deg (30) in all and crosses at most
+   flood_lift_gap (4) px where nothing has arrived; the path's pixels join the tube (not as its tip). Unit tests:
+   tests/test_flood_lift.py (straight through a crossing beats turning onto it; the flood crosses an older tube with
+   the lift and stops without it; a piece turning away is not taken; off = as before).
+
+   End to end vs 0.8.8 (eval_flood.py: the flood-read grains read again, merged into base088 and scored as
+   synth_bench scores, paired bootstrap over grains; the change-read grains and the hybrid's choice of reader do not
+   depend on flood options):
+
+   setting                 movie   onsets  lengths   length+tip  median|err|  bias    grains changed
+   0.8.8                   m2      7/18    27/54     23          2.91         -5.88
+                           ld      15/26   75/104    67          2.31         -0.48
+                           m1      8/26    15/50     15          4.13         -10.19
+   lift 20 px, stall 3     m2      +0      +0 (CI +0 to +0)  +0  2.91         -3.83   1 (g005)
+                           ld      +0      +0        +0          2.31         -0.48   0
+                           m1      +0      +0        +0          4.13         -10.19  7 (no scored trace)
+   lift 30 px, stall 1     m2      +0      +0        +0          2.91         -3.83   7
+                           ld      +0      +0        +0          2.31         -0.48   0
+                           m1      +0      +0        +0          4.30         -9.43   14
+   (settings chosen on m2, checked on ld and m1; every paired 95% CI is +0 to +0)
+
+   Per trace (trace_diff.py), lift 20: m2 g005@349 96 -> 206 px (human 257; tip 234 -> 47 px from the apex), still
+   short of the 231 px tolerance because the tube next runs into g037's disc; m1: four partial contact traces longer,
+   bounds unchanged. Lift 30/stall 1: m2 three traces closer (g005; contact g052@349 87 -> 97 of 133, g060@349 75 ->
+   124 of 105 with the tip 34 -> 6 px from the apex) and one farther (contact g092@349 274 -> 309 of 270); m1 three
+   closer or bound met, two farther or bound missed (g065@349 26 -> 53 of 22: a takeover carried on; g015@244 176 ->
+   137: a straight bridge cut a curve and shortened the tube), median error 4.13 -> 4.30. Why so little: in the
+   takeover cases the lift starts from the wrong end (g038's far end is already on the passing tube), or the tube's
+   way is blocked by another grain's disc (g005 later, g038@349, g052, g092), or the tube moved (g052, g092).
+
+   Full benchmark (scripts/synth_bench.py --real <movie> --no-synth --no-legacy --set flood_lift_px=20.0
+   --baseline base088.json, one movie at a time; bench.sh):
+   m2 onset 7/18, lengths 27/54 (median 2.91, bias -3.83), length and tip 23; ld 15/26, 75/104 (2.31, -0.48), 67;
+   m1 8/26, 15/50 (4.13, -10.19), 15. Paired vs 0.8.8 on every movie: onsets +0, lengths +0, length and tip +0
+   (95% CI +0 to +0) over 24 / 28 / 30 grains, the same as eval_flood.py. m2's worst error g005@349 -161.2 ->
+   -50.6 px of 257.
+
+4. Conclusion: the routes are right on the map and the right branch is the straight one; lengths do not move
+   because the flood never claimed the right branch (its claim follows arrival at its current tip, and the right
+   continuation arrives later, elsewhere, or behind another grain's disc). Takeovers are a timing/ownership problem.
+   What would address them: let the flood's tube cross other grains' discs where the map shows a tube there
+   (8/62 m2 full traces run through one), re-read from the exit when a tube moves (open item 2), and keep a start on
+   a tube passing the rim from becoming the grain's tube (g038, m1 g065). Recommendation: keep flood_lift_px off.
