@@ -56,20 +56,54 @@ What M0 and the new curve still miss is mostly 0.8.8's own errors far from any c
 far off), which no curve built from the model's readings can fix; image evidence did not either
 (prototypes/review_fill).
 
-A second finding, not acted on: with the same lengths, the app's tip (on the person's traced route,
-`overlay.route_at`) is in tolerance less often than a tip on 0.8.8's own route at that bin (report.turned_path +
-drift) cut to the same length: length-and-tip ld P1 39 vs 45, P2 35 vs 49; m2 P1 9 vs 18; m1 P1 2 vs 9
-(`tips.py`; 0.8.8 alone 48, 54, 17, 9). The person's later route does not follow the tube's sway at earlier
-bins. Drawing (and reading tip clicks along) the model's per-bin route away from the bins a person traced looks
-worth trying.
-
 The new curve costs 0.14 ms per grain (351 bins, two checked lengths).
 
+## Where the tube is drawn after review (`routes.py`, 3 Oct 2026, now `tubetracker.app.overlay.route_at`)
+
+With the same lengths, the app's tip (then on the person's traced route at every bin) was in tolerance less often
+than a tip on 0.8.8's own route at that bin cut to the same length (`tips.py`: length-and-tip ld P1 39 vs 45, P2 35
+vs 49; m2 P1 9 vs 18; m1 P1 2 vs 9): the person's later route does not follow the tube's sway at earlier bins.
+
+**Now:** within 20 bins of a bin a person traced (`NEAR_BINS`), their route, as before; farther, the model's own
+route at that bin (bent / the flood's own route then, turned), carried on along the person's route where the tube
+is longer than the model's route reaches (its end within 10 px of theirs, `JOIN_PX`; up to 5 px short it is carried
+on straight, as `to_length` always did); the person's route where the model had read no tube by then (its route is
+that of a tube it saw later) or the join fails. A tip click reads along the route drawn at that bin
+(`corrections.tip` uses the same `route_at`), and Confirm saves the route drawn there where it draws a length itself.
+
+Length-and-tip on the simulated reviews, the app's own code drawing the tube (`model.RunData` on 0.8.8's
+predictions, the reviewed curve, `overlay.tube_at`); lengths are the same for both, paired over grains, 95% CI:
+
+| movie | protocol | targets | lengths | person's route (old) | new | new - old | median tip error old / new (px) |
+|---|---|---|---|---|---|---|---|
+| ld | P1 | 76 | 53 | 39 | 45 | +6 [-1, +14] | 3.7 / 2.5 |
+| ld | P2 | 74 | 59 | 35 | 48 | +13 [+5, +23] | 4.6 / 2.7 |
+| ld | P3 | 48 | 37 | 30 | 31 | +1 [-4, +6] | 3.3 / 2.4 |
+| m2 | P1 | 41 | 21 | 9 | 18 | +9 [+3, +15] | 7.4 / 2.8 |
+| m2 | P2 | 30 | 16 | 10 | 14 | +4 [+1, +7] | 8.6 / 3.1 |
+| m2 | P3 | 21 | 12 | 7 | 10 | +3 [+0, +6] | 4.8 / 2.9 |
+| m1 | P1 | 26 | 10 | 2 | 10 | +8 [+3, +14] | 17.7 / 1.8 |
+| m1 | P2 | 14 | 5 | 5 | 5 | +0 | 3.5 / 2.9 |
+| m1 | P3 | 10 | 5 | 5 | 5 | +0 | 2.2 / 1.6 |
+
+Over the three protocols: ld 104 -> 124, m2 26 -> 42, m1 12 -> 20 (0.8.8 alone: 137, 39, 17; its own tips, e.g.
+from tip continuation, are still better on ld).
+
+Variants (`--grid`; ld totals over P1-P3, then m2, m1): the window round a person's traces makes no difference at
+0-20 bins (no scored trace lies that close), 40 bins costs ld 4. A check that the model's route leaves the grain where
+the person's does (mean distance over the first 10 px within 3-12 px, at the bin drawn or at the person's) gains at
+most ld 2 (126 vs 124) and costs m2 3-15 and m1 6-7 (late in the movie, where a person traces, the model's route is
+often off while its earlier routes are right); not kept. Using the model's route only where it had read a tube
+changes ld nothing and keeps m1 g033 b32 (its route then was that of a tube it saw 290 bins later): m1 19 -> 20.
+Costs 0.16 ms per call (0.12 before).
+
 Files: `curves.py` (candidates; `rescaled_curve` = the old app curve, frozen, M1 here and in review_fill),
-`evaluate.py` (protocols x candidates, ranking on the tuning movie), `show.py` (per-target rows), `table.py`.
+`evaluate.py` (protocols x candidates, ranking on the tuning movie), `show.py` (per-target rows), `table.py`,
+`tips.py` (the first tip comparison), `routes.py` (the route policies, drawn by the app's own code).
 
     python -m prototypes.review_curve.evaluate --tune ld --apply ld m2 m1 --round r2 --tag r2_review
     python -m prototypes.review_curve.evaluate --tune ld --apply ld m2 m1 --round r2 --pick decay-stalltol-20 --tag pick_review
     python -m prototypes.review_curve.table pick_review
     python -m prototypes.review_curve.show m2 P1 clip decay-stalltol-20 --diff
     python -m prototypes.review_curve.tips      # the app's tips against 0.8.8's route at the same lengths
+    python -m prototypes.review_curve.routes --grid  # route policies: the old one against overlay.route_at

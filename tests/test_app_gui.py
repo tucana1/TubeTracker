@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import pytest
 
@@ -145,8 +146,8 @@ def test_the_side_panel_shows_the_movie_until_a_grain_is_chosen_and_says_what_to
         frame.goto_check(1)
         first = side.nav_label.GetLabel()
         frame.on_action("confirm")
+        time.sleep(0.4)  # Confirm moves on to the next check by itself, 250 ms later (asking again raced it)
         _yield()
-        frame.goto_check(1)
         assert first.startswith("Check 1 of") and side.nav_label.GetLabel().startswith("Check 2 of")
         frame.select("g001")
         frame.set_bin(30)

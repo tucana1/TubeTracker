@@ -124,7 +124,9 @@ tube are about the time shown.</p>
 germinated.</li>
 <li><b>Tube: Set tip</b> (T), then click the tube's tip: its length is read along the route drawn (a click a little
 beyond the route's end carries it on straight). <b>Draw</b> (D): click where the tube leaves the grain, then along
-it to its tip, and press Enter (Backspace takes a point back, Esc cancels); for a tube the route gets wrong.
+it to its tip, and press Enter (Backspace takes a point back, Esc cancels); for a tube the route gets wrong. A
+tube you drew or a tip you set is drawn along your route at times near it; further away the tube follows the
+model's route at that time (it sways as the tube grows), carried on along yours where the tube reaches further.
 <b>None here</b>: there is no tube at this time.</li>
 <li><b>Grain: Burst</b> (B): the grain burst or is gone by this time, so nothing is measured after it. <b>Not a
 grain</b> (X): debris and the like; press X again to include it. <b>Clump</b> (K): grains stuck together. Both
