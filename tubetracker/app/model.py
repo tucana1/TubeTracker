@@ -3,8 +3,8 @@
 Read from a run folder: SparseTrack's predictions (``analysis/predictions.json``), the cache's grain census and
 metadata, the movie's setup (units) and, once checking has started, the review labels file
 (``review/review_labels.json``: the labelling tool's format, pre-filled with the model's answers). Where a person
-answered, the display follows them: their onset, and the model's growth curve pinned to the lengths they checked
-(``sparsetrack.review.reviewed_series``, as in the reviewed exports).
+answered, the display follows them: their onset, and the model's own readings corrected near the lengths they
+checked (``sparsetrack.review.reviewed_series``, as in the reviewed exports).
 
 Time is in bins: bin ``b`` averages source frames ``[b * fpb, (b + 1) * fpb)`` and stands at its centre frame
 ``b * fpb + fpb // 2``. SparseTrack's per-grain series start at the movie's reference bin; here every series is
