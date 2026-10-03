@@ -69,6 +69,59 @@ def test_a_tip_click_reads_the_length_along_the_route(reviewer):
         reviewer.act("g002", "tip", b=30, x=150.0, y=50.0)  # never germinated: set its onset first
 
 
+def swaying_reviewer(tmp_path) -> Reviewer:
+    """The fixture's movie with g001's tube swinging round its exit, 1 degree per bin up to straight at bin 39."""
+    run = make_run(tmp_path / "run", {"duration_s": 24000.0})
+    pred_path = run / "analysis" / "predictions.json"
+    pred = json.loads(pred_path.read_text())
+    g1 = next(g for g in pred["grains"] if g["id"] == "g001")
+    g1["rotation_deg"] = [float(f // 300 - 39) for f in g1["length"]["frames"]]
+    pred_path.write_text(json.dumps(pred))
+    r = Reviewer(RunData(RunFolder(run)))
+    r.start(background=False)
+    return r
+
+
+def test_far_from_a_drawn_tube_a_tip_click_snaps_to_the_route_drawn_at_that_time(tmp_path):
+    """A tube drawn at bin 39 is drawn along the person's route near bin 39; at bin 15 the tube follows the model's
+    route as it lay then (turned 24 degrees), and a tip clicked on it there is read along that route."""
+    import math
+
+    r = swaying_reviewer(tmp_path)
+    d = r.data
+    exit_ = (68.0, 50.0)
+    r.act("g001", "path", b=39, points=[list(exit_), [exit_[0] + 60.0, exit_[1]]])  # the model's 60 px, straight
+    route, mine = d.route("g001", 15)
+    assert not mine and route == overlay.model_route(d.grain("g001"), 15)
+    assert d.route("g001", 30) == ([list(exit_), [exit_[0] + 60.0, exit_[1]]], True)  # near the drawn time
+    th = math.radians(-24.0)
+    click = (exit_[0] + 10.0 * math.cos(th), exit_[1] + 10.0 * math.sin(th))  # 10 px along the route at bin 15
+    tube = overlay.tube_at(d.grain("g001"), 15)
+    assert tube[-1] == pytest.approx([exit_[0] + 12.0 * math.cos(th), exit_[1] + 12.0 * math.sin(th)], abs=0.05)
+    r.act("g001", "tip", b=15, x=click[0], y=click[1])
+    g = d.grain("g001")
+    assert g["L"][15] == pytest.approx(10.0, abs=0.1)  # on the person's straight route it would read 9.1
+    assert overlay.tube_at(g, 15)[-1] == pytest.approx(list(click), abs=0.05)
+
+
+def test_confirm_far_from_a_drawn_tube_saves_the_route_drawn_at_that_time(tmp_path):
+    """Confirm keeps the model's own proposals where they show what is drawn; where it draws a length itself, it is
+    along the route drawn at that time: far from a drawn tube, the model's route then."""
+    import math
+
+    r = swaying_reviewer(tmp_path)
+    exit_ = (68.0, 50.0)
+    r.act("g001", "path", b=39, points=[list(exit_), [exit_[0] + 60.0, exit_[1]]])
+    for doc in (r.data.model_doc, r.bench.doc):  # no model proposal at bin 16 (far from 39): confirm draws one
+        doc["labels"]["g001"]["traces"].pop("16")
+    r.act("g001", "confirm")  # the tool's trace times: 16, 27 and 38
+    traces = json.loads(r.folder.review_labels.read_text())["labels"]["g001"]["traces"]
+    apex = traces["16"]["path_xy_view"][-1]
+    assert traces["16"]["view"] == "app-confirm" and traces["16"]["length_px"] == pytest.approx(14.0, abs=0.05)
+    assert math.degrees(math.atan2(apex[1] - exit_[1], apex[0] - exit_[0])) == pytest.approx(-23.0, abs=0.2)
+    assert traces["27"]["view"] == "model"  # the model's own answer there already showed the length drawn
+
+
 def test_a_followed_grains_points_are_stored_in_its_own_frame(reviewer):
     d = reviewer.data
     b = 20

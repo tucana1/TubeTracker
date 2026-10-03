@@ -105,6 +105,29 @@ def test_the_tube_is_drawn_along_its_route_to_its_length_where_the_grain_is(data
     assert t3[0] == [68.0 + 10.0, 115.0]  # moved with the grain
 
 
+def test_a_persons_route_is_drawn_near_their_trace_and_the_models_own_route_elsewhere():
+    """Away from the time a person traced it, the tube follows the model's route as it lay then (it sways and turns as
+    the tube grows), carried on along the person's where the tube is longer than the model's route reaches."""
+    n = 80
+    model_L = [0.0] * 4 + [min(2.0 * (b - 3), 60.0) for b in range(4, n)]  # the model's reading: 60 px by bin 33
+    g = {"path": [[10.0 + k, 50.0] for k in range(0, 61, 2)], "pivot": [10.0, 50.0],
+         "rot": [0.2 * (b - 30) for b in range(n)],  # the tube swings round its exit: straight at bin 30
+         "human": [{"bin": 30, "state": "full", "L": 80.0, "pts": [[10.0, 50.0], [50.0, 51.0], [90.0, 52.0]]}],
+         "L": [0.0] * 4 + [min(2.0 * (b - 3), 80.0) for b in range(4, n)], "Lm": model_L}
+    person = g["human"][0]["pts"]
+    assert overlay.route_at(g, 30) == (person, True) and overlay.route_at(g, 12) == (person, True)  # near it
+    far, mine = overlay.route_at(g, 5)  # 25 bins before: the model's route as it lay then, turned 5 degrees
+    assert not mine and far == overlay.model_route(g, 5) and far[-1][1] == pytest.approx(50.0 - 60 * 0.0872, abs=0.05)
+    after, mine = overlay.route_at(g, 60)  # 30 bins after, the tube (80 px) reaches beyond the model's 60 px route:
+    assert not mine and overlay.path_length(after) >= 79.5  # carried on along the person's route
+    assert after[:31] == overlay.model_route(g, 60)
+    swung = {**g, "rot": [2.0 * (b - 30) for b in range(n)]}  # its end far off the person's route: theirs instead
+    assert overlay.route_at(swung, 60)[1] and overlay.route_at(swung, 5) == (overlay.model_route(swung, 5), False)
+    g["Lm"] = [0.0] * 10 + model_L[10:]  # where the model read no tube yet, its route is not this tube's
+    assert overlay.route_at(g, 5) == (person, True)
+    assert overlay.route_at({**g, "human": []}, 5) == (overlay.model_route(g, 5), False)  # nothing traced
+
+
 def test_events_mark_germinations_losses_stalls_focus_and_t50(data):
     grains = data.grains()
     pop = data.population(grains)

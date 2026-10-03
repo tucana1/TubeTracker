@@ -11,6 +11,9 @@ import math
 
 EMERGED = ("emerged_within", "emerged_at_start")
 MIN_TUBE_PX = 2.0  # shorter is no tube: not drawn, not measured, and confirmed as none (corrections.confirm)
+NEAR_BINS = 20     # a person's traced route is drawn at the bins this close to one they traced; elsewhere the model's
+JOIN_PX = 10.0     # the model's route is carried on along a person's longer route if its end lies this close to it
+EXTEND_PX = 5.0    # a route is carried on straight past its end by at most this to a tube's length (to_length)
 
 
 def path_length(pts) -> float:
@@ -95,19 +98,67 @@ def bent_at(g: dict, b: int) -> list:
     return (np.asarray(path, float) + off[:, None] * bend["n"]).tolist()
 
 
-def route_at(g: dict, b: int) -> tuple[list, bool]:
-    """The route the tube is drawn along at bin ``b``, in the grain's own frame, and whether a person traced it: the
-    first route a person traced at or after ``b``; else their last one, carried on along the model's route where it
-    ended on it (a tip set along the model's route); else the model's route turned to ``b``."""
+def model_route(g: dict, b: int) -> list:
+    """The model's route as the tube lay at bin ``b`` (bent, or the flood's own route then), turned to ``b``."""
     rot = g.get("rot")
-    model = turned(bent_at(g, b), rot[b] if rot else 0.0, g.get("pivot"))
+    return turned(bent_at(g, b), rot[b] if rot else 0.0, g.get("pivot"))
+
+
+def route_at(g: dict, b: int) -> tuple[list, bool]:
+    """The route the tube is drawn (and a tip click read) along at bin ``b``, in the grain's own frame, and whether it
+    is a person's. With no route a person traced, the model's route at ``b``. Within ``NEAR_BINS`` of a bin a person
+    traced, their route: the first traced at or after ``b``, else their last one carried on along the model's route
+    where it ended on it. Farther, the model's own route at ``b``, which follows the tube's sway and turns, carried on
+    along the person's route (the first at or after ``b``, else the last) where the tube is longer than the model's
+    route reaches; but the person's route as near where the model had read no tube by ``b`` (its route is then that
+    of a tube it saw later) or its route cannot be carried on to the tube's length. (Until 3 Oct 2026 a person's route
+    was drawn at every bin; at the same lengths, tips on the model's per-bin route were in tolerance more often:
+    prototypes/review_curve/routes.py.)"""
+    model = model_route(g, b)
     drawn = [t for t in g.get("human") or [] if t.get("pts")]
     if not drawn:
         return model, False
-    later = [t for t in drawn if t["bin"] >= b]
+    near = [t for t in drawn if abs(t["bin"] - b) <= NEAR_BINS]
+    if not near and len(model) >= 2 and read_by_model(g, b):
+        later = [t for t in drawn if t["bin"] >= b]
+        L = g.get("L")
+        route = along(model, (later[0] if later else drawn[-1])["pts"],
+                      float(L[b]) if L and 0 <= b < len(L) else 0.0)
+        if route is not None:
+            return route, False
+    pool = near or drawn
+    later = [t for t in pool if t["bin"] >= b]
     if later:
         return later[0]["pts"], True
-    return continued(drawn[-1]["pts"], model), True
+    return continued(pool[-1]["pts"], model), True
+
+
+def read_by_model(g: dict, b: int) -> bool:
+    """Whether the model read a tube at bin ``b``: its own length there (``Lm`` once a person's answers changed the
+    curve, else ``L``) at least ``MIN_TUBE_PX``."""
+    L = g.get("Lm") or g.get("L")
+    return bool(L) and 0 <= b < len(L) and float(L[b]) >= MIN_TUBE_PX
+
+
+def along(model, pts, need: float) -> list | None:
+    """The model's route, long enough for a tube of ``need`` px: as it is if it is (up to ``EXTEND_PX`` short); else
+    carried on along a person's route ``pts`` beyond where the model's ends (its end within ``JOIN_PX`` of theirs; the
+    rest moved to join it); None if neither reaches."""
+    model = [list(map(float, p)) for p in model]
+    have = path_length(model)
+    if have >= need - EXTEND_PX - 0.5:  # long enough, or carried on straight a little (to_length)
+        return model
+    s_end, d_end = project(pts, model[-1])
+    if d_end > JOIN_PX or path_length(pts) - s_end < need - have - 0.5:
+        return None
+    on = to_length(pts, s_end, 0.0)[-1]
+    dx, dy = model[-1][0] - on[0], model[-1][1] - on[1]
+    acc, rest = 0.0, []
+    for a, q in zip(pts, pts[1:]):
+        acc += math.hypot(q[0] - a[0], q[1] - a[1])
+        if acc > s_end + 0.5:
+            rest.append([q[0] + dx, q[1] + dy])
+    return model + rest
 
 
 def continued(pts, model, tol: float = 2.5) -> list:
