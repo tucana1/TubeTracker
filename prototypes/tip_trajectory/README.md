@@ -124,3 +124,27 @@ baseline over grains):
 | m1 | 10/28 (8/26) +2 [-2, +6] | 25/50 (15) +10 [+2, +18] | 22 (15) +7 [-1, +15] |
 
 They equal the offline "flood grains" rows exactly on all three movies (movie 1: every scored grain is flooded).
+
+Secondary variant: movie 1 read on the label-free self-trained m1 maps (prototypes/self_train `m1_r1_sb`, built with
+`altmaps.py`) instead of the shipped ones: with the ld-tuned weights onsets 15/28 (+7 vs 0.8.8; +5, CI -1 to +11 vs the
+shipped maps), lengths 27/50 (+12, CI +4 to +20; +2, 0 to +5 vs shipped), length-and-tip 24 (+9, +1 to +17); with the
+m2-tuned weights 27/50, no gain over the shipped maps. Better maps help this reader a little, mostly its onsets.
+
+### Recommendation
+
+On the held-out movie 1 the gain over 0.8.8 has an interval above zero (+10 lengths of 50 with the ld-tuned weights,
++13 with the m2-tuned ones; the earlier label-free attempts this week, tip detector in the readers and map adaptation,
+gave +2 to +7, none significant), the crowded dev movie gains in length-and-tip, and the sparse movie stays level when
+only the flooded grains are re-read. Candidate for the default reader of flooded
+grains (`tiptraj="flood"`), after (1) a tip detector trained on all three labelled movies is frozen for new movies (the
+fold models are for evaluation only), (2) its cost is cut (~20-30 s a grain on top of the other readers; most of it is
+full-crop array work on 600 px crops), and (3) one more labelled movie confirms it. The next levers are where a body
+leaves the grain (start bodies where the tube emerged instead of anywhere on the rim) and candidates for long tubes on
+moving grains.
+
+Files: `common.py`, `detmaps.py`, `cands.py`, `dp.py`, `tune.py`, `failures.py`, `summary.py`, `bench.py`, `altmaps.py`.
+Outputs (scratch, not kept in git): detector maps (~100 MB for the three movies), candidates (`cands_<movie>.pkl`),
+tuning (`tune_ld_c.json`, `tune_m2_c.json`), predictions (`pred_ld_c_<movie>.json`, `pred_m2_c_<movie>.json`).
+Reproduce: `python -m prototypes.tip_trajectory.detmaps ld m2 m1; python -m prototypes.tip_trajectory.cands ld m2 m1;
+python -m prototypes.tip_trajectory.tune --tune ld --apply m2 m1 --n 250 --refine 200 --tag ld_c --start '{"c": -1.0,
+"w_ext": 0.5, "w_l0": 0.3, "theta": 0.5, "det_norm": 2, "vmax": 4.0}'` (seed 0).
