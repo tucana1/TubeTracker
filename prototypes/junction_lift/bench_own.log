@@ -1,0 +1,18 @@
+== m2 start 00:15:46 load { 9.88 7.35 5.13 }
+custom flood_disc_pass=true flood_pass_bins=6 synth onset   0/  0 (med|e|   nan, early 0, late 0, missed 0) | len 0/0 | abs 0/0 | ctrl FP 0/0 || m2 onset 7/18, len 27/54 (med 2.91, bias -5.88; with tip 23)
+  worst m2 length errors: g005@104850 -161.2/257, g038@104850 -98.3/157, g064@104850 -42.0/115, g011@104850 +26.8/35, g038@73350 -20.4/79, g092@73350 +16.0/153, g009@42150 -12.2/49, g106@42150 -10.5/14
+  m2 predictions: /private/tmp/claude-501/-Users-joshjiang-Documents-TubeTracker/eaa2b708-9f78-4565-aa0c-9af3763da8fd/scratchpad/jt/bench/own/work/m2_real_0/predictions.json
+  vs baseline, m2: onset +0 (95% CI +0 to +0), lengths +0 (95% CI +0 to +0), length and tip +0 (95% CI +0 to +0) over 24 grains
+== m2 done 00:25:09 exit 0
+== ld start 00:25:09 load { 4.03 5.76 5.56 }
+custom flood_disc_pass=true flood_pass_bins=6 synth onset   0/  0 (med|e|   nan, early 0, late 0, missed 0) | len 0/0 | abs 0/0 | ctrl FP 0/0 || ld onset 15/26, len 75/104 (med 2.31, bias -0.48; with tip 67)
+  worst ld length errors: g039@52350 -28.7/43, g015@33450 -28.1/28, g014@36750 -19.4/23, g030@52350 -17.1/81, g004@36750 +10.2/34, g021@36750 +10.0/35, g031@21150 +7.8/21, g024@52350 +7.3/74
+  ld predictions: /private/tmp/claude-501/-Users-joshjiang-Documents-TubeTracker/eaa2b708-9f78-4565-aa0c-9af3763da8fd/scratchpad/jt/bench/own/work/ld_real_0/predictions.json
+  vs baseline, ld: onset +0 (95% CI +0 to +0), lengths +0 (95% CI +0 to +0), length and tip +0 (95% CI +0 to +0) over 28 grains
+== ld done 00:26:39 exit 0
+== m1 start 00:26:59 load { 8.78 6.87 6.01 }
+custom flood_disc_pass=true flood_pass_bins=6 synth onset   0/  0 (med|e|   nan, early 0, late 0, missed 0) | len 0/0 | abs 0/0 | ctrl FP 0/0 || m1 onset 9/25, len 15/50 (med 4.13, bias -11.68; with tip 15)
+  worst m1 length errors: g065@42150 -125.5/125, g028@73350 -102.0/270, g033@42150 -66.6/67, g064@42150 -66.3/153, g005@104850 -59.7/60, g014@73350 +58.3/120, g003@42150 -56.4/91, g065@73350 -53.2/53
+  m1 predictions: /private/tmp/claude-501/-Users-joshjiang-Documents-TubeTracker/eaa2b708-9f78-4565-aa0c-9af3763da8fd/scratchpad/jt/bench/own/work/m1_real_0/predictions.json
+  vs baseline, m1: onset +1 (95% CI +0 to +3), lengths +0 (95% CI +0 to +0), length and tip +0 (95% CI +0 to +0) over 30 grains
+== m1 done 00:44:38 exit 0

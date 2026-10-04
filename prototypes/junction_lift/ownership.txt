@@ -1,0 +1,65 @@
+Ownership fixes at junctions (4 Oct 2026; branch junction-ownership; SparseTrack 0.8.8 = base088)
+=================================================================================================
+
+Two options from results.txt's conclusion, each off by default (commit fdbfb86, tests/test_flood_ownership.py):
+
+1. Params.flood_disc_pass (learned.disc_passages; flood_disc_width 12): a flooded tube may cross another census
+   grain's blocked disc (r + 2 px) along a band where the map shows material entering and leaving the disc (edge
+   points >= 60 deg apart round it, <= 120 deg of its edge covered, <= 12 px wide), never the grain's own body, rim
+   or a tube starting from it.
+2. Params.flood_pass_bins (flood pass_bins = 6; flood_pass_px 20, flood_pass_reach 15): a start is on probation
+   for 6 bins; a tube that by then spreads more than 20 px along the rim while reaching less than 15 px out is
+   another tube passing the rim: forgotten, its material (and pieces touching it) never a start, and the flood keeps
+   looking for the grain's own start.
+
+What the cases look like (disc_diag.py, disc_open_all.py, start_diag.py, start_evo.py, wrong_starts.py)
+
+   Discs. The m2 traces that run through another grain's disc do not cross it as a narrow band on the map:
+   g061's disc (g052) is 98% marked as tube at some time (one blob 21 px wide over 340 deg of its edge), g041's
+   (g038) 54%, g068's (g092) 77%, g065's (g064) 79%; g037's (g005) shows the tube only from bin 337. And inside
+   the disc the true route crosses material that arrived before the tube got there (g052: arrivals 100-129 inside,
+   the tube reaches the disc at bin 167), i.e. an older crossing, which the arrival flood does not claim. Opening
+   the whole discs (no band test; diagnostic only) changes one trace: g038@349 58 -> 68 px (human 157).
+
+   Starts. At its start bin the flood's starting piece is small and on its own in every case looked at (1-48 px,
+   nothing older joined to it), so "already long / far end first / both ways past the grain" cannot be seen then;
+   a passing tube shows in the next bins as fast spread along the rim with little reach out (m1 g013: 19 -> 55 px
+   along the rim in 6 bins, 7 px out; m1 g065: 3 -> 24 px, 13 px out), where grains' own young tubes spread
+   <= 9 px in their first 6 bins. m2 g038's start was right (its first two traces are hits); it goes wrong later
+   at a crossing, and its traces at bins 244 and 349 start inside its census circle (the grain moved; its drift was
+   rejected), so it is read where the grain no longer is. Starts > 45 deg round the grain
+   from the human exit at the first full trace: m2 2/18 flood-read grains (g048, a doubtful trace; g064, a 5 px
+   stub), m1 3/26 (g013, g065, g068 a 1 px reading), ld 1/5.
+
+End to end vs 0.8.8 (eval_flood.py: flood-read grains read again with the option, merged into base088, scored as
+synth_bench; settings fixed before the runs - nothing on m2 changed, so there was nothing to choose there)
+
+   option                 movie  onsets          lengths   length+tip  median|err|  bias    grains changed
+   disc passage           m2     7/18 (+0)       27/54 +0  23 +0       2.91         -5.88   0
+                          ld     15/26 (+0)      75/104 +0 67 +0       2.31         -0.48   0
+                          m1     8/26 (+0)       15/50 +0  15 +0       4.13         -10.19  2 (no traced bin)
+   start probation        m2     7/18 (+0)       27/54 +0  23 +0       2.91         -5.88   0
+                          ld     15/26 (+0)      75/104 +0 67 +0       2.31         -0.48   0
+                          m1     9/25 (+1, CI +0 to +3)  15/50 +0  15 +0  4.13     -11.68  2 (g013, g065)
+   (every other paired 95% CI +0 to +0)
+
+   Cases fixed / broken (per trace):
+   - start probation, m1 g013: the tube passing its rim (bin 192) is dropped and its own start found at bin 265:
+     onset now within tolerance; @271 52.3 -> 3.7 px (human 7.2; tip 75 -> 5 px from the apex), still 3.5 px off.
+   - start probation, m1 g065: the passing tube (bin 310) is dropped, but its own tube (traced from bin 54, 125 px
+     at 140) is never started: the grain is now read as never germinating; @349 25.8 -> 0 px (human 22.2), onset
+     no longer timed (was wrong anyway).
+   - disc passage: no traced length changed on any movie.
+
+   Full benchmark, both options on (scripts/synth_bench.py --real <movie> --no-synth --no-legacy --set
+   flood_disc_pass=true flood_pass_bins=6 --baseline base088.json, one movie at a time; bench_own.log):
+   m2 onset 7/18, lengths 27/54 (median 2.91, bias -5.88), length and tip 23: +0, +0, +0 (95% CI +0 to +0, 24
+   grains); ld 15/26, 75/104 (2.31, -0.48), 67: +0, +0, +0 (28 grains); m1 9/25, 15/50 (4.13, -11.68), 15: onsets
+   +1 (95% CI +0 to +3), lengths +0, length and tip +0 (30 grains). The same as the options run one at a time.
+
+Conclusion: neither fix moves lengths. The disc rule as specified never fires on m2's cases (the discs are
+blobs of tube material, not crossed by a band) and opening discs outright barely matters, because inside them the
+route crosses older material. The start probation fixes one m1 start (onset +1) and removes one wrong tube without
+finding the right one. Both stay off. The common thread in all the junction cases is arrival order: material that
+was there first (older crossings, tubes over grains) or arrives elsewhere (moved tubes and grains) is invisible to a
+flood that claims only what arrives at its tip.

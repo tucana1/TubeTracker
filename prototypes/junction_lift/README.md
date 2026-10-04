@@ -25,4 +25,11 @@ and the 0.8.8 baseline predictions named in `common.py`, and write to the sessio
 | `trace_diff.py`, `viz_lift.py`, `lift_check.py` | which traces an option changed, and how |
 | `bench.sh` | the full `scripts/synth_bench.py` benchmark, one movie at a time, waiting for a quiet machine |
 
+Follow-up (4 Oct, `ownership.txt`): passage through another grain's disc (`Params.flood_disc_pass`) and a start on
+probation against tubes passing the rim (`Params.flood_pass_bins`), both off. Scripts: `disc_diag.py` and
+`disc_open_all.py` (what the map shows inside the discs on the traced routes), `start_diag.py`, `start_evo.py` and
+`wrong_starts.py` (what starts look like, at and after their bin), `opt_check.py` (an option on chosen grains).
+
 **Note (main session, 3 Oct):** the Params.flood_lift_px option itself (commit d309bb6, with tests) was not merged (no score change on any movie); it lives on branch worktree-agent-acd9ac5f4741507c2. Scripts that use it need that branch.
+
+**Note (main session, 4 Oct):** the ownership options (flood_disc_pass, flood_pass_bins; commit fdbfb86 with tests) were not merged (no length change on any movie); they live on branch junction-ownership. See ownership.txt.

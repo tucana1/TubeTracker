@@ -48,5 +48,5 @@ for m in sys.argv[2:]:
             same += verdict not in ("closer", "farther", "lower bound now met", "lower bound now missed")
             print(f"{m} {gid}@{key:<4s} {tr['state']:7s}{' contact' if tr.get('contact') else '        '} human {h:6.1f}  "
                   f"0.8.8 {a:6.1f}{'*' if ok_a else ' '}  {tag} {b:6.1f}{'*' if ok_b else ' '}  "
-                  f"tip {'' if ta is None else f'{ta:.0f}->{tb:.0f} px'}  {verdict}")
+                  f"tip {'-' if ta is None else f'{ta:.0f}'}->{'-' if tb is None else f'{tb:.0f}'} px  {verdict}")
     print(f"== {m}: traces whose length changed: closer/met {better}, farther/missed {worse}, neither {same}")
