@@ -21,6 +21,7 @@ from sparsetrack.render import Renderer
 
 from . import dp
 from .common import OUT, baseline, cache_dir, labels
+from .tune import by_class
 
 
 class FullFrameTips:
@@ -94,17 +95,20 @@ def main(argv=None) -> None:
     ap.add_argument("--onset", default="off")
     ap.add_argument("--mid", action="store_true", help="also with lengths along the middle of the tube (centred.py)")
     ap.add_argument("--prob", help="tube maps the candidates were built on (for --mid; default the shipped ones)")
+    ap.add_argument("--only-flood", action="store_true", help="re-read only the grains 0.8.8 read with the flood "
+                    "(as Params.tiptraj='flood' does end to end)")
     a = ap.parse_args(argv)
     m = a.movie
     lab, base = labels(m), baseline(m)
-    pg_b = dp.per_grain(dp.score(lab, base))
+    b_rep = dp.score(lab, base)
+    pg_b, cl_b = dp.per_grain(b_rep), by_class(b_rep)
     p = {**dp.DEFAULT, **json.loads((OUT / a.setting).read_text())["best"]}
     tp = Params(tipdet_young=True, tipdet_onset=a.onset)
     ref = None
     for name in a.cands:
         doc = dp.load(m, name)
         dp.BACK = None
-        ev = dp.evaluate(m, doc, p)
+        ev = dp.evaluate(m, doc, p, a.only_flood)
         variants = [("reader", ev["pred"])]
         if a.young:
             variants.append((f"reader + tipdet_young (onset {a.onset})", with_young(m, ev["pred"], list(doc["grains"]), tp)))
@@ -114,7 +118,7 @@ def main(argv=None) -> None:
             choices = {gid: dp.viterbi(G, doc["rs"], doc["nb"], q)[0] for gid, G in doc["grains"].items()}
             prob_dir = a.prob if (a.prob and "_st" in name) else None
             dp.BACK = mid_corrections(doc, m, choices, prob_dir)
-            evm = dp.evaluate(m, doc, p)
+            evm = dp.evaluate(m, doc, p, a.only_flood)
             variants.append(("reader + mid", evm["pred"]))
             if a.young:
                 variants.append(("reader + mid + tipdet_young", with_young(m, evm["pred"], list(doc["grains"]), tp)))
@@ -125,10 +129,13 @@ def main(argv=None) -> None:
             ref = pg if ref is None else ref
             pb, pr = dp.paired(pg_b, pg), dp.paired(ref, pg)
             f = lambda x: f"{x[0]:+d} [{x[1]:+.0f}, {x[2]:+.0f}]"
+            cl = by_class(rep)
+            cls = " ".join(f"{c} {cl.get(c, (0, 0))[1]}/{cl.get(c, (0, 0))[0]} (0.8.8 {cl_b.get(c, (0, 0))[1]})"
+                           for c in ("young", "mid", "long"))
             print(f"{m} {name} {label}: onsets {rep['onset']['hits']}/{rep['onset']['n_timed']} lengths "
                   f"{rep['length_full']['within_tolerance']}/{rep['length_full']['n']} l&t {rep['tips']['length_and_tip']} | "
                   f"vs 0.8.8 on {f(pb[0])} len {f(pb[1])} l&t {f(pb[2])} | vs first row on {f(pr[0])} len {f(pr[1])} "
-                  f"l&t {f(pr[2])}", flush=True)
+                  f"l&t {f(pr[2])} | {cls}", flush=True)
 
 
 if __name__ == "__main__":

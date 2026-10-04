@@ -172,6 +172,20 @@ vs 1.71 px), equal on m2 (1.65 vs 1.66) and worse on m1 (2.09 vs 1.34); smoothin
 only where the radial step is strong does not fix m1 under any one rule (`edges.py`, step-strength gate). Left as it
 is.
 
+A related fix that did help is where the body RUNS: the cheapest route hugs the inside of a curving tube, the
+annotator traces its middle (about half the tube's width x the turn, ~11 px for a U-turn). Moving each chosen body
+onto the middle of the map's band (`centred.py`, `Params.tiptraj_mid`, weight chosen on ld) helps a little on every
+movie and never hurts:
+
+| movie | R1: lengths, l&t | + mid | + mid vs R1 (lengths; l&t) | by class | as `tiptraj='flood'` runs it (flooded grains only): R1 -> + mid |
+|---|---|---|---|---|---|
+| ld | 77/104, 75 | 79/104, 77 | +2 [-2, +6]; +2 [-2, +6] | mid 42 -> 44 of 57 | 77 -> 78, l&t 70 -> 71 (+1 [0, +3]) |
+| m2 | 32/54, 31 | 33/54, 32 | +1 [0, +3]; +1 [0, +3] | long 7 -> 8 of 11 | 30 -> 31, l&t 29 -> 30 (+1 [0, +3]) |
+| m1 | 25/50, 22 | 26/50, 23 | +1 [0, +3]; +1 [0, +3] | long 5 -> 6 of 11 | all scored grains flooded; end to end (`bench.py`, `tiptraj_mid=true`): 25 -> 26, l&t 22 -> 23 (+1 [0, +3]), vs 0.8.8 +11 [+3, +19] |
+
+The integrated option reproduces the prototype (ld grains: at most 0.4 px apart, same final lengths; movie 1 end to
+end gives exactly the offline numbers).
+
 ### 2. Long tubes on moving grains
 
 Why long m1 tubes get no candidate at their apex (`longdiag.py`, 11 traces >= 60 px): ranking (the apex is a map
@@ -180,19 +194,22 @@ blind to the tube (g003 b140 0% of 91 px marked, g007 8%), gaps in the map (g028
 detector's body head marks 19% of these tubes (no help). And one stall with a consistent candidate chain all the way
 (g028 b120-140: the detector's peak at the apex every bin, 0-1 px between bins) that the ld-tuned weights do not take:
 they weigh map support along the body 13 x the detector (w_sup 2.0 vs w_det 0.16), and the chain's body is less
-marked than a stub's on movie 1.
+marked than a stub's on movie 1. The m2-tuned weights, which lean more on the detector, do not take it either (g028
+at b244: 32 px of 270; ld-tuned 23).
 
 Guided second pass (`guide.py`, `cands.py --ext --corridor`, `Params.tiptraj_guided`): the first reading's chosen
 tip at the latest bin as a candidate, points along the map beyond it (cheapest route ahead within 70 deg, sampled
 at 6-80 px and its far end) and a corridor along its body through gaps in the map:
 
-| movie | R1 (first pass): lengths, l&t, onsets | guided: lengths, l&t, onsets | guided vs R1 (lengths; l&t; onsets) | guided vs 0.8.8 (lengths; l&t) |
-|---|---|---|---|---|
-| ld | 77/104, 75, 16/28 | 76/104, 75, 16/28 | -1 [-3, 0]; 0; 0 | +1 [-9, +11]; +8 [-2, +19] |
-| m2 | 32/54, 31, 8/19 | 33/54, 33, 9/19 | +1 [0, +3]; +2 [0, +5]; +1 [0, +3] | +6 [-2, +14]; +10 [+3, +17] |
-| m1 | 25/50, 22, 10/28 | 25/50, 22, 10/28 | 0; 0; 0 | +10 [+2, +18]; +7 [-1, +15] |
+| movie | R1 (first pass): lengths, l&t, onsets | guided: lengths, l&t, onsets | guided vs R1 (lengths; l&t; onsets) | guided vs 0.8.8 (lengths; l&t) | long tubes (>= 60 px) within tolerance: 0.8.8 / R1 / guided |
+|---|---|---|---|---|---|
+| ld | 77/104, 75, 16/28 | 76/104, 75, 16/28 | -1 [-3, 0]; 0; 0 | +1 [-9, +11]; +8 [-2, +19] | 16 / 16 / 16 of 17 |
+| m2 | 32/54, 31, 8/19 | 33/54, 33, 9/19 | +1 [0, +3]; +2 [0, +5]; +1 [0, +3] | +6 [-2, +14]; +10 [+3, +17] | 6 / 7 / 8 of 11 |
+| m1 | 25/50, 22, 10/28 | 25/50, 22, 10/28 | 0; 0; 0 | +10 [+2, +18]; +7 [-1, +15] | 1 / 5 / 5 of 11 |
 
-Neutral to slightly positive (m2 one more long tube), at twice the reading time: `Params.tiptraj_guided`, off.
+Neutral to slightly positive (m2 one more long tube), at twice the reading time: `Params.tiptraj_guided`, off. With
+`tiptraj_mid` (section 3) on top the two add up a little: ld 79/104, l&t 78; m2 34/54, l&t 34, long 9/11 (vs R1 +2
+lengths [0, +6], +3 l&t [0, +8]); movie 1's guided readings are R1's.
 
 DIS-flow carrying of the guide's tip was not tried: the diagnosis shows the long misses are ranking, map blindness and
 gaps, not tubes moving while held.
@@ -205,29 +222,66 @@ lengths along the middle of the tube (`centred.py`, `Params.tiptraj_mid`) and wi
 lengths on top (`tipdet.apply` as on main, `Params.tipdet_young`, read from the stored full-frame maps). Paired over
 the 30 grains; R1 = the merged reader on the shipped maps.
 
-| m1, ld-tuned weights | onsets | lengths | length+tip | vs 0.8.8 (lengths; l&t; onsets) | vs R1 (lengths; l&t; onsets) |
-|---|---|---|---|---|---|
-| 0.8.8 | 8/26 | 15/50 | 15 | | |
-| R1: reader, shipped maps | 10/28 | 25/50 | 22 | +10 [+2, +18]; +7 [-1, +15]; +2 | |
-| + mid | 10/28 | 26/50 | 23 | +11 [+3, +19]; +8 [0, +16]; +2 | +1 [0, +3]; +1 [0, +3]; 0 |
-| + tipdet_young | 10/28 | 24/50 | 22 | +9; +7; +2 | -1 [-4, +2]; 0; 0 |
-| reader, self-trained maps | 15/28 | 27/50 | 24 | +12 [+4, +20]; +9 [+1, +17]; +7 [+1, +13] | +2 [0, +5]; +2 [0, +5]; +5 [-1, +11] |
-| **self-trained maps + mid** | **15/28** | **29/50** | **26** | **+14 [+6, +22]; +11 [+4, +19]; +7 [+1, +13]** | **+4 [+1, +8]; +4 [+1, +8]; +5 [-1, +11]** |
-| self-trained maps + mid + tipdet_young | 15/28 | 27/50 | 24 | +12; +9; +7 | +2 [-3, +7]; +2 [-3, +7]; +5 |
+| m1, ld-tuned weights | onsets | lengths | length+tip | young / mid / long (of 28 / 11 / 11) | vs 0.8.8 (lengths; l&t; onsets) | vs R1 (lengths; l&t; onsets) |
+|---|---|---|---|---|---|---|
+| 0.8.8 | 8/26 | 15/50 | 15 | 10 / 4 / 1 | | |
+| R1: reader, shipped maps | 10/28 | 25/50 | 22 | 16 / 4 / 5 | +10 [+2, +18]; +7 [-1, +15]; +2 | |
+| + mid | 10/28 | 26/50 | 23 | 16 / 4 / 6 | +11 [+3, +19]; +8 [0, +16]; +2 | +1 [0, +3]; +1 [0, +3]; 0 |
+| + tipdet_young | 10/28 | 24/50 | 22 | 15 / 4 / 5 | +9; +7; +2 | -1 [-4, +2]; 0; 0 |
+| reader, self-trained maps | 15/28 | 27/50 | 24 | 17 / 5 / 5 | +12 [+4, +20]; +9 [+1, +17]; +7 [+1, +13] | +2 [0, +5]; +2 [0, +5]; +5 [-1, +11] |
+| **self-trained maps + mid** | **15/28** | **29/50** | **26** | **17 / 6 / 6** | **+14 [+6, +22]; +11 [+4, +19]; +7 [+1, +13]** | **+4 [+1, +8]; +4 [+1, +8]; +5 [-1, +11]** |
+| self-trained maps + mid + tipdet_young | 15/28 | 27/50 | 24 | 15 / 6 / 6 | +12; +9; +7 | +2 [-3, +7]; +2 [-3, +7]; +5 |
 
 The young-tube lengths from the detector do not help on top of this reader (it already takes young tips from the
-detector: ld -1, m2 -1, m1 -1 to -2). The best movie-1 combination is the self-trained maps with lengths along the
-middle of the tube: 29/50 lengths and 15/28 onsets, against 15/50 and 8/26 for 0.8.8.
+detector: ld -1, m2 -1, m1 -1 to -2, and on movie 1 the loss is in the young class itself, 16 -> 15 and 17 -> 15).
+The best movie-1 combination is the self-trained maps with lengths along the middle of the tube: 29/50 lengths and
+15/28 onsets, against 15/50 and 8/26 for 0.8.8; its gain over R1 is in the mid and long classes (4 -> 6, 5 -> 6)
+and the onsets.
 
 With the m2-tuned weights (secondary): reader 28/50 (onsets 7/28), self-trained maps + mid 30/50, length-and-tip 27
 (+15 lengths vs 0.8.8, CI +7 to +23) but onsets 6/28: those weights call movie 1's onsets late.
 
-JOINT_PENDING
+Weights tuned on both development movies at once (ld + m2, 150 + 150; `tune.py --tune ld m2`, setting `tune_ldm2_c`)
+fit them (ld 76/104, l&t 73; m2 37/54, l&t 36) but transfer no better to movie 1: 24/50 lengths, l&t 21, onsets
+10/28 (ld-tuned: 25, 22, 10). The ld-tuned weights stay the defaults. No tuning reads movie 1's long stalls: at
+the last labelled bin g028 is read 23 / 32 / 31 px of 270 with the ld / m2 / joint weights, g064 93 / 80 / 77 of
+153, g003 28 / 19 / 27 of 91 (the map blind or gapped there, section 2).
+
+The same combinations with the joint weights (`combo.py --setting tune_ldm2_c.json`) keep the order:
+
+| m1, ld + m2 weights | onsets | lengths | length+tip | vs 0.8.8 (lengths; l&t; onsets) | vs the first row (lengths; l&t) |
+|---|---|---|---|---|---|
+| reader, shipped maps | 10/28 | 24/50 | 21 | +9 [+1, +17]; +6 [-1, +14]; +2 | |
+| + mid | 10/28 | 28/50 | 23 | +13 [+4, +22]; +8 [0, +16]; +2 | +4 [+1, +8]; +2 [0, +5] |
+| + tipdet_young | 10/28 | 24/50 | 22 | +9; +7; +2 | 0 [-4, +4]; +1 |
+| reader, self-trained maps | 13/28 | 28/50 | 25 | +13 [+5, +21]; +10 [+2, +17]; +5 [0, +11] | +4 [0, +9]; +4 [0, +9] |
+| **self-trained maps + mid** | **13/28** | **30/50** | **27** | **+15 [+7, +23]; +12 [+5, +19]; +5 [0, +11]** | **+6 [+1, +11]; +6 [+1, +11]** |
+| self-trained maps + mid + tipdet_young | 13/28 | 28/50 | 25 | +13; +10; +5 | +4 [-2, +10]; +4 [-2, +11] |
+
+Self-trained maps with lengths along the middle are again the best (30/50, length-and-tip 27, onsets 13/28; with
+the ld-tuned weights 29, 26, 15/28), the middle lengths again never hurt (+4 on the shipped maps here, +2 on the
+self-trained ones), and the detector's young-tube lengths again cost 2 on top.
+
+### Round-2 recommendation
+
+Turn on `tiptraj_mid` together with the reader (small, consistent: +2 / +1 / +1 lengths, +2 / +1 / +1 length-and-tip
+on ld / m2 / m1, never negative; cheap: one band profile per chosen reading). On a new movie, adapt the maps first
+(label-free self-training): with them and `tiptraj_mid` movie 1 reads 29/50 lengths and 15/28 onsets, +4 lengths
+(CI +1 to +8) and +5 onsets over round 1 (with weights tuned on ld + m2: 30/50, 13/28). Leave `tiptraj_guided` off
+(neutral, twice the time) and do not add `tipdet_young` on top (-1 to -2). Where the body starts stays open: the
+annotator's exit is a property of the grain's boundary that no label-free estimate here measures well on movie 1.
+Long stalls on movie 1 (g028, g064, g003) stay open too: no weights read them, the map is blind or gapped there.
 
 Files: `common.py`, `detmaps.py`, `cands.py`, `dp.py`, `tune.py`, `failures.py`, `summary.py`, `bench.py`, `altmaps.py`;
-round 2: `guide.py`, `longdiag.py`, `backrim.py`, `edges.py`, `combo.py`.
-Outputs (scratch, not kept in git): detector maps (~100 MB for the three movies), candidates (`cands_<movie>.pkl`),
-tuning (`tune_ld_c.json`, `tune_m2_c.json`), predictions (`pred_ld_c_<movie>.json`, `pred_m2_c_<movie>.json`).
+round 2: `guide.py`, `longdiag.py`, `backrim.py`, `edges.py`, `centred.py`, `combo.py`.
+Outputs (scratch, not kept in git): detector maps (~300 MB for the three movies), candidates (`cands_<movie>.pkl`,
+~180 MB), tuning (`tune_ld_c.json`, `tune_m2_c.json`, `tune_ldm2_c.json`), predictions (`pred_ld_c_<movie>.json`,
+`pred_m2_c_<movie>.json`); round 2 also self-trained m1 maps (~440 MB) and second-pass candidates, deleted after use.
 Reproduce: `python -m prototypes.tip_trajectory.detmaps ld m2 m1; python -m prototypes.tip_trajectory.cands ld m2 m1;
 python -m prototypes.tip_trajectory.tune --tune ld --apply m2 m1 --n 250 --refine 200 --tag ld_c --start '{"c": -1.0,
-"w_ext": 0.5, "w_l0": 0.3, "theta": 0.5, "det_norm": 2, "vmax": 4.0}'` (seed 0).
+"w_ext": 0.5, "w_l0": 0.3, "theta": 0.5, "det_norm": 2, "vmax": 4.0}'` (seed 0). Round 2: guided pass `guide ld m2
+m1`, `cands ld m2 m1 --guide "guide_{movie}.pkl" --ext --corridor --tag _g`, `combo <movie> --cands cands_<movie>.pkl
+cands_<movie>_g.pkl`; movie 1 combination `altmaps m1 runs/research/self_train/models/m1_r1_sb.pt`,
+`TT_GT_PROB=<maps> cands m1 --tag _st`, `combo m1 --cands cands_m1.pkl cands_m1_st.pkl --young --mid --prob <maps>`
+(add `--setting tune_ldm2_c.json` for the joint weights; `tune --tune ld m2 --apply m1 --n 150 --refine 150 --tag
+ldm2_c` with the same start).

@@ -64,7 +64,7 @@ def test_holds_through_a_gap_in_the_maps():
 
 
 def test_off_by_default():
-    assert Params().tiptraj == "off" and Params().tiptraj_guided is False
+    assert Params().tiptraj == "off" and Params().tiptraj_guided is False and Params().tiptraj_mid is False
 
 
 def test_guided_second_pass_follows_the_first_reading():
