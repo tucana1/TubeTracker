@@ -190,7 +190,7 @@ def cmd_selftrain(args) -> None:
     """Adapt the tube network to one movie on its own confident readings (label-free; research step)."""
     from .selftrain import selftrain
     selftrain(args.cache, args.out, predictions=args.predictions, start=args.start, replay=args.replay,
-              steps=args.steps, seed=args.seed, work=args.work)
+              steps=args.steps, seed=args.seed, runs=args.runs, work=args.work)
 
 
 def cmd_eval(args) -> None:
@@ -335,6 +335,7 @@ def main(argv=None) -> None:
                                                "under runs/)")
     t.add_argument("--steps", type=int, default=1500)
     t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--runs", type=int, default=1, help="fine-tunes averaged into one network (seeds SEED, SEED+1, ...)")
     t.add_argument("--work", help="folder for the readings (default: beside --out)")
     t.set_defaults(func=cmd_selftrain)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")

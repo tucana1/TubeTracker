@@ -814,16 +814,30 @@ def fine_tune(start: str | Path, sets: list[tuple[str, dict, float]], steps: int
             "bg_px": ck.get("bg_px", 0)}
 
 
+def soup(cks: list[dict]) -> dict:
+    """Uniform weight average of fine-tunes of one starting network (a "model soup", Wortsman et al. 2022): floating
+    tensors averaged (the frozen BatchNorm statistics are the same in all), integer buffers from the first."""
+    import torch
+    state = {}
+    for k, v in cks[0]["state"].items():
+        if torch.is_floating_point(v):
+            state[k] = (sum(c["state"][k].double() for c in cks) / len(cks)).to(v.dtype)
+        else:
+            state[k] = v.clone()
+    return {**{k: v for k, v in cks[0].items() if k != "state"}, "state": state}
+
+
 # ------------------------------------------------------------------------------------------------------- driver
 def selftrain(cache_dir: str | Path, out: str | Path, predictions: str | Path | None = None,
-              start: str | Path | None = None, replay=None, steps: int = 1500, seed: int = 0,
+              start: str | Path | None = None, replay=None, steps: int = 1500, seed: int = 0, runs: int = 1,
               work: str | Path | None = None, settings: Settings | None = None, device: str | None = None,
               log=print) -> dict:
     """Adapt the tube network to the movie in ``cache_dir`` on its own confident readings; write it to ``out`` and
     its record (settings, inputs' sha1s, pseudo-labels, crops, timings) to ``out`` with suffix ``.json``.
     ``predictions``: SparseTrack's default readings of the census grains with ``start`` (else read now, into
     ``work``/readings). ``start``: the starting network (default the shipped one). ``replay``: shards of the starting
-    network's own training data (default ``DEFAULT_REPLAY``, only for the shipped network)."""
+    network's own training data (default ``DEFAULT_REPLAY``, only for the shipped network). ``runs`` > 1: that many
+    fine-tunes (seeds ``seed`` .. ``seed + runs - 1``, each on its own crops) averaged into one network (``soup``)."""
     from . import learned
     t0 = time.time()
     s = settings or Settings()
@@ -864,36 +878,45 @@ def selftrain(cache_dir: str | Path, out: str | Path, predictions: str | Path | 
     pseudo, stats = select(pred, census, maps, nb, s, w, h, log)
     del maps
     timing["select_s"] = round(time.time() - t1, 1)
-    # 3. crops
-    t1 = time.time()
-    view = View(cache_dir)
-    traced = traced_crops(view, pseudo, census, s, seed, log)
-    prop = propagated_crops(view, pseudo, census, s, seed, log) if s.propagate and traced is not None else None
-    timing["crops_s"] = round(time.time() - t1, 1)
     record = {"schema": SCHEMA, "sparsetrack_version": __version__, "created": time.strftime("%Y-%m-%dT%H:%M:%S"),
               "cache": str(cache_dir), "census_grains": len(census), "out": str(out),
               "start": {"path": str(start), "sha1": start_sha1},
               "replay": [{"path": str(p), "sha1": sha1(p)} for p in replay],
               "predictions": {"path": str(pred_path), "sha1": sha1(pred_path) if pred_path.exists() else None,
                               "grains_source": pred.get("grains_source"), "method": pred.get("method")},
-              "steps": steps, "seed": seed, "settings": asdict(s), "pseudo": stats["totals"],
-              "crops": {"traced": 0 if traced is None else len(traced["x"]),
-                        "propagated": 0 if prop is None else len(prop["x"])}}
+              "steps": steps, "seed": seed, "runs": runs, "settings": asdict(s), "pseudo": stats["totals"]}
+    # 3-4. crops and fine-tuning: ``runs`` fine-tunes (seeds seed .. seed + runs - 1, each on its own crops), averaged
+    view = View(cache_dir)
+    cks, crops, replayed, t_crops, t_train = [], [], None, 0.0, 0.0
+    for k in range(runs if stats["totals"]["pseudo_traces"] else 0):
+        t1 = time.time()
+        traced = traced_crops(view, pseudo, census, s, seed + k, log)
+        prop = propagated_crops(view, pseudo, census, s, seed + k, log) if s.propagate and traced is not None else None
+        t_crops += time.time() - t1
+        crops.append({"seed": seed + k, "traced": 0 if traced is None else len(traced["x"]),
+                      "propagated": 0 if prop is None else len(prop["x"])})
+        if traced is None:
+            break
+        t1 = time.time()
+        replayed = replayed if replayed is not None else replay_sets(replay, s)
+        sets = [("pseudo traced", traced, s.share_traced + (0.0 if prop is not None else s.share_propagated))]
+        if prop is not None:
+            sets.append(("pseudo propagated", prop, s.share_propagated))
+        cks.append(fine_tune(start, sets + replayed, steps, seed + k, s, device, log))
+        t_train += time.time() - t1
+        del traced, prop, sets
+    record["crops"] = crops[0] if crops else {"traced": 0, "propagated": 0}
+    if len(crops) > 1:
+        record["crops_by_run"] = crops
+    timing.update(crops_s=round(t_crops, 1), train_s=round(t_train, 1))
     out.parent.mkdir(parents=True, exist_ok=True)
-    if traced is None or not stats["totals"]["pseudo_traces"]:
+    if not cks:
         # nothing confident to learn from: the starting network, unchanged
         shutil.copy(start, out)
         record.update(unchanged=True, reason="no confident reading to learn from")
         log("no pseudo-traces: the starting network is kept unchanged")
     else:
-        # 4. fine-tuning
-        t1 = time.time()
-        sets = [("pseudo traced", traced, s.share_traced + (0.0 if prop is not None else s.share_propagated))]
-        if prop is not None:
-            sets.append(("pseudo propagated", prop, s.share_propagated))
-        sets += replay_sets(replay, s)
-        ck = fine_tune(start, sets, steps, seed, s, device, log)
-        timing["train_s"] = round(time.time() - t1, 1)
+        ck = soup(cks) if len(cks) > 1 else cks[0]
         record["unchanged"] = False
         ck["selftrain"] = record
         import torch

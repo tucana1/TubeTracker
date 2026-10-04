@@ -314,3 +314,22 @@ def test_command_line(tmp_path, monkeypatch):
               "--replay", str(real), str(synth), "--steps", "2", "--seed", "3"])
     doc = json.loads(out.with_suffix(".json").read_text())
     assert doc["seed"] == 3 and doc["steps"] == 2 and math.isfinite(doc["timing"]["total_s"])
+
+
+def test_several_runs_are_averaged_into_one_network(tmp_path):
+    torch = pytest.importorskip("torch")
+    from sparsetrack import learned
+    start = _tiny_net(tmp_path, torch, learned)
+    cache, pred = make_cache(tmp_path, start)
+    replay = _shards(tmp_path)
+    kw = dict(predictions=pred, start=start, replay=replay, steps=2, device="cpu", log=lambda *a: None)
+    rec = st.selftrain(cache, tmp_path / "soup.pt", seed=5, runs=2, **kw)
+    st.selftrain(cache, tmp_path / "a.pt", seed=5, **kw)
+    st.selftrain(cache, tmp_path / "b.pt", seed=6, **kw)
+    load = lambda p: torch.load(p, weights_only=False)
+    want = st.soup([load(tmp_path / "a.pt"), load(tmp_path / "b.pt")])
+    got = load(tmp_path / "soup.pt")
+    assert rec["runs"] == 2 and [c["seed"] for c in rec["crops_by_run"]] == [5, 6]
+    assert all(torch.allclose(got["state"][k].float(), want["state"][k].float(), atol=1e-6) for k in want["state"])
+    a = load(tmp_path / "a.pt")["state"]["head.weight"]
+    assert not torch.allclose(got["state"]["head.weight"], a)
