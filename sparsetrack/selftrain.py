@@ -34,9 +34,12 @@ The adapted network is then the movie's ``Params.model``: the hybrid's flood, th
 check and the tip-trajectory reader all read its maps. One round only (a second round starts to confirm its own
 marks); training noise alone moves end-to-end lengths by about 3 of 50 on movie 1.
 
-Settings were fixed on the three labelled movies before any blind movie (prototypes/self_train/README.md;
-"sb" = with propagation: its maps mark more of the traced tubes on movie 1 (90% vs 79%) and movie 2, and the
-tip-trajectory reader on them read 32/50 movie-1 lengths against 27 on the shipped maps).
+Settings were fixed on the labelled movies before any blind movie (prototypes/self_train/README.md, "The step"):
+variant "sb" (with propagation: its maps mark more of the traced tubes on movies 1 and 2), one run. Judged with the
+tip-trajectory reader (the 0.9.0 candidate's settings, held-out detector folds), only the maps changed: movie 1 28/50
+lengths with seeds 0 and 1 (27/50 on the shipped maps; onsets 15-17/28 against 12/28); movie 2, from a network that
+never saw it, 24, 31 and 31/54 with seeds 0-2 (28/54 on that network's own maps) - the seed moves movie 2 by up to 7.
+Averaging three runs (``runs=3``) read 27/50 and 28/54: no better than one run.
 """
 
 from __future__ import annotations
