@@ -129,8 +129,6 @@ class Params:
     flood_start_band: float = 4.0  # px beyond the rim halo where a tube may start
     flood_tip_px: float = 0.0    # subtracted from the flood's reach
     flood_lookback: float = 0.25  # walk the onset back while P at the tube's exit stays above this (0 = off)
-    flood_compete: bool = False  # flood every tube in view at once: new material goes to the tube growing there
-    flood_fallback: bool = False  # hybrid: where the flood finds no tube but the change reader saw one, keep it (no gain)
     hybrid_onset: str = "flood"   # 0.8.1 (was "change"; vs 0.8.0: m1 lengths +7, 95% CI +2 to +13, onsets +5; m2 +1;
                                   # ld unchanged; "change_unless_missed": m1 +4, others +0). The old maps marked rims
                                   # before a tube existed, the BatchNorm maps rarely do. Flooded grains on a noisy
@@ -157,8 +155,6 @@ class Params:
     drawn_min_on: float = 0.5    # ...flag drawn_off_tube where less of it than this lies on the map
     flood_from_exit: bool = True  # flood lengths along the tube from where it leaves the grain (not a rim detour)
     flood_routes_by_bin: bool = True  # draw each bin's own route where it leaves the final one (path_by_bin)
-    flood_turn_deg: float = 0.0   # >0: a piece carrying the far end more than flood_turn_min_px on at once, turning
-    flood_turn_min_px: float = 6.0  # more than this from the tube's last 10 px, is not claimed (passing tubes)
     flood_route_off_px: float = 2.5   # ...by more than this on average
     flood_speed_cap: bool = True   # a bin's tip at most vmax_px (the movie's growth cap) further than the last
                                    # one (0.8.7): a moved tube taken as growth jumped 27-121 px in a bin (m2
@@ -179,7 +175,6 @@ class Params:
     flood_exit_edge: bool = False  # flood lengths from the grain's visible edge along the exit (as exit_edge)
     exit_edge: bool = True       # change reader: lengths from the grain's visible edge along the exit, where an
                                  # annotator starts a trace, not from the census circle
-    exit_edge_onset: bool = False  # ...and its onset stub there too (ld: fixes 2 onsets, loses 3: off)
     # tip continuation (change reader): a tube grows at its tip, so change that appears beyond the chosen path's
     # tip only after its front got there, and runs on from it, is the tube going on - typically back along its own
     # grain after a turn, where every point is nearer the rim than the tip and no path starting on the rim reaches
@@ -1459,10 +1454,6 @@ def analyze_grain(renderer: Renderer, meta: dict, grain: dict, others: list[dict
     e_exit = (float(np.clip(exit_edge(early, centre, gr, math.atan2(u_exit[1], u_exit[0])), -(gr - 1.0), ss[-1] - 1.0))
               if p.exit_edge else 0.0)
     stub_pts = pts
-    if p.exit_edge_onset and e_exit < 0:  # the tube leaves the body inside the census circle: watch it there
-        stub_pts = np.vstack([pts[0][None] + np.arange(e_exit, 0.0, p.step)[:, None] * u_exit[None], pts])
-    elif p.exit_edge_onset and e_exit > 0:
-        stub_pts = pts[min(int(np.searchsorted(ss, e_exit)), len(pts) - 2):]
     if p.onset_source == "matched":
         signed = (reg - early[None]).astype(np.float32)
         z, mf_info = matched_stub_signal(signed, (late - early), stub_pts, centre, p,
@@ -1690,22 +1681,18 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         if p.reader == "flood" or (p.reader == "hybrid" and (crowded or noisy)):
             from . import learned
             fl = learned.read_grain(renderer, prob, meta, g, others, p)
-            if (p.reader == "hybrid" and p.flood_fallback and res is not None and res["status"] != "no_emergence_by_end"
-                    and fl["status"] == "no_emergence_by_end"):
-                res["flags"].append("flood_found_no_tube")  # a gap in the map at its base, say: keep what grew
-            else:
-                missed = (res is not None and res["status"] == "no_emergence_by_end"
-                          and fl["status"] != "no_emergence_by_end" and fl.get("final_length_px", 0.0) >= p.hybrid_min_px)
-                if res is not None and not crowded and p.hybrid_onset != "flood" and not (
-                        p.hybrid_onset == "change_unless_missed" and missed):
-                    # a clean rim still gives the better onset: keep the change reader's germination call,
-                    # and the flood's lengths from that onset on
-                    fl = learned.with_onset(fl, res)
-                    if res.get("over_grain"):
-                        fl = with_over_grain(fl, res, p)
-                elif missed:
-                    fl["flags"].append("onset:flood_over_change")
-                res = fl
+            missed = (res is not None and res["status"] == "no_emergence_by_end"
+                      and fl["status"] != "no_emergence_by_end" and fl.get("final_length_px", 0.0) >= p.hybrid_min_px)
+            if res is not None and not crowded and p.hybrid_onset != "flood" and not (
+                    p.hybrid_onset == "change_unless_missed" and missed):
+                # a clean rim still gives the better onset: keep the change reader's germination call,
+                # and the flood's lengths from that onset on
+                fl = learned.with_onset(fl, res)
+                if res.get("over_grain"):
+                    fl = with_over_grain(fl, res, p)
+            elif missed:
+                fl["flags"].append("onset:flood_over_change")
+            res = fl
         if p.centre_route and prob is not None and len(res.get("path") or []) >= 2:
             from . import learned
             learned.centre_route(res, prob, meta, p)

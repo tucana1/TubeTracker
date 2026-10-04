@@ -130,22 +130,3 @@ def test_the_radial_tip_reads_a_young_blob_widening_along_the_rim():
     assert dist_tip["length"]["px"][-1] < 5.0                                  # the rim piece's own distance out
     assert abs(radial["length"]["px"][-1] - 7.0) < 1.0
     assert radial["tip"]["xy"][-1][0] > 66.0                                  # the tip is the stub's end, not the rim
-
-
-def test_a_big_piece_turning_away_from_the_tube_is_a_passing_tube_not_growth():
-    from sparsetrack.learned import _turns_away
-    h, w = 60, 80
-    tube = np.zeros((h, w), bool)
-    tube[30, 10:40] = True                       # a tube growing along +x, its far end at x = 39
-    dist = np.full((h, w), np.inf)
-    dist[30, 10:40] = np.arange(30, dtype=float)
-    straight = np.zeros((h, w), bool)
-    straight[30, 41:52] = True                   # 12 px more, straight on
-    sideways = np.zeros((h, w), bool)
-    sideways[31:44, 41] = True                   # 12 px, at right angles
-    small = np.zeros((h, w), bool)
-    small[31:34, 41] = True                      # 3 px at right angles: a tube may curve
-    sources = tube.copy()
-    assert not _turns_away(dist, tube, straight, sources, 4, 50.0, 6.0)
-    assert _turns_away(dist, tube, sideways, sources, 4, 50.0, 6.0)
-    assert not _turns_away(dist, tube, small, sources, 4, 50.0, 6.0)

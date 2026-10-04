@@ -271,17 +271,14 @@ def from_exit(line: list[tuple[float, float]], centre: float, gr: float, zone: f
 
 def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray, gr: float, recent: int = 12,
           bridge: int = 4, start_band: float = 4.0, min_len: float = 8.0, give_up: int = 40, halo: float = HALO,
-          arc_deg: float = 60.0, old_far_px: float = 10.0, old_far_bins: int = 3, turn_deg: float = 0.0,
-          turn_min_px: float = 6.0) -> dict:
+          arc_deg: float = 60.0, old_far_px: float = 10.0, old_far_bins: int = 3) -> dict:
     """Grow one grain's tube through an arrival map (see the module docstring).
 
     Start rules: nothing within ``halo`` px of the rim is claimed; a tube starts on a piece reaching the
     ``start_band`` px beyond that, spanning at most ``arc_deg`` degrees round the grain, and not joined (through
     what has arrived so far) to material that arrived more than ``old_far_bins`` bins earlier more than
     ``old_far_px`` px beyond the rim. A tube that stops for ``give_up`` bins before getting ``min_len`` px beyond
-    the rim was rim noise: it is forgotten and the flood starts again. With ``turn_deg``, a piece that would carry the
-    tube's far end more than ``turn_min_px`` further in one bin, turning more than ``turn_deg`` from the direction of
-    its last 10 px, is a passing or moved tube, not growth: it is not claimed.
+    the rim was rim noise: it is forgotten and the flood starts again.
 
     Returns the tube mask, each tube pixel's arrival bin and rim distance, the emergence bin
     and the length per bin.
@@ -327,8 +324,6 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
                 for l in range(1, nl):
                     c = lab == l
                     if (c & seeds).any():
-                        if turn_deg > 0 and _turns_away(dist, tube, c, tip, bridge, turn_deg, turn_min_px):
-                            continue
                         _extend_dist(dist, c, tip, bridge)
                         tube |= c
                         t_in[c] = b
@@ -336,145 +331,6 @@ def flood(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray,
         fin = tube & np.isfinite(dist)
         length[b] = float(dist[fin].max()) if fin.any() else 0.0
     return {"tube": tube, "t_in": t_in, "dist": dist, "emerge": emerge, "length": np.maximum.accumulate(length)}
-
-
-def _turns_away(dist: np.ndarray, tube: np.ndarray, comp: np.ndarray, sources: np.ndarray, bridge: int,
-                turn_deg: float, min_px: float) -> bool:
-    """Whether joining ``comp`` would carry the tube's far end more than ``min_px`` further at once, in a direction
-    more than ``turn_deg`` from that of the tube's last 10 px (``flood``'s turn rule)."""
-    fin = tube & np.isfinite(dist)
-    if not fin.any():
-        return False
-    trial = dist.copy()
-    _extend_dist(trial, comp, sources, bridge)
-    far = np.where(comp & np.isfinite(trial), trial, -1.0)
-    cur = float(dist[fin].max())
-    if far.max() <= cur + min_px:
-        return False
-    ty, tx = np.unravel_index(int(np.argmax(np.where(fin, dist, -1.0))), dist.shape)
-    back = fin & (np.abs(dist - (cur - 10.0)) <= 1.5)
-    if not back.any():
-        return False
-    by, bx = np.nonzero(back)
-    k = int(np.argmin(np.hypot(by - ty, bx - tx)))
-    v_in = np.array([ty - by[k], tx - bx[k]], float)
-    fy, fx = np.unravel_index(int(np.argmax(far)), far.shape)
-    v_out = np.array([fy - ty, fx - tx], float)
-    n_in, n_out = float(np.hypot(*v_in)), float(np.hypot(*v_out))
-    if n_in < 1e-6 or n_out < 1e-6:
-        return False
-    return float(np.degrees(np.arccos(np.clip(np.dot(v_in, v_out) / (n_in * n_out), -1.0, 1.0)))) > turn_deg
-
-
-def flood_compete(arr: np.ndarray, rg: np.ndarray, ang: np.ndarray, blocked: np.ndarray, gr: float,
-                  rivals: list[tuple[float, float, float]], recent: int = 12, bridge: int = 4, start_band: float = 4.0,
-                  min_len: float = 8.0, give_up: int = 40, orphan_px: int = 15) -> dict:
-    """``flood`` with every tube in view growing at once, so that tubes compete for new material.
-
-    ``rivals``: the other grains in the crop, (cy, cx, r) in crop pixels (their discs are in ``blocked``).
-    Each bin's new pieces go to one owner: the target's tube, a rival grain's tube, or an "orphan" (material
-    growing from no grain in view, e.g. a tube from a grain outside the crop). A piece touching the recent tips
-    of several tubes goes to the one that grew most recently, then to the tip it is nearest; a tube's start
-    at its rim loses to a tube actively growing there. So a stopped tube does not take over another tube
-    passing its tip, and a tube passing a grain's rim does not start that grain. Orphans compete once they
-    are credible (``orphan_px`` pixels grown over two or more bins), so that specks of noise near a tube
-    do not steal its growth. Returns what ``flood`` returns, for the target."""
-    n = int(arr.max())
-    h, w = arr.shape
-    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
-    grains = [(None, None, gr, rg, ang)] + [(cy, cx, r, np.hypot(xx - cx, yy - cy), np.arctan2(yy - cy, xx - cx))
-                                             for cy, cx, r in rivals]
-    blocked = blocked.copy()
-    for _, _, r, rgg, _ in grains:
-        blocked |= rgg < r + HALO
-    starts = [(rgg >= r + HALO) & (rgg <= r + HALO + start_band) for _, _, r, rgg, _ in grains]
-    ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * bridge + 1, 2 * bridge + 1))
-    owner = np.zeros((h, w), np.int32)  # 0 none; 1 + k grain k's tube (k = 0 the target); >= 1 + len(grains) orphans
-    t_in = np.full((h, w), -1, np.int32)
-    last, size, bins_grown = {}, {}, {}
-    started = [False] * len(grains)
-    next_orphan = 1 + len(grains)
-    dist = np.full((h, w), np.inf)
-    length = np.zeros(n)
-    emerge = grew = None
-    lab_all = None
-
-    def credible(o):
-        return o <= len(grains) or (size[o] >= orphan_px and bins_grown[o] >= 2)
-
-    for b in range(n):
-        if emerge is not None and b - grew > give_up and not ((owner == 1) & (rg > gr + min_len)).any():
-            t_in[owner == 1], dist[:] = -1, np.inf  # stopped short: rim noise, start again
-            owner[owner == 1], emerge, started[0] = 0, None, False
-            length[:b] = 0.0
-            last.pop(1, None)
-        new = (arr == b) & ~blocked
-        if new.any():
-            nl, lab, stats, _ = cv2.connectedComponentsWithStats(new.astype(np.uint8), connectivity=8)
-            lab_all = None
-            for l in range(1, nl):
-                x0, y0, cw_, ch_ = (int(v) for v in stats[l, :4])
-                y0, y1 = max(y0 - bridge - 1, 0), min(y0 + ch_ + bridge + 1, h)
-                x0, x1 = max(x0 - bridge - 1, 0), min(x0 + cw_ + bridge + 1, w)
-                c = lab[y0:y1, x0:x1] == l
-                near = cv2.dilate(c.astype(np.uint8), ker).astype(bool)
-                ow, tw = owner[y0:y1, x0:x1], t_in[y0:y1, x0:x1]
-                tips = {}
-                for o in np.unique(ow[near & (ow > 0)]):
-                    o = int(o)
-                    sel = near & (ow == o) & (tw >= last[o] - recent)
-                    if sel.any():  # distance from the piece to that tube's very tip
-                        ty, tx = np.nonzero((ow == o) & (tw >= last[o] - 2))
-                        cy_, cx_ = np.nonzero(c)
-                        d = (float(np.min(np.hypot(ty[:, None] - cy_[None], tx[:, None] - cx_[None])))
-                             if len(ty) else float(bridge + 1))
-                        tips[o] = d
-                cand_start = []
-                for k, (_, _, r, rgg, angg) in enumerate(grains):
-                    if started[k] or not (c & starts[k][y0:y1, x0:x1]).any():
-                        continue
-                    a = angg[y0:y1, x0:x1][c]
-                    if np.ptp(np.angle(np.exp(1j * (a - np.angle(np.mean(np.exp(1j * a))))))) > np.deg2rad(60):
-                        continue  # an arc round the rim, not a stub leaving it
-                    if lab_all is None:
-                        _, lab_all = cv2.connectedComponents(((arr <= b) & ~blocked).astype(np.uint8), connectivity=8)
-                    old_far = (arr < b - 3) & (rgg > r + 10.0)
-                    if (np.isin(lab_all, np.unique(lab_all[y0:y1, x0:x1][c])) & old_far).any():
-                        continue  # the leading end of a structure already there
-                    cand_start.append(k)
-                active = [o for o in tips if credible(o) and last[o] >= b - recent]
-                if active:  # the tube growing most recently, then the nearest tip
-                    win = min(active, key=lambda o: (-last[o], tips[o]))
-                elif cand_start:
-                    win = 1 + cand_start[0]
-                elif tips:
-                    win = min(tips, key=lambda o: (not credible(o), -last[o], tips[o]))
-                else:
-                    win = next_orphan
-                    next_orphan += 1
-                sub_owner, sub_t = owner[y0:y1, x0:x1], t_in[y0:y1, x0:x1]
-                if win == 1:  # the target: rim distances as ``flood`` keeps them
-                    full = np.zeros((h, w), bool)
-                    full[y0:y1, x0:x1] = c
-                    if not started[0]:
-                        st = full & starts[0]
-                        dist[st] = rg[st] - gr  # lengths count from the rim, gap included
-                        _extend_dist(dist, full, st, 1)
-                        started[0], emerge = True, b
-                    else:
-                        _extend_dist(dist, full, (owner == 1) & (t_in >= last[1] - recent), bridge)
-                    grew = b
-                elif win <= len(grains):
-                    started[win - 1] = True
-                sub_owner[c], sub_t[c] = win, b
-                size[win] = size.get(win, 0) + int(c.sum())
-                bins_grown[win] = bins_grown.get(win, 0) + (last.get(win) != b)
-                last[win] = b
-        fin = (owner == 1) & np.isfinite(dist)
-        length[b] = float(dist[fin].max()) if fin.any() else 0.0
-    tube = owner == 1
-    return {"tube": tube, "t_in": np.where(tube, t_in, -1), "dist": np.where(tube, dist, np.inf), "emerge": emerge,
-            "length": np.maximum.accumulate(length)}
 
 
 def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, others: list[dict], p,
@@ -530,14 +386,8 @@ def read_grain(renderer: Renderer, prob: Renderer, meta: dict, grain: dict, othe
         if -o["r"] - 5 < ox < 2 * half + o["r"] + 5 and -o["r"] - 5 < oy < 2 * half + o["r"] + 5:
             blocked |= np.hypot(xx - ox, yy - oy) < o["r"] + p.other_block_px
     arr = arrivals(present, blocked, p.flood_persist, p.flood_frac)
-    if getattr(p, "flood_compete", False):
-        rivals = [(o["y"] - gy + centre, o["x"] - gx + centre, o["r"]) for o in others
-                  if -o["r"] < o["x"] - gx + centre < 2 * half + o["r"] and -o["r"] < o["y"] - gy + centre < 2 * half + o["r"]]
-        fl = flood_compete(arr, rg, ang, blocked, gr, rivals, p.flood_recent, p.flood_bridge, p.flood_start_band)
-    else:
-        fl = flood(arr, rg, ang, blocked, gr, p.flood_recent, p.flood_bridge, p.flood_start_band, p.flood_min_len,
-                   p.flood_give_up, p.flood_halo, p.flood_arc_deg, p.flood_old_far_px, p.flood_old_far_bins,
-                   p.flood_turn_deg, p.flood_turn_min_px)
+    fl = flood(arr, rg, ang, blocked, gr, p.flood_recent, p.flood_bridge, p.flood_start_band, p.flood_min_len,
+               p.flood_give_up, p.flood_halo, p.flood_arc_deg, p.flood_old_far_px, p.flood_old_far_bins)
     length = np.maximum(fl["length"] - p.flood_tip_px, 0.0) * (fl["length"] > 0)
     frames = [b * fpb + fpb // 2 for b in range(rs, rs + n_bins)]
     to_ref = lambda y, x: [round(float(x - centre + gx), 2), round(float(y - centre + gy), 2)]

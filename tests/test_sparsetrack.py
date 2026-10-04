@@ -594,51 +594,6 @@ def test_flood_keeps_a_slow_start():
 
 
 
-def _stalled_tube_and_a_passer(from_rival: bool):
-    """A target tube 20 px long by bin 24, then stopped; later another tube grows down past its tip, 2 px away:
-    from a rival grain in the crop, or from outside the crop (no grain in view)."""
-    size, c, gr = 131, 65.0, 10.0
-    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
-    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
-    arr = np.full((size, size), 200)
-    for k, x in enumerate(range(78, 98)):  # target: 1 px per bin from bin 5, stops at bin 24
-        arr[64:67, x] = 5 + k
-    y0 = 31 if from_rival else 0
-    for y in range(y0, 125):  # the passer, 1 px per bin, down columns 99-101
-        arr[y, 99:102] = min(arr[y, 99], 40 + (y - y0))
-    blocked = np.zeros((size, size), bool)
-    rivals = [(20.0, 100.0, 8.0)] if from_rival else []
-    for cy, cx, r in rivals:
-        blocked |= np.hypot(xx - cx, yy - cy) < r + 2.0
-    return arr, rg, ang, blocked, gr, rivals
-
-
-@pytest.mark.parametrize("from_rival", [True, False])
-def test_competing_flood_does_not_take_over_a_tube_passing_a_stopped_tip(from_rival):
-    from sparsetrack.learned import flood, flood_compete
-    arr, rg, ang, blocked, gr, rivals = _stalled_tube_and_a_passer(from_rival)
-    alone = flood(arr, rg, ang, blocked, gr)
-    joint = flood_compete(arr, rg, ang, blocked, gr, rivals)
-    assert alone["length"][-1] > 50                      # alone, the flood runs down the passing tube
-    assert joint["emerge"] == 5 and abs(joint["length"][-1] - alone["length"][30]) < 1.0  # it stays ~22 px
-    assert joint["length"][30] == pytest.approx(alone["length"][30])
-
-
-def test_competing_flood_keeps_what_the_single_flood_gets_right():
-    from sparsetrack.learned import flood, flood_compete
-    size, c, gr = 131, 65.0, 10.0
-    yy, xx = np.mgrid[0:size, 0:size].astype(np.float32)
-    rg, ang = np.hypot(xx - c, yy - c), np.arctan2(yy - c, xx - c)
-    arr = np.full((size, size), 80)
-    for k, x in enumerate(range(int(c + gr + 3), int(c + gr + 43))):  # our tube, 1 px per bin from bin 5
-        arr[64:67, x] = 5 + k
-    arr[10:120, 95:98] = np.minimum(arr[10:120, 95:98], 2)  # an older foreign tube across it
-    arr[70:72, 100:102] = 30  # a speck of noise near the tube's path, before the tube gets there
-    for fn in (flood, lambda *a: flood_compete(*a, [])):
-        fl = fn(arr, rg, ang, np.zeros((size, size), bool), gr)
-        assert fl["emerge"] == 5 and fl["length"][-1] >= 40 and not fl["tube"][20:40, 95:98].any()
-
-
 def test_flood_length_counts_from_where_the_tube_leaves_the_grain():
     """The flood starts on material beside the exit and runs round the rim before the tube turns out (movie 2's
     g066): measured from the exit, the rim detour does not count."""
