@@ -3,7 +3,7 @@
 **Question.** Can the tube-probability network adapt to a new movie from a few of that movie's own human traces (as a
 lab would correct a few grains in the app), especially if each trace is propagated through time to the bins around it?
 Movie 1 (m1) is the clean test: the shipped network (`sparsetrack/models/tubes_bn_real_ld_m2.pt`, ld + m2 traces) never
-saw it. **Answer: the maps adapt strongly and onsets improve significantly; lengths improve a little (not significant) and length-and-tip not at all, while rim marks before onset rise.** Details in "Results".
+saw it. **Answer: the maps adapt strongly and onsets improve significantly; lengths improve a little (not significant) and length-and-tip not at all; marks beside the tubes rise.** Details in "Results".
 
 ## Method
 
@@ -46,7 +46,7 @@ saw it. **Answer: the maps adapt strongly and onsets improve significantly; leng
 Held-out movie-1 grains, each judged once by the network of the fold that did not see it (30 grains, 50 full traces),
 against the shipped network on the same grains; paired 95% bootstrap intervals over grains.
 
-| variant | traced tube marked | long tubes marked | rim marks before onset | lengths in tolerance | length and tip | onsets |
+| variant | traced tube marked | long tubes marked | marks 8-14 px beside traced tubes | lengths in tolerance | length and tip | onsets |
 |---|---|---|---|---|---|---|
 | shipped network | 75% | 71% | 3.5% | 15/50 | 15 | 8/27 |
 | (a) traced bins only | 90% (+15 pts, +3..+30) | 89% | 11.0% | 22/50 (+7, -1..+15) | 17 (+2, -6..+11) | 14/27 (+6, +2..+11) |
@@ -59,6 +59,6 @@ not yet a reliable length gain. Forgetting on movie 2 (in the shipped network's 
 
 Reading: per-movie fine-tuning from 15 corrected grains makes the maps mark nearly all of the held-out grains' tubes
 and fixes many onsets, but the flood (whose start and stop rules were tuned on the shipped maps) does not turn the
-better maps into better lengths or tips, and the adapted maps mark more of the rim before germination (false starts).
+better maps into better lengths or tips; the adapted maps mark more beside the tubes. (Corrected 4 Oct: the column first labelled 'rim marks before onset' is the 'beside' measure; rim marks before onset do not rise: 30.6% -> 27.6 / 25.9 / 30.6% for a / b / c.)
 Next: re-tune or replace the flood's start rule for adapted maps (e.g. onsets from the learned tip detector,
 prototypes/tip_detector), then re-measure; a learning curve (5/10/15 grains) was not run.
