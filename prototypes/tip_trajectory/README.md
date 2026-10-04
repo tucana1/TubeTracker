@@ -17,7 +17,9 @@ it: where a body leaves the grain (tip right, length off), and long tubes on mov
 bodies where the tube emerged did not work (three variants, all below the first reader on ld); lengths along the
 middle of the tube help a little everywhere (`tiptraj_mid`: ld +2, m2 +1, m1 +1); a guided second pass is neutral;
 on movie 1 the reader on the label-free self-trained maps with `tiptraj_mid` reads 29/50 lengths, 15/28 onsets
-(0.8.8: 15/50, 8/26).
+(0.8.8: 15/50, 8/26). Round 3: the version 3 tip detector helps once the weights are re-tuned on ld for it (m2 +6
+lengths, CI 0 to +13; m1 equal, +2 onsets; with `tiptraj_mid` m1 27/50, m2 37/54); more detector peaks and
+frame-edge candidates raise the candidates' ceiling for long tubes but are not taken (not adopted).
 
 ## Method
 
@@ -272,8 +274,82 @@ on ld / m2 / m1, never negative; cheap: one band profile per chosen reading). On
 annotator's exit is a property of the grain's boundary that no label-free estimate here measures well on movie 1.
 Long stalls on movie 1 (g028, g064, g003) stay open too: no weights read them, the map is blind or gapped there.
 
+## Round 3 (4 Oct): the version 3 tip detector
+
+The v3 detector (prototypes/tip_detector, version 3: inputs with 12- and 24-bin changes) as each movie's held-out
+fold (ld tip3_m2m1, m2 tip3_ldm1, m1 tip3_ldm2; maps in runs/research/tip_detector/det3), in place of v2, with the
+round-1 candidate settings ("6 peaks") or with its author's two suggestions ("20 + edge": 20 detector peaks a bin,
+48 candidates with the carried ones, and a candidate wherever the map meets the frame's border, `cands.py --det v3
+--k-det 20 --max-c 48 --edge`: per stretch of map along the border its point farthest along, the cheapest route per
+px of reach first, 2 a bin). R1 = the merged reader (v2 maps, 6 peaks, `tune_ld_c`); paired over grains.
+
+Candidates at the apex (within 4 px among a bin's candidates; `combo.py --oracle`): the suggestions raise the
+ceiling for long tubes as expected.
+
+| candidates | long traces (>= 60 px): ld / m2 / m1 | all traces: ld / m2 / m1 |
+|---|---|---|
+| v2, 6 peaks (R1) | 17/17, 8/11, 4/11 | 100/104, 47/54, 38/50 |
+| v3, 6 peaks | 16/17, 8/11, 6/11 | 98/104, 47/54, 39/50 |
+| v2, 20 + edge | 17/17, 10/11, 5/11 | 100/104, 50/54, 40/50 |
+| v3, 20 + edge | 16/17, 11/11, 7/11 | 98/104, 51/54, 40/50 |
+
+The reader with the SAME weights (`tune_ld_c`; lengths, length-and-tip, onsets; vs R1 lengths):
+
+| candidates | ld | m2 | m1 | long tubes read: m2 / m1 |
+|---|---|---|---|---|
+| v2, 6 peaks (R1) | 77/104, 75, 16/28 | 32/54, 31, 8/19 | 25/50, 22, 10/28 | 7 / 5 |
+| v3, 6 peaks | 74, 74, 18 (-3 [-7, 0]) | 34, 33, 7 (+2 [-2, +6]) | 23, 19, 13 (-2 [-6, +2]) | 7 / 4 |
+| v2, 20 + edge | 77, 75, 16 (0) | 31, 30, 8 (-1 [-4, +2]) | 22, 19, 10 (-3 [-7, +1]) | 7 / 3 |
+| v3, 20 + edge | 74, 74, 18 (-3 [-7, 0]) | 35, 34, 7 (+3 [-1, +7]) | 23, 20, 13 (-2 [-7, +3]) | 7 / 3 |
+
+With `tiptraj_mid` the four rows read ld 79 / 76 / 79 / 76, m2 33 / 36 / 31 / 36, m1 26 / 25 / 24 / 25. The
+added long-tube candidates are not taken (long tubes read stay 7/11 on m2 and fall on m1), and the frame-edge
+candidates cost about one reading where they occur (dropped at the Viterbi: m1 v3 23 -> 24, v2 22 -> 23; m2 v2
+31 -> 32). With these weights the v3 maps help m2, cost ld 3 (three mid-length traces of 23-25 px, missed by at most 1.3 px
+beyond the tolerance) and m1 2 lengths, and add onsets on ld and m1 (+2, +3).
+
+Each candidate set with weights RE-TUNED on ld (same protocol, search and start as `tune_ld_c`; applied unchanged):
+
+| candidates (weights) | ld (in sample) | m2 | m1 |
+|---|---|---|---|
+| v2, 6 peaks (R1, `tune_ld_c`) | 77/104, 75, 16/28 | 32/54, 31, 8/19 | 25/50, 22, 10/28 |
+| v3, 6 peaks (`tune_ld_v3`) | 78, 78, 20 (+1 [-3, +6]) | 38, 36, 8 (+6 [0, +13]) | 25, 22, 12 (0 [-5, +6]) |
+| v2, 20 + edge (`tune_ld_v2k20e`) | 77, 76, 17 (0) | 31, 30, 10 (-1 [-5, +3]) | 23, 19, 12 (-2 [-7, +3]) |
+| v3, 20 + edge (`tune_ld_v3k20e`, = `tune_ld_v3`) | 78, 78, 20 (+1 [-3, +6]) | 36, 35, 8 (+4 [-4, +12]) | 22, 21, 12 (-3 [-8, +2]) |
+| R1 + mid | 79, 77, 16 | 33, 32, 8 | 26, 23, 10 |
+| **v3, 6 peaks + mid** | **77, 77, 20 (0 [-7, +7])** | **37, 35, 8 (+5 [0, +11])** | **27, 24, 12 (+2 [-3, +7])** |
+
+As `tiptraj='flood'` runs it (only the flooded grains re-read): ld 78/104 (l&t 72) vs R1 + mid 78 (71); m2 35/54
+(33) vs 31 (30); m1, all flooded, 27/50 (24), onsets 12/28, vs 26 (23), 10/28 (0.8.8: ld 75, m2 27, m1 15/50 and
+8/26). End to end on movie 1 (`bench.py`, v3 fold maps, `weights_ld_v3.json`, `tiptraj_mid`): 27/50, l&t 24,
+onsets 12/28, exactly the offline numbers; vs 0.8.8 +12 lengths [+3, +21], vs round 2's end-to-end reader (v2 + mid,
+26/50) +1 [-2, +4], onsets +2 [-3, +8]; by class young 16, mid 5, long 6 (round 2: 16, 4, 6).
+
+The re-tuned weights trust the v3 detector nine times more than the v2 ones did (w_det 1.42 vs 0.16; map support
+unchanged at 2.0, the top of its range; w_gap at the top, vmax and w_ahead at the bottom of theirs). On ld the 20 +
+edge candidates differ too little to change the tuning (same weights found).
+
+On movie 1's label-free self-trained maps (round 2's best combination) the v3 maps add to it: with `tiptraj_mid`,
+v3 + its weights read 32/50 lengths, length-and-tip 29, onsets 15/28 (young 20, mid 6, long 6), against v2 + its
+weights 29, 26, 15/28: +3 lengths [-1, +7], +3 l&t [-1, +7]; vs 0.8.8 +17 [+9, +25], vs R1 +7 [+1, +13].
+
+The production loader (`tiptraj.det_cache`, `load_detector`) now builds maps from a version 3 checkpoint directly;
+for ld with tip3_m2m1.pt all 168 bins equal the precomputed det3 maps (0 of 220 M pixels differ; inputs and float
+maps of the two code paths identical on three bins).
+
+### Round-3 recommendation
+
+For the next blind movie: v3 detector (`tiptraj_model` = runs/research/tip_detector/tip3_all.pt), its ld-tuned
+weights (`tiptraj_weights` = prototypes/tip_trajectory/weights_ld_v3.json), lengths along the middle
+(`tiptraj_mid=True`), `tiptraj='flood'`, candidates at the round-1 settings; where the label-free self-trained
+maps can be made first, read on them (movie 1: 32/50 vs 27/50 on the shipped maps). Do not raise the peaks or add
+frame-edge candidates: they raise the ceiling but this reader does not use it; what limits long tubes now is the
+choice among candidates (m1: 7 of 11 long apexes have a candidate, 3-4 are read), so the next lever is the unary
+for long bodies (it weighs a well-marked stub against a long body whose map has gaps), not more candidates.
+
 Files: `common.py`, `detmaps.py`, `cands.py`, `dp.py`, `tune.py`, `failures.py`, `summary.py`, `bench.py`, `altmaps.py`;
-round 2: `guide.py`, `longdiag.py`, `backrim.py`, `edges.py`, `centred.py`, `combo.py`.
+round 2: `guide.py`, `longdiag.py`, `backrim.py`, `edges.py`, `centred.py`, `combo.py`; round 3: `cands.py --det v3
+--k-det --max-c --edge`, `combo.py --oracle --drop-src --settings`, `weights_ld_v3.json`.
 Outputs (scratch, not kept in git): detector maps (~300 MB for the three movies), candidates (`cands_<movie>.pkl`,
 ~180 MB), tuning (`tune_ld_c.json`, `tune_m2_c.json`, `tune_ldm2_c.json`), predictions (`pred_ld_c_<movie>.json`,
 `pred_m2_c_<movie>.json`); round 2 also self-trained m1 maps (~440 MB) and second-pass candidates, deleted after use.
@@ -284,4 +360,8 @@ m1`, `cands ld m2 m1 --guide "guide_{movie}.pkl" --ext --corridor --tag _g`, `co
 cands_<movie>_g.pkl`; movie 1 combination `altmaps m1 runs/research/self_train/models/m1_r1_sb.pt`,
 `TT_GT_PROB=<maps> cands m1 --tag _st`, `combo m1 --cands cands_m1.pkl cands_m1_st.pkl --young --mid --prob <maps>`
 (add `--setting tune_ldm2_c.json` for the joint weights; `tune --tune ld m2 --apply m1 --n 150 --refine 150 --tag
-ldm2_c` with the same start).
+ldm2_c` with the same start). Round 3: `cands ld m2 m1 --det v3 --tag _v3` (and `--k-det 20 --max-c 48 --edge
+--tag _v3k20e`, without `--det v3` for `_v2k20e`); `tune --tune ld --apply m2 m1 --cands "cands_{movie}_v3.pkl" --n
+250 --refine 200 --tag ld_v3` with the same start (its `best` is `weights_ld_v3.json`); `combo <movie> --cands
+cands_<movie>.pkl cands_<movie>_v3.pkl --settings tune_ld_c.json tune_ld_v3.json --mid [--oracle] [--only-flood]`;
+self-trained maps `TT_GT_PROB=<maps> cands m1 --det v3 --tag _st_v3`.
