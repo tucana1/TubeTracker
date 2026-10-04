@@ -245,6 +245,15 @@ class Params:
     tipdet_young_k: float = 2.0  # length = tip's distance from the grain's visible edge + this
     tipdet_young_min: float = 0.2  # weakest peak taken as a tip
     tipdet_half: int = 64        # half-size of the detector's maps round each grain (px)
+    # global tip-trajectory reader (sparsetrack/tiptraj.py; research option, prototypes/tip_trajectory): per grain the
+    # tip at every bin chosen in one Viterbi over the movie, among the learned tip detector's peaks and the tube map's
+    # piece ends, each with its body on the map, jumps onto other tubes ruled out. "off"; "flood" (it re-reads the grains
+    # the hybrid floods, keeping their drift); "all" (every grain)
+    tiptraj: str = "off"
+    tiptraj_model: str | None = None   # the tip detector (prototypes/tip_detector checkpoint); needed when on
+    tiptraj_det: str | None = None     # a directory of detector maps (tiptraj.det_cache) to use instead of building them
+    tiptraj_weights: str | None = None  # the Viterbi's settings (JSON, or a tune_*.json file) over tiptraj.WEIGHTS
+    tiptraj_half: int = 300            # crop half-size round each grain (px): the longest tubes to read
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -1670,6 +1679,17 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         except ImportError:  # building the probability movie needs torch (pip install .[cnn])
             log("torch is not installed: reading every grain from change evidence (reader=change)")
             p = replace(p, reader="change")
+    det = det_scale = None
+    if p.tiptraj != "off":
+        from . import learned, tiptraj
+        if p.tiptraj not in ("flood", "all"):
+            raise ValueError(f"unknown tiptraj {p.tiptraj!r}: off, flood or all")
+        if not (p.tiptraj_det or p.tiptraj_model):
+            raise ValueError("tiptraj needs a tip detector (tiptraj_model) or its maps (tiptraj_det)")
+        if prob is None:
+            prob = Renderer(*stack.load(learned.prob_cache(cache_dir, p.model or learned.MODEL, log)))
+        det = tiptraj.DetMaps(p.tiptraj_det or tiptraj.det_cache(cache_dir, p.tiptraj_model, log))
+        det_scale = det.scale()
     results = []
     for g in grains:
         if only and g["id"] not in only:
@@ -1693,6 +1713,9 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             elif missed:
                 fl["flags"].append("onset:flood_over_change")
             res = fl
+        if det is not None and res.get("status") != "unobservable" and (p.tiptraj == "all" or "reader:flood" in res["flags"]):
+            from . import tiptraj
+            res = tiptraj.read(res, renderer, prob, meta, g, p, det, det_scale)
         if p.centre_route and prob is not None and len(res.get("path") or []) >= 2:
             from . import learned
             learned.centre_route(res, prob, meta, p)
