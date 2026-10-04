@@ -237,6 +237,19 @@ class Params:
     # Off: judged leave one movie out on the three labelled movies it finds dark debris well but does not bring every
     # movie's germinated share and T50 closer to the annotator's (prototypes/census_check/README.md)
     census_check: bool = False
+    # learned tip detector (sparsetrack/tipdet.py; study prototypes/tip_track/README.md): a network trained on human
+    # traces that puts a peak on growing tips. Off unless tipdet_model names a checkpoint (prototypes/tip_detector).
+    tipdet_model: str | None = None
+    tipdet_onset: str = "off"    # "later": the detector's onset where the reading's is later by > tipdet_late_bins;
+                                 # "later_or_missing": also where the reading saw no tube; "off"
+    tipdet_thr: float = 0.3      # detector onset: the rim response (best peak r - 2 .. r + 25 px) stays >= this...
+    tipdet_hold: int = 3         # ...for this many bins
+    tipdet_late_bins: int = 10
+    tipdet_young: bool = False   # young tubes' lengths (reading < tipdet_young_px) from the detector's tip:
+    tipdet_young_px: float = 20.0
+    tipdet_young_k: float = 2.0  # length = tip's distance from the grain's visible edge + this
+    tipdet_young_min: float = 0.2  # weakest peak taken as a tip
+    tipdet_half: int = 64        # half-size of the detector's maps round each grain (px)
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -1696,6 +1709,9 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         if p.centre_route and prob is not None and len(res.get("path") or []) >= 2:
             from . import learned
             learned.centre_route(res, prob, meta, p)
+        if p.tipdet_model and (p.tipdet_onset != "off" or p.tipdet_young):
+            from . import tipdet  # after centring: its tips are peaks on the tube, not route points to move
+            tipdet.read(res, renderer, meta, p)
         if prob is not None:
             from . import learned
             learned.drawn_check(res, prob, meta, p)
