@@ -128,7 +128,7 @@ DEFAULT = {"c": 1.5, "theta": 0.35, "w_det": 1.0, "w_sup": 0.6, "w_gap": 0.3, "w
            "w_carry": 0.05, "w_on": 1.0, "l0": 12.0, "vmax": 4.0, "shrink": 3.0, "w_shrink": 0.2, "w_cons": 0.3,
            "w_share": 0.3, "cap_tip": 6.0, "cap_share": 6.0, "iso": True,
            "w_ext": 0.0, "c_end": 0.0, "w_l0": 1e3, "l0_max": 60.0, "w_hold": 0.3, "w_reacq": 0.5, "cap_reacq": 12.0,
-           "w_hug": 0.0, "hug_deg": 20.0}
+           "w_hug": 0.0, "hug_deg": 20.0, "edge_clip": 99.0, "det_norm": 0}
 
 
 def unary(F: np.ndarray, p: dict) -> np.ndarray:

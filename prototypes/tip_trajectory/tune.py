@@ -27,12 +27,12 @@ def sample(rng, around: dict | None = None, scale: float = 0.15) -> dict:
     p = dict(dp.DEFAULT)
     for k, v in SPACE.items():
         if isinstance(v[0], bool) or len(v) > 2:
-            p[k] = (type(v[0])(rng.choice(v)) if around is None or rng.random() < 0.2 else around[k])
+            p[k] = (type(v[0])(rng.choice(v)) if around is None or rng.random() < 0.2 else around.get(k, p[k] if k in p else v[0]))
         elif around is None:
             p[k] = float(rng.uniform(*v))
         else:
             lo, hi = v
-            p[k] = float(np.clip(around[k] + rng.normal(0, scale * (hi - lo)), lo, hi)) if rng.random() < 0.4 else around[k]
+            p[k] = float(np.clip(around.get(k, p[k] if k in p else v[0]) + rng.normal(0, scale * (hi - lo)), lo, hi)) if rng.random() < 0.4 else around.get(k, p[k] if k in p else v[0])
     return p
 
 
