@@ -138,3 +138,78 @@ def test_read_replaces_a_reading():
     tip = out["tip"]["xy"][-1]
     assert abs(tip[0] - tip_at(N - 1)) <= 3 and abs(tip[1] - Y0) <= 3
     assert len(out["path"]) >= 2 and abs(out["path"][0][1] - Y0) <= 3
+
+
+# ----------------------------------------------------------------------------- detector checkpoints (v2 and v3)
+def _cache(tmp_path, nb=34, rs=2, shape=(40, 56)):
+    """A small synthetic cache: a smooth background and a bright line growing from bin 6 (no drift)."""
+    import json
+    from sparsetrack import stack
+    yy, xx = np.mgrid[0:shape[0], 0:shape[1]].astype(np.float32)
+    bins = np.empty((nb,) + shape, np.float32)
+    for b in range(nb):
+        img = 120.0 + 0.3 * xx + 0.2 * yy
+        if b >= 6:
+            img[(np.abs(yy - 20) <= 1.5) & (xx >= 8) & (xx <= 8 + 1.2 * (b - 6))] += 6.0
+        bins[b] = img
+    d = tmp_path / "cache"
+    d.mkdir()
+    np.save(d / "bins.npy", bins)
+    (d / "meta.json").write_text(json.dumps({"schema": stack.SCHEMA, "shifts": [[0.0, 0.0]] * nb, "ref_start": rs,
+                                             "n_bins": nb, "frames_per_bin": 10}))
+    return d, bins
+
+
+def _checkpoint(path, channels, in_ch):
+    import torch
+    from sparsetrack.learned import _unet
+    torch.manual_seed(0)
+    net = _unet((4, 8), "batch", in_ch=in_ch)
+    torch.save({"channels": channels, "widths": (4, 8), "out_ch": 2, "state": net.state_dict()}, str(path))
+    return net
+
+
+def test_version3_detector_builds_maps_as_its_inputs_say(tmp_path, monkeypatch):
+    import json
+    import torch
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    d, bins = _cache(tmp_path)
+    rs, nb = 2, len(bins)
+    net = _checkpoint(tmp_path / "tip3_x.pt", list(tiptraj.DET_CHANNELS3), 5).eval()
+    loaded = tiptraj.load_detector(tmp_path / "tip3_x.pt")
+    assert loaded.version == 3 and loaded.channels == tiptraj.DET_CHANNELS3
+    out = tiptraj.det_cache(d, tmp_path / "tip3_x.pt", log=lambda *a: None, out=tmp_path / "maps")
+    names = sorted(f.name for f in out.glob("b*.npz"))
+    assert names == [f"b{b:03d}.npz" for b in range(rs + 7, nb - 1)]
+    assert json.loads((out / "meta.json").read_text())["version"] == 3
+    R = lambda k: np.asarray(bins[k], np.float32)
+    # a lag reaching before the reference bins is the change from them: at bin rs + 12, D24 x 8 = D12 x 8 = C x 20
+    x = tiptraj._inputs3(R, rs, nb, rs + 12)
+    assert np.allclose(x[3] * 8.0, x[4] * 20.0, atol=1e-4) and np.allclose(x[2] * 8.0, x[4] * 20.0, atol=1e-4)
+    assert not np.allclose(x[1], x[3])  # the 6-bin change does not reach back that far
+    # the stored map is the network's on those inputs (the frame is smaller than a tile's context)
+    b = nb - 5
+    x = tiptraj._inputs3(R, rs, nb, b)
+    xp = np.pad(x, ((0, 0), (0, (-x.shape[1]) % 2), (0, (-x.shape[2]) % 2)), mode="reflect")
+    with torch.no_grad():
+        y = torch.sigmoid(net(torch.from_numpy(xp)[None]))[0, 0].numpy()[:x.shape[1], :x.shape[2]]
+    q = np.clip(np.round(y * 250.0), 0, 250).astype(np.uint8)
+    q[q < 3] = 0
+    assert np.array_equal(np.load(out / f"b{b:03d}.npz")["tip"], q)
+
+
+def test_version2_detectors_still_load_and_bad_inputs_are_refused(tmp_path, monkeypatch):
+    import json
+    import pytest
+    import torch
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: False)
+    d, bins = _cache(tmp_path)
+    _checkpoint(tmp_path / "tip2_x.pt", "ADC", 3)
+    net = tiptraj.load_detector(tmp_path / "tip2_x.pt")
+    assert net.version == 2 and net.channels == "ADC"
+    out = tiptraj.det_cache(d, tmp_path / "tip2_x.pt", log=lambda *a: None, out=tmp_path / "maps2")
+    assert len(list(out.glob("b*.npz"))) == len(bins) - 1 - (2 + 7)
+    assert "version" not in json.loads((out / "meta.json").read_text())
+    _checkpoint(tmp_path / "bad.pt", ["A", "C", "D6"], 3)  # not in the version 3 order
+    with pytest.raises(ValueError):
+        tiptraj.load_detector(tmp_path / "bad.pt")

@@ -14,7 +14,8 @@ Per grain, the tube's tip at every bin is chosen in one Viterbi over the whole m
   plus part of the map's band beyond the tip, made non-decreasing from the onset.
 
 The detector runs on the whole registered frame of every bin once per movie (``det_cache``, compressed, ~120 KB a
-bin). The reader takes over a reading made by the other readers (``read``): it keeps that reading's drift and replaces
+bin): a version 2 checkpoint (inputs A, D, C) or a version 3 one (A, D6, D12, D24, C: prototypes/tip_detector,
+common3.py). The reader takes over a reading made by the other readers (``read``): it keeps that reading's drift and replaces
 its germination call, onset, lengths, tips and route.
 """
 
@@ -46,6 +47,13 @@ MAX_C = 32
 PAIR_SHRINK, PAIR_GROW = 8.0, 16.0  # pairs of consecutive candidates kept: length change -8 .. +16 px a bin
 DETECTOR_K = 6     # the detector's short interval (bins)
 DET_SCALE = np.array([20.0, 8.0, 20.0], np.float32)
+# version 3 inputs (prototypes/tip_detector/common3.py): the 3-bin mean M(b) less its local median, its changes over
+# 6, 12 and 24 bins and from the reference bins (each less its local median), / these grey levels, clipped
+DET_CHANNELS3 = ("A", "D6", "D12", "D24", "C")
+DET_LAGS3 = {"D6": 6, "D12": 12, "D24": 24}
+DET_SCALE3 = {"A": 20.0, "D6": 8.0, "D12": 8.0, "D24": 8.0, "C": 20.0}
+DET_CLIP3 = 127.0 / 24.0
+DET_CTX = {2: 64, 3: 96}   # context round each of the 2 x 2 tiles the frame is run in (version 3: as maps3.py)
 P_SCALE_MAP = 250.0   # tube maps are uint8 P x this (learned.P_SCALE)
 
 # the Viterbi's settings: tuned on the sparse movie (ld) alone and applied unchanged to movies 2 and 1
@@ -66,16 +74,53 @@ def _medbg(img: np.ndarray, f: int = 4, k: int = 15) -> np.ndarray:
 
 
 def load_detector(path, device: str | None = None):
+    """A tip detector checkpoint (prototypes/tip_detector): version 2 (``channels`` "ADC") or version 3 (a list of
+    ``DET_CHANNELS3`` names in that order). The network carries ``channels`` ("ADC" or the tuple) and ``version``."""
     import torch
     from .learned import _unet
     if device is None:
         device = "mps" if torch.backends.mps.is_available() else "cpu"
     ck = torch.load(str(path), map_location="cpu", weights_only=False)
-    if ck.get("channels", "ADC") != "ADC" or ck.get("out_ch", 2) != 2:
-        raise ValueError(f"{path}: expected a tip detector with inputs ADC and two outputs")
-    net = _unet(tuple(ck.get("widths", (16, 32, 64, 128))), "batch")
+    ch = ck.get("channels", "ADC")
+    if isinstance(ch, str):
+        if ch != "ADC":
+            raise ValueError(f"{path}: expected a tip detector with inputs ADC (version 2) or {DET_CHANNELS3} (3)")
+        version, in_ch = 2, 3
+    else:
+        ch = tuple(ch)
+        if not ch or list(ch) != [c for c in DET_CHANNELS3 if c in ch] or len(set(ch)) != len(ch):
+            raise ValueError(f"{path}: unknown detector inputs {ch} (version 3: a subset of {DET_CHANNELS3}, in order)")
+        version, in_ch = 3, len(ch)
+    if ck.get("out_ch", 2) != 2:
+        raise ValueError(f"{path}: expected a tip detector with two outputs")
+    net = _unet(tuple(ck.get("widths", (16, 32, 64, 128))), "batch", in_ch=in_ch)
     net.load_state_dict(ck["state"])
+    net.channels, net.version = ch, version
     return net.eval().to(device)
+
+
+def _inputs3(R, rs: int, nb: int, b: int, channels=DET_CHANNELS3) -> np.ndarray:
+    """The version 3 inputs of bin b on the whole frame (``R(k)``: bin k registered, float32), as
+    prototypes/tip_detector/common3.full_frame_inputs: M(k) the mean of bins k-1..k+1 with k clamped to
+    [rs + 1, nb - 2] (so the change over a lag reaching before the reference bins is the change from them)."""
+    def M(k):
+        k = int(min(max(k, rs + 1), nb - 2))
+        return np.mean([R(j) for j in (k - 1, k, k + 1)], axis=0)
+
+    Mb = M(b)
+    out = []
+    for c in channels:
+        if c == "A":
+            v = Mb - _medbg(Mb)
+        elif c == "C":
+            v = Mb - M(rs + 1)
+            v = v - _medbg(v)
+        else:
+            v = Mb - M(b - DET_LAGS3[c])
+            v = v - _medbg(v)
+        out.append(v)
+    s = np.array([DET_SCALE3[c] for c in channels], np.float32)
+    return np.clip(np.stack(out).astype(np.float32) / s[:, None, None], -DET_CLIP3, DET_CLIP3).astype(np.float32)
 
 
 def _tiles(net, x: np.ndarray, n: int = 2, ctx: int = 64) -> np.ndarray:
@@ -90,21 +135,23 @@ def _tiles(net, x: np.ndarray, n: int = 2, ctx: int = 64) -> np.ndarray:
             a0, a1, b0, b1 = max(0, y0 - ctx), min(H, y1 + ctx), max(0, x0 - ctx), min(W, x1 + ctx)
             t = x[:, a0:a1, b0:b1]
             h, w = t.shape[1:]
-            t = np.pad(t, ((0, 0), (0, (-h) % 8), (0, (-w) % 8)), mode="reflect")
+            k = 2 ** (len(net.widths) - 1)
+            t = np.pad(t, ((0, 0), (0, (-h) % k), (0, (-w) % k)), mode="reflect")
             with torch.no_grad():
                 y = torch.sigmoid(net(torch.from_numpy(np.ascontiguousarray(t))[None].to(dev)))[0, 0].cpu().numpy()
             out[y0:y1, x0:x1] = y[y0 - a0:y1 - a0, x0 - b0:x1 - b0]
     return out
 
 
-def det_cache(cache_dir: str | Path, model: str | Path, log=print) -> Path:
-    """The tip detector's map of every bin on the whole registered frame (inputs as prototypes/tip_detector: the
-    3-bin mean, its change over ``DETECTOR_K`` bins and from the first bins, each less its ~60 px local median), stored
-    as uint8 P x 250 (below 3 set to 0), compressed, one file per bin: ``<cache>/det_<model stem>/b<bin>.npz``. Bins
-    without inputs (the first 7 after the reference start, the last) are not written."""
+def det_cache(cache_dir: str | Path, model: str | Path, log=print, out: str | Path | None = None) -> Path:
+    """The tip detector's map of every bin on the whole registered frame (inputs as prototypes/tip_detector: version 2
+    the 3-bin mean, its change over ``DETECTOR_K`` bins and from the first bins, each less its ~60 px local median;
+    version 3 also the changes over 12 and 24 bins, ``_inputs3``), stored as uint8 P x 250 (below 3 set to 0),
+    compressed, one file per bin: ``<cache>/det_<model stem>/b<bin>.npz`` (or ``out``). Bins without inputs (the
+    first 7 after the reference start, the last) are not written."""
     from . import stack
     cache_dir = Path(cache_dir)
-    out = cache_dir / f"det_{Path(model).stem}"
+    out = Path(out) if out else cache_dir / f"det_{Path(model).stem}"
     if (out / "meta.json").exists():
         return out
     out.mkdir(parents=True, exist_ok=True)
@@ -127,8 +174,20 @@ def det_cache(cache_dir: str | Path, model: str | Path, log=print) -> Path:
             mean[b] = np.mean([R(k) for k in range(max(b - 1, rs), min(b + 1, nb - 1) + 1)], axis=0)
         return mean[b]
 
-    E = np.mean([R(k) for k in range(rs, rs + 3)], axis=0)
     started = time.time()
+    if getattr(net, "version", 2) == 3:
+        for b in range(rs + DETECTOR_K + 1, nb - 1):
+            for k in [k for k in reg if k < b - 30 and k > rs + 2]:
+                del reg[k]
+            x = _inputs3(R, rs, nb, b, net.channels)
+            q = np.clip(np.round(_tiles(net, x, ctx=DET_CTX[3]) * 250.0), 0, 250).astype(np.uint8)
+            q[q < 3] = 0
+            np.savez_compressed(out / f"b{b:03d}.npz", tip=q)
+        (out / "meta.json").write_text(json.dumps({"model": str(model), "n_bins": nb, "version": 3,
+                                                   "channels": list(net.channels)}))
+        log(f"tip detector maps ({Path(model).name}, version 3): {nb} bins in {time.time() - started:.0f} s -> {out}")
+        return out
+    E = np.mean([R(k) for k in range(rs, rs + 3)], axis=0)
     for b in range(rs + DETECTOR_K + 1, nb - 1):
         for k in [k for k in reg if k < b - DETECTOR_K - 2]:
             del reg[k]
@@ -138,7 +197,7 @@ def det_cache(cache_dir: str | Path, model: str | Path, log=print) -> Path:
         D = M(b) - M(b - DETECTOR_K)
         C = M(b) - E
         x = (np.stack([A, D - _medbg(D), C - _medbg(C)]) / DET_SCALE[:, None, None]).astype(np.float32)
-        q = np.clip(np.round(_tiles(net, x) * 250.0), 0, 250).astype(np.uint8)
+        q = np.clip(np.round(_tiles(net, x, ctx=DET_CTX[2]) * 250.0), 0, 250).astype(np.uint8)
         q[q < 3] = 0
         np.savez_compressed(out / f"b{b:03d}.npz", tip=q)
     (out / "meta.json").write_text(json.dumps({"model": str(model), "n_bins": nb}))

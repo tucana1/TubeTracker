@@ -51,10 +51,11 @@ HALO = 3.0            # the rim's own change (focus, swelling) reaches this far 
 
 
 # ----------------------------------------------------------------------------- network
-def _unet(widths=(16, 32, 64, 128), norm: str = "group"):
+def _unet(widths=(16, 32, 64, 128), norm: str = "group", in_ch: int = 3):
     """The network. ``norm="group"`` (every model up to 29 Sep 2026) normalises each feature over the whole input, so
     a pixel's output depends on the input's size and content; ``"batch"`` (fixed statistics at inference) makes it
-    depend only on the pixel's surroundings, so full-frame maps equal the maps of the crops it was trained on."""
+    depend only on the pixel's surroundings, so full-frame maps equal the maps of the crops it was trained on.
+    ``in_ch``: input channels (3; the version 3 tip detector has 5)."""
     import torch
     from torch import nn
     import torch.nn.functional as F
@@ -75,7 +76,7 @@ def _unet(widths=(16, 32, 64, 128), norm: str = "group"):
             super().__init__()
             self.widths = tuple(widths)
             self.enc = nn.ModuleList()
-            c = 3
+            c = in_ch
             for w in widths:
                 self.enc.append(block(c, w))
                 c = w
