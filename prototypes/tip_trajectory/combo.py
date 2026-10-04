@@ -92,6 +92,8 @@ def main(argv=None) -> None:
     ap.add_argument("--setting", default="tune_ld_c.json")
     ap.add_argument("--young", action="store_true")
     ap.add_argument("--onset", default="off")
+    ap.add_argument("--mid", action="store_true", help="also with lengths along the middle of the tube (centred.py)")
+    ap.add_argument("--prob", help="tube maps the candidates were built on (for --mid; default the shipped ones)")
     a = ap.parse_args(argv)
     m = a.movie
     lab, base = labels(m), baseline(m)
@@ -101,10 +103,22 @@ def main(argv=None) -> None:
     ref = None
     for name in a.cands:
         doc = dp.load(m, name)
+        dp.BACK = None
         ev = dp.evaluate(m, doc, p)
         variants = [("reader", ev["pred"])]
         if a.young:
             variants.append((f"reader + tipdet_young (onset {a.onset})", with_young(m, ev["pred"], list(doc["grains"]), tp)))
+        if a.mid:
+            from .centred import mid_corrections
+            q = dp.with_speed(doc, dp.with_scale(doc, p))
+            choices = {gid: dp.viterbi(G, doc["rs"], doc["nb"], q)[0] for gid, G in doc["grains"].items()}
+            prob_dir = a.prob if (a.prob and "_st" in name) else None
+            dp.BACK = mid_corrections(doc, m, choices, prob_dir)
+            evm = dp.evaluate(m, doc, p)
+            variants.append(("reader + mid", evm["pred"]))
+            if a.young:
+                variants.append(("reader + mid + tipdet_young", with_young(m, evm["pred"], list(doc["grains"]), tp)))
+            dp.BACK = None
         for label, pred in variants:
             rep = dp.score(lab, pred)
             pg = dp.per_grain(rep)

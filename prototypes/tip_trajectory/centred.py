@@ -28,8 +28,9 @@ def normals(q: np.ndarray) -> np.ndarray:
     return np.stack([-t[:, 1], t[:, 0]], 1)
 
 
-def mid_corrections(doc: dict, movie: str, choices: dict) -> dict:
-    prob = np.load(cache_dir(movie) / PROB / "bins.npy", mmap_mode="r")
+def mid_corrections(doc: dict, movie: str, choices: dict, prob_dir=None) -> dict:
+    from pathlib import Path
+    prob = np.load(Path(prob_dir) / "bins.npy" if prob_dir else cache_dir(movie) / PROB / "bins.npy", mmap_mode="r")
     offs = np.arange(-REACH, REACH + 1e-6, 0.5)
     out = {}
     for gid, G in doc["grains"].items():

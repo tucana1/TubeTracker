@@ -13,7 +13,11 @@ CI 0 to +16); ld 77 vs 75 of 104, length-and-tip 75 vs 67. Tuned on movie 2 inst
 movie 2 37/54 (in sample), ld onsets fall (7 vs 15/26) unless only flooded grains are re-read. Jumps onto other tubes
 nearly disappear on movie 2 (off-route misses 10 -> 1); movie 1's floods that never started are read. What still limits
 it: where a body leaves the grain (tip right, length off), and long tubes on moving movie-1 grains. Implemented as
-`Params.tiptraj` (off by default, sparsetrack/tiptraj.py); end-to-end check below.
+`Params.tiptraj` (off by default, sparsetrack/tiptraj.py); end-to-end check below. Round 2 (below): starting
+bodies where the tube emerged did not work (three variants, all below the first reader on ld); lengths along the
+middle of the tube help a little everywhere (`tiptraj_mid`: ld +2, m2 +1, m1 +1); a guided second pass is neutral;
+on movie 1 the reader on the label-free self-trained maps with `tiptraj_mid` reads 29/50 lengths, 15/28 onsets
+(0.8.8: 15/50, 8/26).
 
 ## Method
 
@@ -195,7 +199,30 @@ gaps, not tubes moving while held.
 
 ### 3. Movie 1 combination
 
-M1_TABLE
+Movie 1 only (the honest test: maps, detector fold and weights never saw it), offline (`combo.py`): the reader on the
+shipped maps or on the label-free self-trained m1 maps (prototypes/self_train `m1_r1_sb`, `altmaps.py`), with the
+lengths along the middle of the tube (`centred.py`, `Params.tiptraj_mid`) and with the tip detector's young-tube
+lengths on top (`tipdet.apply` as on main, `Params.tipdet_young`, read from the stored full-frame maps). Paired over
+the 30 grains; R1 = the merged reader on the shipped maps.
+
+| m1, ld-tuned weights | onsets | lengths | length+tip | vs 0.8.8 (lengths; l&t; onsets) | vs R1 (lengths; l&t; onsets) |
+|---|---|---|---|---|---|
+| 0.8.8 | 8/26 | 15/50 | 15 | | |
+| R1: reader, shipped maps | 10/28 | 25/50 | 22 | +10 [+2, +18]; +7 [-1, +15]; +2 | |
+| + mid | 10/28 | 26/50 | 23 | +11 [+3, +19]; +8 [0, +16]; +2 | +1 [0, +3]; +1 [0, +3]; 0 |
+| + tipdet_young | 10/28 | 24/50 | 22 | +9; +7; +2 | -1 [-4, +2]; 0; 0 |
+| reader, self-trained maps | 15/28 | 27/50 | 24 | +12 [+4, +20]; +9 [+1, +17]; +7 [+1, +13] | +2 [0, +5]; +2 [0, +5]; +5 [-1, +11] |
+| **self-trained maps + mid** | **15/28** | **29/50** | **26** | **+14 [+6, +22]; +11 [+4, +19]; +7 [+1, +13]** | **+4 [+1, +8]; +4 [+1, +8]; +5 [-1, +11]** |
+| self-trained maps + mid + tipdet_young | 15/28 | 27/50 | 24 | +12; +9; +7 | +2 [-3, +7]; +2 [-3, +7]; +5 |
+
+The young-tube lengths from the detector do not help on top of this reader (it already takes young tips from the
+detector: ld -1, m2 -1, m1 -1 to -2). The best movie-1 combination is the self-trained maps with lengths along the
+middle of the tube: 29/50 lengths and 15/28 onsets, against 15/50 and 8/26 for 0.8.8.
+
+With the m2-tuned weights (secondary): reader 28/50 (onsets 7/28), self-trained maps + mid 30/50, length-and-tip 27
+(+15 lengths vs 0.8.8, CI +7 to +23) but onsets 6/28: those weights call movie 1's onsets late.
+
+JOINT_PENDING
 
 Files: `common.py`, `detmaps.py`, `cands.py`, `dp.py`, `tune.py`, `failures.py`, `summary.py`, `bench.py`, `altmaps.py`;
 round 2: `guide.py`, `longdiag.py`, `backrim.py`, `edges.py`, `combo.py`.
