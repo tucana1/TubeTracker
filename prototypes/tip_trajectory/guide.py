@@ -50,15 +50,17 @@ def main(argv=None) -> None:
     ap.add_argument("movies", nargs="+")
     ap.add_argument("--setting", default="tune_ld_c.json")
     ap.add_argument("--cands", default="cands_{movie}.pkl")
+    ap.add_argument("--out", default="guide_{movie}.pkl")
     a = ap.parse_args(argv)
     p = {**dp.DEFAULT, **json.loads((OUT / a.setting).read_text())["best"]}
     for m in a.movies:
         doc = dp.load(m, a.cands.format(movie=m))
         g = guide(doc, p)
-        with open(OUT / f"guide_{m}.pkl", "wb") as fh:
+        out = a.out.format(movie=m)
+        with open(OUT / out, "wb") as fh:
             pickle.dump(g, fh, protocol=pickle.HIGHEST_PROTOCOL)
         n = sum(1 for v in g.values() if v["theta0"] is not None)
-        print(f"{m}: {len(g)} grains, {n} with an emergence angle -> guide_{m}.pkl", flush=True)
+        print(f"{m}: {len(g)} grains, {n} with an emergence angle -> {out}", flush=True)
 
 
 if __name__ == "__main__":

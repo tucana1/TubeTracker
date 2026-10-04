@@ -64,7 +64,33 @@ def test_holds_through_a_gap_in_the_maps():
 
 
 def test_off_by_default():
-    assert Params().tiptraj == "off"
+    assert Params().tiptraj == "off" and Params().tiptraj_guided is False
+
+
+def test_guided_second_pass_follows_the_first_reading():
+    fr = frames()
+    w = dict(tiptraj.WEIGHTS, det_norm=0)
+    tr = tiptraj._Track(X0, Y0, R, np.zeros((N, 2)), np.zeros(72), half=80)
+    for b, (P, D) in enumerate(fr):
+        tr.step(b, P, D)
+    choice, _ = tiptraj.viterbi(tr.bins, 0, N, w)
+    guide = {b: tr.bins[b]["bodies"][k] for b, k in enumerate(choice) if k >= 0}
+    tr2 = tiptraj._Track(X0, Y0, R, np.zeros((N, 2)), np.zeros(72), half=80, guide=guide)
+    for b, (P, D) in enumerate(fr):
+        tr2.step(b, P, D)
+    choice2, L2 = tiptraj.viterbi(tr2.bins, 0, N, w)  # a clean tube: the second pass reads it as the first did
+    for b in (25, 39):
+        assert abs(L2[b] - (tip_at(b) - X0 - R)) <= 2.5, (b, L2[b])
+
+
+def test_extension_follows_the_map_ahead():
+    Pc = np.zeros((200, 200), np.float32)
+    Pc[98:103, 50:160] = 1.0  # a band along +x; another one going back (behind the tip) must not be taken
+    pts = tiptraj._extension(Pc, np.array([80.0, 100.0]), np.array([1.0, 0.0]))
+    xs = np.array([q[0] for q in pts])
+    assert len(pts) >= 5 and (xs > 80).all() and abs(xs.max() - 159) <= 2  # ahead only, out to the band's end
+    assert all(abs(q[1] - 100) <= 2.5 for q in pts)
+    assert abs(xs[0] - 86) <= 1.5  # the first sample 6 px of arc on
 
 
 class _Frames:

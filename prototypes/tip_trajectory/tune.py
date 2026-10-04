@@ -79,7 +79,8 @@ def fmt(r: dict) -> str:
 
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tune", required=True)
+    ap.add_argument("--tune", required=True, nargs="+", help="movie(s) to tune on (objectives summed)")
+    ap.add_argument("--cands", default="cands_{movie}.pkl", help="candidate file pattern")
     ap.add_argument("--apply", nargs="*", default=[])
     ap.add_argument("--n", type=int, default=300)
     ap.add_argument("--refine", type=int, default=200)
@@ -88,7 +89,11 @@ def main(argv=None) -> None:
     ap.add_argument("--start", help="JSON of a setting to start the refinement from")
     a = ap.parse_args(argv)
     rng = np.random.default_rng(a.seed)
-    doc = dp.load(a.tune)
+    docs = {m: dp.load(m, a.cands.format(movie=m)) for m in a.tune}
+
+    def run(p):
+        evs = [dp.evaluate(m, docs[m], p) for m in a.tune]
+        return (sum(objective(e) for e in evs), {k: sum(e[k] for e in evs) for k in ("lengths", "lt", "onsets")})
     tried = []
     t0 = time.time()
     best, best_j = dict(dp.DEFAULT), -1.0
@@ -96,8 +101,7 @@ def main(argv=None) -> None:
         best = {**best, **json.loads(a.start)}
     starts = [best] + [sample(rng) for _ in range(a.n)]
     for i, p in enumerate(starts):
-        ev = dp.evaluate(a.tune, doc, p)
-        j = objective(ev)
+        j, ev = run(p)
         tried.append((j, ev["lengths"], ev["lt"], ev["onsets"], p))
         if j > best_j:
             best, best_j = p, j
@@ -105,8 +109,7 @@ def main(argv=None) -> None:
                   flush=True)
     for i in range(a.refine):
         p = sample(rng, best, 0.1 if i > a.refine // 2 else 0.2)
-        ev = dp.evaluate(a.tune, doc, p)
-        j = objective(ev)
+        j, ev = run(p)
         tried.append((j, ev["lengths"], ev["lt"], ev["onsets"], p))
         if j > best_j:
             best, best_j = p, j
@@ -114,8 +117,8 @@ def main(argv=None) -> None:
                   flush=True)
     print("best", json.dumps(best), flush=True)
     results = []
-    for m in [a.tune] + list(a.apply):
-        d = doc if m == a.tune else dp.load(m)
+    for m in list(a.tune) + list(a.apply):
+        d = docs[m] if m in docs else dp.load(m, a.cands.format(movie=m))
         for of in (False, True):
             r = report(m, d, best, of)
             results.append(r)
