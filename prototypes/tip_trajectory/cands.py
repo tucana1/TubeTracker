@@ -6,8 +6,9 @@ At bin b the grain is at its census place + 0.8.8's drift (label-free). On a cro
 - cost 1 / (P + ``EPS``); one multi-source minimal-path search from the rim ring (radius r) gives every candidate's
   body (the cheapest route from the rim to it).
 Candidates: the detector's top ``K_DET`` peaks (>= ``DET_MIN``) beyond r - 2; the far ends of the map's pieces reached
-from the rim (local maxima of the path cost on P >= 0.5, ``K_END`` farthest); the fresh candidates of the last
-``W_CARRY`` bins carried with the grain ("hold"); merged within ``NMS`` px.
+from the rim (local maxima of the path cost on P >= 0.5, ``K_END`` farthest); optionally (``--edge``) where a tube
+body meets the frame's border (no detector responds there); the fresh candidates of the last ``W_CARRY`` bins carried
+with the grain ("hold"); merged within ``NMS`` px.
 Per candidate: smoothed body arc length from the rim, exit angle, the grain's visible edge there (exit_edge), map
 support along the body, the longest gap in it, detector value at the tip, detector body head along the body, map
 ahead of the tip, radial gain over the first 8 px, the tip's radius.
@@ -15,7 +16,8 @@ Per pair of candidates at consecutive bins whose arc lengths differ by <= ``PAIR
 body's tip to the longer body, and mean distance of the shorter body (from 3 px on) to the longer (grain frame).
 
     python -m prototypes.tip_trajectory.cands ld m2 m1 [--only g005 g016]
-Output: OUT/cands_<movie>.pkl
+    python -m prototypes.tip_trajectory.cands ld m2 m1 --det v3 --k-det 20 --max-c 48 --edge --tag _v3k20e
+Output: OUT/cands_<movie><tag>.pkl
 """
 from __future__ import annotations
 
@@ -36,7 +38,7 @@ from sparsetrack import stack
 from sparsetrack.analyze import exit_edge
 from sparsetrack.render import Renderer
 
-from .common import OUT, PROB, baseline, cache_dir, drift_per_bin, labels, scored_grains
+from .common import DET3, OUT, PROB, baseline, cache_dir, drift_per_bin, labels, scored_grains
 
 EPS = 0.1
 P_LO = 0.2
@@ -53,8 +55,18 @@ MAX_C = 32
 PAIR_SHRINK = 8.0   # pairs kept: length change from -8 px ...
 PAIR_GROW = 16.0    # ... to +16 px per bin apart
 HALF = {"ld": 200, "m2": 300, "m1": 300}
+# second pass (a first reading as guide, guide.py): the body starts where the tube emerged, and candidates follow the
+# guide's tube
+EXIT_ARC_DEG = 25.0   # bodies start on the rim within this of the guide's emergence angle (0 = anywhere on the rim)
+EXT_R = 80            # extension candidates: along the map from the guide's tip, within this window (px)...
+EXT_STEPS = (6.0, 12.0, 20.0, 30.0, 45.0, 60.0, 80.0)  # ...at these arc lengths on, and its far end
+GUIDE_GAP = 60        # a guide reading older than this many bins is not used
+EDGE = False          # candidates where a tube body meets the frame's border (--edge)...
+EDGE_BAND = 3         # ...on map pixels (P >= P_LO, reached from the rim) within this of the border: per stretch along
+K_EDGE = 2            # the border its point farthest along, the cheapest per px of reach first, at most this many a
+                      # bin (src 3; carried 13)
 FEATS = ("L_arc", "theta", "edge", "sup", "sup_frac", "gap", "det", "det_body", "ahead", "radial", "rtip", "cum",
-         "src", "ext")  # src: 1 detector peak, 2 map end, 5 / 6 the same carried from an earlier bin
+         "src", "ext")  # src: 1 detector peak, 2 map end, 3 frame edge, 5 / 6 / 13 the same carried from an earlier bin
 
 
 def crop_u8(img: np.ndarray, ix: int, iy: int, H: int) -> np.ndarray:
@@ -90,10 +102,49 @@ def resample(line: np.ndarray, step: float) -> tuple[np.ndarray, np.ndarray]:
     return np.stack([np.interp(q, s, line[:, 0]), np.interp(q, s, line[:, 1])], 1), q
 
 
+def extension(Pc: np.ndarray, q: np.ndarray, u: np.ndarray) -> list[tuple[float, float]]:
+    """Points along the tube map beyond a tip ``q`` (crop index coordinates) in its direction ``u``: the cheapest
+    route on 1 / (P + EPS) (within 2 px of P >= 0.35) from q to the farthest point of P >= 0.5 ahead (within 70 deg of
+    u, EXT_R px window), sampled at EXT_STEPS px of arc length, and that far point."""
+    S = Pc.shape[0]
+    x0, x1 = max(int(q[0]) - EXT_R, 0), min(int(q[0]) + EXT_R + 1, S)
+    y0, y1 = max(int(q[1]) - EXT_R, 0), min(int(q[1]) + EXT_R + 1, S)
+    qi, qj = int(round(q[1])) - y0, int(round(q[0])) - x0
+    sub = Pc[y0:y1, x0:x1]
+    h, w = sub.shape
+    if not (0 <= qi < h and 0 <= qj < w):
+        return []
+    pas = cv2.dilate((sub >= 0.35).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))) > 0
+    pas[max(qi - 3, 0):qi + 4, max(qj - 3, 0):qj + 4] = True
+    mcp = MCP_Geometric(np.where(pas, 1.0 / (sub + EPS), np.inf), fully_connected=True)
+    cum, _ = mcp.find_costs([(qi, qj)])
+    yy, xx = np.mgrid[0:h, 0:w]
+    dx, dy = xx - qj, yy - qi
+    dd = np.hypot(dx, dy)
+    ok = np.isfinite(cum) & (sub >= 0.5) & (dd >= 3) & (dx * u[0] + dy * u[1] >= math.cos(math.radians(70)) * dd)
+    if not ok.any():
+        return []
+    k = int(np.argmax(np.where(ok, cum, -1.0)))
+    path = np.asarray(mcp.traceback((k // w, k % w)), float)[:, ::-1] + np.array([x0, y0])  # (col, row), q first
+    if len(path) < 2:
+        return []
+    sarc = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(path, axis=0).T))])
+    out = [(float(np.interp(t, sarc, path[:, 0])), float(np.interp(t, sarc, path[:, 1]))) for t in EXT_STEPS
+           if t < sarc[-1]]
+    out.append((float(path[-1][0]), float(path[-1][1])))
+    return out
+
+
 class GrainState:
-    def __init__(self, gid: str, g: dict, drift: np.ndarray, edges: np.ndarray):
+    def __init__(self, gid: str, g: dict, drift: np.ndarray, edges: np.ndarray, guide: dict | None = None,
+                 exit_arc: float = 0.0, ext: bool = False, corridor: bool = False):
         self.gid, self.x, self.y, self.r = gid, float(g["x"]), float(g["y"]), float(g["r"])
         self.drift, self.edges = drift, edges
+        # guide (a first reading of this grain): {"theta0": emergence angle or None, "tips": {bin: (x, y)},
+        # "bodies": {bin: (n, 2)}}, grain frame; used for the exit arc (exit_arc > 0, radians), extension candidates
+        # (ext) and a corridor along the guide's body through gaps in the map (corridor)
+        self.guide, self.exit_arc, self.ext, self.corridor = guide, exit_arc, ext, corridor
+        self.guide_bins = np.array(sorted(guide["tips"])) if guide else np.zeros(0, int)
         self.recent: list[tuple[int, np.ndarray, list]] = []  # (bin, fresh candidates (n, 2), grain frame; sources)
         self.prev = None  # previous bin: (L_arc (n,), bodies [grain frame polylines])
         self.bins: dict[int, dict] = {}
@@ -108,7 +159,7 @@ def process(gs: GrainState, b: int, P: np.ndarray, det: dict | None, H: int, gri
     to_grain = np.array([ix - H + 0.5 - gs.drift[b][0], iy - H + 0.5 - gs.drift[b][1]])  # crop (col,row) -> grain frame
     Pc = crop_u8(P, ix, iy, H).astype(np.float32) / 250.0
     Dt = crop_u8(det["tip"], ix, iy, H).astype(np.float32) / 250.0 if det is not None else None
-    Db = crop_u8(det["body"], ix, iy, H).astype(np.float32) / 250.0 if det is not None else None
+    Db = crop_u8(det["body"], ix, iy, H).astype(np.float32) / 250.0 if det is not None and "body" in det else None
     rg = np.hypot(jj - gx, ii - gy)
     # --- detector peaks
     cand, src = [], []
@@ -132,12 +183,38 @@ def process(gs: GrainState, b: int, P: np.ndarray, det: dict | None, H: int, gri
                     src.append(1)
     # --- carried (hold): fresh candidates of the last W_CARRY bins, moved with the grain
     carried = [(float(q[0]), float(q[1])) for _, pts, _ in reversed(gs.recent) for q in pts - to_grain]
-    carried_src = [4 + sf for _, _, srcs in reversed(gs.recent) for sf in srcs]
+    carried_src = [(4 if sf < 3 else 10) + sf for _, _, srcs in reversed(gs.recent) for sf in srcs]
+    # --- the guide: its latest reading up to this bin (tip, and along the map beyond it)
+    guided, guided_src, corridor_line = [], [], None
+    if gs.guide is not None and len(gs.guide_bins) and (gs.ext or gs.corridor):
+        k = int(np.searchsorted(gs.guide_bins, b, side="right")) - 1
+        if k >= 0 and b - gs.guide_bins[k] <= GUIDE_GAP:
+            gb = int(gs.guide_bins[k])
+            body = np.asarray(gs.guide["bodies"][gb], float) - to_grain  # grain frame -> this crop
+            q = body[-1]
+            if gs.corridor:
+                corridor_line = body
+            if gs.ext:
+                guided.append((float(q[0]), float(q[1])))
+                guided_src.append(8)
+                back = body[max(0, len(body) - 4)]
+                u = q - back
+                nu = math.hypot(*u)
+                if nu < 1e-6:
+                    u = np.array([q[0] - gx, q[1] - gy])
+                    nu = max(math.hypot(*u), 1e-6)
+                for e in extension(Pc, q, u / nu):
+                    guided.append(e)
+                    guided_src.append(7)
     # --- minimal paths from the rim
     passable = cv2.dilate((Pc >= P_LO).astype(np.uint8),
                           cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * DIL + 1, 2 * DIL + 1))) > 0
     passable |= rg <= r + RIM_ZONE
-    for q in cand + carried:  # a detector peak a little off the map is still reachable
+    if corridor_line is not None and len(corridor_line) >= 2:  # the guide's route, through gaps in this bin's map
+        lane = np.zeros(passable.shape, np.uint8)
+        cv2.polylines(lane, [np.round(corridor_line).astype(np.int32).reshape(-1, 1, 2)], False, 1, thickness=5)
+        passable |= lane > 0
+    for q in cand + carried + guided:  # a detector peak a little off the map is still reachable
         if -3 <= q[0] < 2 * H + 3 and -3 <= q[1] < 2 * H + 3:
             y0, y1, x0, x1 = (max(int(q[1]) - 4, 0), min(int(q[1]) + 5, 2 * H), max(int(q[0]) - 4, 0),
                               min(int(q[0]) + 5, 2 * H))
@@ -145,6 +222,12 @@ def process(gs: GrainState, b: int, P: np.ndarray, det: dict | None, H: int, gri
     passable &= rg >= r - 1.0
     cost = np.where(passable, 1.0 / (Pc + EPS), np.inf)
     ring = np.argwhere((np.abs(rg - r) <= 0.5) & passable)
+    if gs.exit_arc > 0 and gs.guide is not None and gs.guide.get("theta0") is not None and len(ring):
+        # bodies start where the tube emerged (the guide's emergence angle; grain frame, so held as the grain moves)
+        a = np.arctan2(ring[:, 0] - gy, ring[:, 1] - gx)
+        arc = np.abs(np.angle(np.exp(1j * (a - gs.guide["theta0"])))) <= gs.exit_arc
+        if arc.any():
+            ring = ring[arc]
     out = {"n": 0}
     if not len(ring):
         gs.bins[b] = out
@@ -166,8 +249,35 @@ def process(gs: GrainState, b: int, P: np.ndarray, det: dict | None, H: int, gri
                 n_end += 1
             if n_end >= K_END:
                 break
+    # --- where a tube body meets the frame's border (the detector does not respond there)
+    if EDGE:
+        FH, FW = P.shape
+        X, Y = jj + (ix - H), ii + (iy - H)  # frame column / row of each crop pixel
+        band = ((X >= 0) & (X < FW) & (Y >= 0) & (Y < FH)
+                & ((X < EDGE_BAND) | (X >= FW - EDGE_BAND) | (Y < EDGE_BAND) | (Y >= FH - EDGE_BAND)))
+        okm = band & np.isfinite(cum) & (Pc >= P_LO) & (rg >= r + 4)
+        if okm.any():
+            n_lab, lab_img = cv2.connectedComponents(okm.astype(np.uint8), connectivity=8)
+            ends = []
+            for k in range(1, n_lab):
+                ys, xs = np.nonzero(lab_img == k)
+                o = int(np.argmax(cum[ys, xs]))  # the stretch's point farthest along
+                # ranked by the route's cost per px of reach (a route along a well-marked tube is cheap per px)
+                ends.append((float(cum[ys[o], xs[o]]) / max(float(rg[ys[o], xs[o]]) - r, 1.0), float(xs[o]), float(ys[o])))
+            n_e = 0
+            for _, x, y in sorted(ends):
+                if n_e >= K_EDGE:
+                    break
+                if all(math.hypot(x - a, y - c) >= NMS for a, c in cand):
+                    cand.append((x, y))
+                    src.append(3)
+                    n_e += 1
     fresh = np.array(cand, float).reshape(-1, 2)
     fresh_src = list(src)
+    for q, sf in zip(guided, guided_src):
+        if all(math.hypot(q[0] - a, q[1] - c) >= NMS for a, c in cand):
+            cand.append(q)
+            src.append(sf)
     for q, sf in zip(carried, carried_src):
         if len(cand) >= MAX_C:
             break
@@ -300,7 +410,8 @@ def process(gs: GrainState, b: int, P: np.ndarray, det: dict | None, H: int, gri
     gs.prev = (b, F[:, 0].copy(), tips, samples, trees)
 
 
-def run(movie: str, only=None, log=print) -> None:
+def run(movie: str, only=None, log=print, guide: dict | None = None, exit_arc_deg: float = 0.0, ext: bool = False,
+        corridor: bool = False, tag: str = "", det_dir=None) -> None:
     bins, meta = stack.load(cache_dir(movie))
     R = Renderer(bins, meta)
     alt = os.environ.get("TT_GT_PROB")  # another network's maps (altmaps.py): a secondary variant
@@ -318,10 +429,11 @@ def run(movie: str, only=None, log=print) -> None:
         cx, cy = g["x"] + drift[rs][0], g["y"] + drift[rs][1]
         early = np.mean([np.nan_to_num(R.crop(k, cx, cy, 64)) for k in range(rs, rs + 3)], axis=0)
         edges = np.array([exit_edge(early, 63.5, float(g["r"]), math.radians(5.0 * k)) for k in range(72)])
-        states.append(GrainState(gid, g, drift, edges))
+        states.append(GrainState(gid, g, drift, edges, (guide or {}).get(gid), math.radians(exit_arc_deg), ext,
+                                 corridor))
     S = 2 * H
     jj, ii = np.meshgrid(np.arange(S, dtype=np.float32), np.arange(S, dtype=np.float32))
-    det_dir = OUT / "det" / movie
+    det_dir = Path(det_dir) if det_dir else OUT / "det" / movie
     t0 = time.time()
     for b in range(rs, nb):
         P = np.array(prob[b])
@@ -333,11 +445,14 @@ def run(movie: str, only=None, log=print) -> None:
             nc = np.mean([gs.bins[b]["n"] for gs in states])
             log(f"{movie} b{b}: {time.time() - t0:.0f} s, {nc:.1f} candidates per grain", flush=True)
     doc = {"movie": movie, "rs": rs, "nb": nb, "fpb": int(meta["frames_per_bin"]), "feats": FEATS,
-           "params": {"EPS": EPS, "P_LO": P_LO, "DIL": DIL, "RIM_ZONE": RIM_ZONE, "K_DET": K_DET, "K_NEAR": K_NEAR, "NEAR_PX": NEAR_PX, "DET_MIN": DET_MIN,
+           "params": {"exit_arc_deg": exit_arc_deg, "ext": ext, "corridor": corridor, "guided": guide is not None,
+                      "det_dir": str(det_dir), "EDGE": EDGE, "EDGE_BAND": EDGE_BAND, "K_EDGE": K_EDGE,
+                      "EPS": EPS, "P_LO": P_LO, "DIL": DIL, "RIM_ZONE": RIM_ZONE, "K_DET": K_DET, "K_NEAR": K_NEAR, "NEAR_PX": NEAR_PX, "DET_MIN": DET_MIN,
                       "K_END": K_END, "W_CARRY": W_CARRY, "NMS": NMS, "MAX_C": MAX_C, "PAIR_SHRINK": PAIR_SHRINK, "PAIR_GROW": PAIR_GROW, "HALF": H},
            "grains": {gs.gid: {"x": gs.x, "y": gs.y, "r": gs.r, "drift": gs.drift, "edges": gs.edges, "bins": gs.bins}
                       for gs in states}}
-    name = f"cands_{movie}{os.environ.get('TT_GT_TAG', '')}.pkl" if not only else f"cands_{movie}_{'_'.join(only)}.pkl"
+    tag = tag or os.environ.get('TT_GT_TAG', '')
+    name = f"cands_{movie}{tag}.pkl" if not only else f"cands_{movie}_{'_'.join(only)}.pkl"
     with open(OUT / name, "wb") as fh:
         pickle.dump(doc, fh, protocol=pickle.HIGHEST_PROTOCOL)
     log(f"{movie}: {len(states)} grains in {time.time() - t0:.0f} s -> {OUT / name}", flush=True)
@@ -347,6 +462,26 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("movies", nargs="+")
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--guide", help="guide pickle name pattern with {movie} (guide.py), for the second pass")
+    ap.add_argument("--exit-arc", type=float, default=0.0, help="degrees round the guide's emergence angle (0 = off)")
+    ap.add_argument("--ext", action="store_true", help="extension candidates along the guide's tube")
+    ap.add_argument("--corridor", action="store_true", help="passable along the guide's body")
+    ap.add_argument("--tag", default="")
+    ap.add_argument("--det", help="detector maps: 'v3' (common.DET3, each movie's held-out fold) or a directory "
+                    "pattern with {movie}; default the version 2 maps (OUT/det/<movie>)")
+    ap.add_argument("--k-det", type=int, help=f"detector peaks per bin (default {K_DET})")
+    ap.add_argument("--max-c", type=int, help=f"candidates per bin with the carried ones (default {MAX_C})")
+    ap.add_argument("--edge", action="store_true", help="candidates where a tube body meets the frame's border")
+    ap.add_argument("--k-edge", type=int, help=f"frame-edge candidates per bin (default {K_EDGE})")
     a = ap.parse_args()
+    K_DET = a.k_det or K_DET
+    MAX_C = a.max_c or MAX_C
+    EDGE = a.edge
+    K_EDGE = a.k_edge or K_EDGE
     for m in a.movies:
-        run(m, a.only)
+        gd = None
+        if a.guide:
+            with open(OUT / a.guide.format(movie=m), "rb") as fh:
+                gd = pickle.load(fh)
+        dd = None if not a.det else (DET3[m] if a.det == "v3" else a.det.format(movie=m))
+        run(m, a.only, guide=gd, exit_arc_deg=a.exit_arc, ext=a.ext, corridor=a.corridor, tag=a.tag, det_dir=dd)

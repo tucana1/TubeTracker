@@ -14,7 +14,8 @@ Per grain, the tube's tip at every bin is chosen in one Viterbi over the whole m
   plus part of the map's band beyond the tip, made non-decreasing from the onset.
 
 The detector runs on the whole registered frame of every bin once per movie (``det_cache``, compressed, ~120 KB a
-bin). The reader takes over a reading made by the other readers (``read``): it keeps that reading's drift and replaces
+bin): a version 2 checkpoint (inputs A, D, C) or a version 3 one (A, D6, D12, D24, C: prototypes/tip_detector,
+common3.py). The reader takes over a reading made by the other readers (``read``): it keeps that reading's drift and replaces
 its germination call, onset, lengths, tips and route.
 """
 
@@ -46,6 +47,14 @@ MAX_C = 32
 PAIR_SHRINK, PAIR_GROW = 8.0, 16.0  # pairs of consecutive candidates kept: length change -8 .. +16 px a bin
 DETECTOR_K = 6     # the detector's short interval (bins)
 DET_SCALE = np.array([20.0, 8.0, 20.0], np.float32)
+# version 3 inputs (prototypes/tip_detector/common3.py): the 3-bin mean M(b) less its local median, its changes over
+# 6, 12 and 24 bins and from the reference bins (each less its local median), / these grey levels, clipped
+DET_CHANNELS3 = ("A", "D6", "D12", "D24", "C")
+DET_LAGS3 = {"D6": 6, "D12": 12, "D24": 24}
+DET_SCALE3 = {"A": 20.0, "D6": 8.0, "D12": 8.0, "D24": 8.0, "C": 20.0}
+DET_CLIP3 = 127.0 / 24.0
+DET_CTX = {2: 64, 3: 96}   # context round each of the 2 x 2 tiles the frame is run in (version 3: as maps3.py)
+P_SCALE_MAP = 250.0   # tube maps are uint8 P x this (learned.P_SCALE)
 
 # the Viterbi's settings: tuned on the sparse movie (ld) alone and applied unchanged to movies 2 and 1
 # (prototypes/tip_trajectory, tune_ld_c; override with Params.tiptraj_weights)
@@ -65,16 +74,53 @@ def _medbg(img: np.ndarray, f: int = 4, k: int = 15) -> np.ndarray:
 
 
 def load_detector(path, device: str | None = None):
+    """A tip detector checkpoint (prototypes/tip_detector): version 2 (``channels`` "ADC") or version 3 (a list of
+    ``DET_CHANNELS3`` names in that order). The network carries ``channels`` ("ADC" or the tuple) and ``version``."""
     import torch
     from .learned import _unet
     if device is None:
         device = "mps" if torch.backends.mps.is_available() else "cpu"
     ck = torch.load(str(path), map_location="cpu", weights_only=False)
-    if ck.get("channels", "ADC") != "ADC" or ck.get("out_ch", 2) != 2:
-        raise ValueError(f"{path}: expected a tip detector with inputs ADC and two outputs")
-    net = _unet(tuple(ck.get("widths", (16, 32, 64, 128))), "batch")
+    ch = ck.get("channels", "ADC")
+    if isinstance(ch, str):
+        if ch != "ADC":
+            raise ValueError(f"{path}: expected a tip detector with inputs ADC (version 2) or {DET_CHANNELS3} (3)")
+        version, in_ch = 2, 3
+    else:
+        ch = tuple(ch)
+        if not ch or list(ch) != [c for c in DET_CHANNELS3 if c in ch] or len(set(ch)) != len(ch):
+            raise ValueError(f"{path}: unknown detector inputs {ch} (version 3: a subset of {DET_CHANNELS3}, in order)")
+        version, in_ch = 3, len(ch)
+    if ck.get("out_ch", 2) != 2:
+        raise ValueError(f"{path}: expected a tip detector with two outputs")
+    net = _unet(tuple(ck.get("widths", (16, 32, 64, 128))), "batch", in_ch=in_ch)
     net.load_state_dict(ck["state"])
+    net.channels, net.version = ch, version
     return net.eval().to(device)
+
+
+def _inputs3(R, rs: int, nb: int, b: int, channels=DET_CHANNELS3) -> np.ndarray:
+    """The version 3 inputs of bin b on the whole frame (``R(k)``: bin k registered, float32), as
+    prototypes/tip_detector/common3.full_frame_inputs: M(k) the mean of bins k-1..k+1 with k clamped to
+    [rs + 1, nb - 2] (so the change over a lag reaching before the reference bins is the change from them)."""
+    def M(k):
+        k = int(min(max(k, rs + 1), nb - 2))
+        return np.mean([R(j) for j in (k - 1, k, k + 1)], axis=0)
+
+    Mb = M(b)
+    out = []
+    for c in channels:
+        if c == "A":
+            v = Mb - _medbg(Mb)
+        elif c == "C":
+            v = Mb - M(rs + 1)
+            v = v - _medbg(v)
+        else:
+            v = Mb - M(b - DET_LAGS3[c])
+            v = v - _medbg(v)
+        out.append(v)
+    s = np.array([DET_SCALE3[c] for c in channels], np.float32)
+    return np.clip(np.stack(out).astype(np.float32) / s[:, None, None], -DET_CLIP3, DET_CLIP3).astype(np.float32)
 
 
 def _tiles(net, x: np.ndarray, n: int = 2, ctx: int = 64) -> np.ndarray:
@@ -89,21 +135,23 @@ def _tiles(net, x: np.ndarray, n: int = 2, ctx: int = 64) -> np.ndarray:
             a0, a1, b0, b1 = max(0, y0 - ctx), min(H, y1 + ctx), max(0, x0 - ctx), min(W, x1 + ctx)
             t = x[:, a0:a1, b0:b1]
             h, w = t.shape[1:]
-            t = np.pad(t, ((0, 0), (0, (-h) % 8), (0, (-w) % 8)), mode="reflect")
+            k = 2 ** (len(net.widths) - 1)
+            t = np.pad(t, ((0, 0), (0, (-h) % k), (0, (-w) % k)), mode="reflect")
             with torch.no_grad():
                 y = torch.sigmoid(net(torch.from_numpy(np.ascontiguousarray(t))[None].to(dev)))[0, 0].cpu().numpy()
             out[y0:y1, x0:x1] = y[y0 - a0:y1 - a0, x0 - b0:x1 - b0]
     return out
 
 
-def det_cache(cache_dir: str | Path, model: str | Path, log=print) -> Path:
-    """The tip detector's map of every bin on the whole registered frame (inputs as prototypes/tip_detector: the
-    3-bin mean, its change over ``DETECTOR_K`` bins and from the first bins, each less its ~60 px local median), stored
-    as uint8 P x 250 (below 3 set to 0), compressed, one file per bin: ``<cache>/det_<model stem>/b<bin>.npz``. Bins
-    without inputs (the first 7 after the reference start, the last) are not written."""
+def det_cache(cache_dir: str | Path, model: str | Path, log=print, out: str | Path | None = None) -> Path:
+    """The tip detector's map of every bin on the whole registered frame (inputs as prototypes/tip_detector: version 2
+    the 3-bin mean, its change over ``DETECTOR_K`` bins and from the first bins, each less its ~60 px local median;
+    version 3 also the changes over 12 and 24 bins, ``_inputs3``), stored as uint8 P x 250 (below 3 set to 0),
+    compressed, one file per bin: ``<cache>/det_<model stem>/b<bin>.npz`` (or ``out``). Bins without inputs (the
+    first 7 after the reference start, the last) are not written."""
     from . import stack
     cache_dir = Path(cache_dir)
-    out = cache_dir / f"det_{Path(model).stem}"
+    out = Path(out) if out else cache_dir / f"det_{Path(model).stem}"
     if (out / "meta.json").exists():
         return out
     out.mkdir(parents=True, exist_ok=True)
@@ -126,8 +174,20 @@ def det_cache(cache_dir: str | Path, model: str | Path, log=print) -> Path:
             mean[b] = np.mean([R(k) for k in range(max(b - 1, rs), min(b + 1, nb - 1) + 1)], axis=0)
         return mean[b]
 
-    E = np.mean([R(k) for k in range(rs, rs + 3)], axis=0)
     started = time.time()
+    if getattr(net, "version", 2) == 3:
+        for b in range(rs + DETECTOR_K + 1, nb - 1):
+            for k in [k for k in reg if k < b - 30 and k > rs + 2]:
+                del reg[k]
+            x = _inputs3(R, rs, nb, b, net.channels)
+            q = np.clip(np.round(_tiles(net, x, ctx=DET_CTX[3]) * 250.0), 0, 250).astype(np.uint8)
+            q[q < 3] = 0
+            np.savez_compressed(out / f"b{b:03d}.npz", tip=q)
+        (out / "meta.json").write_text(json.dumps({"model": str(model), "n_bins": nb, "version": 3,
+                                                   "channels": list(net.channels)}))
+        log(f"tip detector maps ({Path(model).name}, version 3): {nb} bins in {time.time() - started:.0f} s -> {out}")
+        return out
+    E = np.mean([R(k) for k in range(rs, rs + 3)], axis=0)
     for b in range(rs + DETECTOR_K + 1, nb - 1):
         for k in [k for k in reg if k < b - DETECTOR_K - 2]:
             del reg[k]
@@ -137,7 +197,7 @@ def det_cache(cache_dir: str | Path, model: str | Path, log=print) -> Path:
         D = M(b) - M(b - DETECTOR_K)
         C = M(b) - E
         x = (np.stack([A, D - _medbg(D), C - _medbg(C)]) / DET_SCALE[:, None, None]).astype(np.float32)
-        q = np.clip(np.round(_tiles(net, x) * 250.0), 0, 250).astype(np.uint8)
+        q = np.clip(np.round(_tiles(net, x, ctx=DET_CTX[2]) * 250.0), 0, 250).astype(np.uint8)
         q[q < 3] = 0
         np.savez_compressed(out / f"b{b:03d}.npz", tip=q)
     (out / "meta.json").write_text(json.dumps({"model": str(model), "n_bins": nb}))
@@ -201,6 +261,46 @@ def _resample(line: np.ndarray, step: float) -> tuple[np.ndarray, np.ndarray]:
     return np.stack([np.interp(q, s, line[:, 0]), np.interp(q, s, line[:, 1])], 1), q
 
 
+# guided second pass (Params.tiptraj_guided): the first reading's tube is followed along the map
+EXT_R = 80            # extension candidates: along the map from the guide's tip, within this window (px)...
+EXT_STEPS = (6.0, 12.0, 20.0, 30.0, 45.0, 60.0, 80.0)  # ...at these arc lengths on, and its far end
+GUIDE_GAP = 60        # a guide reading older than this many bins is not used
+
+
+def _extension(Pc: np.ndarray, q: np.ndarray, u: np.ndarray) -> list[tuple[float, float]]:
+    """Points along the tube map beyond a tip ``q`` (crop index coordinates) in its direction ``u``: the cheapest
+    route on 1 / (P + EPS) (within 2 px of P >= 0.35) from q to the farthest point of P >= 0.5 ahead (within 70 deg of
+    u, EXT_R px window), sampled at EXT_STEPS px of arc length, and that far point."""
+    from skimage.graph import MCP_Geometric
+    S = Pc.shape[0]
+    x0, x1 = max(int(q[0]) - EXT_R, 0), min(int(q[0]) + EXT_R + 1, S)
+    y0, y1 = max(int(q[1]) - EXT_R, 0), min(int(q[1]) + EXT_R + 1, S)
+    qi, qj = int(round(q[1])) - y0, int(round(q[0])) - x0
+    sub = Pc[y0:y1, x0:x1]
+    h, w = sub.shape
+    if not (0 <= qi < h and 0 <= qj < w):
+        return []
+    pas = cv2.dilate((sub >= 0.35).astype(np.uint8), cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))) > 0
+    pas[max(qi - 3, 0):qi + 4, max(qj - 3, 0):qj + 4] = True
+    mcp = MCP_Geometric(np.where(pas, 1.0 / (sub + EPS), np.inf), fully_connected=True)
+    cum, _ = mcp.find_costs([(qi, qj)])
+    yy, xx = np.mgrid[0:h, 0:w]
+    dx, dy = xx - qj, yy - qi
+    dd = np.hypot(dx, dy)
+    ok = np.isfinite(cum) & (sub >= 0.5) & (dd >= 3) & (dx * u[0] + dy * u[1] >= math.cos(math.radians(70)) * dd)
+    if not ok.any():
+        return []
+    k = int(np.argmax(np.where(ok, cum, -1.0)))
+    path = np.asarray(mcp.traceback((k // w, k % w)), float)[:, ::-1] + np.array([x0, y0])
+    if len(path) < 2:
+        return []
+    sarc = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(path, axis=0).T))])
+    out = [(float(np.interp(t, sarc, path[:, 0])), float(np.interp(t, sarc, path[:, 1]))) for t in EXT_STEPS
+           if t < sarc[-1]]
+    out.append((float(path[-1][0]), float(path[-1][1])))
+    return out
+
+
 # feature columns
 L_ARC, THETA, EDGE, SUP, GAP, DET, AHEAD, RADIAL, SRC, EXT = range(10)
 
@@ -208,8 +308,13 @@ L_ARC, THETA, EDGE, SUP, GAP, DET, AHEAD, RADIAL, SRC, EXT = range(10)
 class _Track:
     """One grain's candidates, bin by bin."""
 
-    def __init__(self, x: float, y: float, r: float, drift: np.ndarray, edges: np.ndarray, half: int):
+    def __init__(self, x: float, y: float, r: float, drift: np.ndarray, edges: np.ndarray, half: int,
+                 guide: dict | None = None):
         self.x, self.y, self.r, self.drift, self.edges, self.H = x, y, r, drift, edges, half
+        # guide (a first reading of this grain, second pass): {bin: body (n, 2), grain frame} of the bins it chose a
+        # candidate at; adds its tip, points along the map beyond it, and a corridor along its body
+        self.guide = guide
+        self.guide_bins = np.array(sorted(guide)) if guide else np.zeros(0, int)
         S = 2 * half
         self.jj, self.ii = np.meshgrid(np.arange(S, dtype=np.float32), np.arange(S, dtype=np.float32))
         self.recent: list = []
@@ -249,10 +354,31 @@ class _Track:
                         src.append(1)
         carried = [(float(q[0]), float(q[1])) for _, pts, _ in reversed(self.recent) for q in pts - to_grain]
         carried_src = [4 + sf for _, _, srcs in reversed(self.recent) for sf in srcs]
+        guided, guided_src, lane_line = [], [], None
+        if self.guide:
+            kg = int(np.searchsorted(self.guide_bins, b, side="right")) - 1
+            if kg >= 0 and b - self.guide_bins[kg] <= GUIDE_GAP:
+                body = np.asarray(self.guide[int(self.guide_bins[kg])], float) - to_grain
+                q = body[-1]
+                lane_line = body
+                guided.append((float(q[0]), float(q[1])))
+                guided_src.append(8)
+                u = q - body[max(0, len(body) - 4)]
+                nu = math.hypot(*u)
+                if nu < 1e-6:
+                    u = np.array([q[0] - gx, q[1] - gy])
+                    nu = max(math.hypot(*u), 1e-6)
+                for e in _extension(Pc, q, u / nu):
+                    guided.append(e)
+                    guided_src.append(7)
         passable = cv2.dilate((Pc >= P_LO).astype(np.uint8),
                               cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * DIL + 1, 2 * DIL + 1))) > 0
         passable |= rg <= r + RIM_ZONE
-        for q in cand + carried:
+        if lane_line is not None and len(lane_line) >= 2:  # the guide's route, through gaps in this bin's map
+            lane = np.zeros(passable.shape, np.uint8)
+            cv2.polylines(lane, [np.round(lane_line).astype(np.int32).reshape(-1, 1, 2)], False, 1, thickness=5)
+            passable |= lane > 0
+        for q in cand + carried + guided:
             if -3 <= q[0] < S + 3 and -3 <= q[1] < S + 3:
                 y0, y1, x0, x1 = max(int(q[1]) - 4, 0), min(int(q[1]) + 5, S), max(int(q[0]) - 4, 0), min(int(q[0]) + 5, S)
                 passable[y0:y1, x0:x1] |= np.hypot(jj[y0:y1, x0:x1] - q[0], ii[y0:y1, x0:x1] - q[1]) <= 3.0
@@ -278,6 +404,10 @@ class _Track:
                 if n_end >= K_END:
                     break
         fresh, fresh_src = np.array(cand, float).reshape(-1, 2), list(src)
+        for q, sf in zip(guided, guided_src):  # not carried on: the guide is there at every bin
+            if all(math.hypot(q[0] - a, q[1] - c) >= NMS for a, c in cand):
+                cand.append(q)
+                src.append(sf)
         for q, sf in zip(carried, carried_src):
             if len(cand) >= MAX_C:
                 break
@@ -513,6 +643,34 @@ def viterbi(bins: dict[int, dict], rs: int, nb: int, w: dict, det_scale: float =
     return choice, out_L
 
 
+MID_SHIFT, MID_REACH, MID_SMOOTH = 4.0, 8.0, 3
+
+
+def mid_correction(body: np.ndarray, P: np.ndarray) -> float:
+    """How much longer a body (reference coordinates) is along the middle of its tube than as found: the cheapest route
+    hugs the inside of a curving tube, the annotator traces its middle (~half the tube's width x the turn: ~11 px for a
+    U-turn). The body moved onto the middle of the map's band across it (``learned._band_centres``, median-filtered
+    along it, at most ``MID_SHIFT`` px); ``P``: that bin's full-frame map, 0..1, reference coordinates."""
+    from .learned import _band_centres, _running_median
+    q, s = _resample(np.asarray(body, float), 1.0)
+    if len(q) < 4:
+        return 0.0
+    t = np.gradient(q, axis=0)
+    t /= np.maximum(np.hypot(*t.T), 1e-9)[:, None]
+    n = np.stack([-t[:, 1], t[:, 0]], 1)
+    offs = np.arange(-MID_REACH, MID_REACH + 1e-6, 0.5)
+    pts = (q[:, None, :] + offs[None, :, None] * n[:, None, :] - 0.5).astype(np.float32)
+    prof = cv2.remap(P, pts[..., 0], pts[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    c = _band_centres(prof, offs, 0.35, 14.0)
+    ok = np.isfinite(c)
+    if ok.sum() < 3:
+        return 0.0
+    idx = np.arange(len(c))
+    c = np.clip(_running_median(np.interp(idx, idx[ok], c[ok]), MID_SMOOTH), -MID_SHIFT, MID_SHIFT)
+    qc = q + c[:, None] * n
+    return float(np.sum(np.hypot(*np.diff(qc, axis=0).T)) - s[-1])
+
+
 def _isotonic(y: np.ndarray) -> np.ndarray:
     vals, wts, cnt = [], [], []
     for v in np.asarray(y, float):
@@ -550,7 +708,7 @@ def weights(p) -> dict:
 
 
 def candidates(renderer: Renderer, prob: Renderer, det: DetMaps, meta: dict, grain: dict, drift: np.ndarray,
-               half: int) -> dict[int, dict]:
+               half: int, guide: dict | None = None) -> dict[int, dict]:
     """Every bin's candidates for one grain (``_Track``) where the grain is then (census + ``drift``)."""
     from .analyze import exit_edge
     rs, nb = int(meta.get("ref_start", 0)), int(meta["n_bins"])
@@ -558,7 +716,7 @@ def candidates(renderer: Renderer, prob: Renderer, det: DetMaps, meta: dict, gra
     cx, cy = gx + drift[rs][0], gy + drift[rs][1]
     early = np.mean([np.nan_to_num(renderer.crop(k, cx, cy, 64)) for k in range(rs, rs + 3)], axis=0)
     edges = np.array([exit_edge(early, 63.5, gr, math.radians(5.0 * k)) for k in range(72)])
-    tr = _Track(gx, gy, gr, drift, edges, half)
+    tr = _Track(gx, gy, gr, drift, edges, half, guide)
     for b in range(rs, nb):
         tr.step(b, prob.bins[b], det.tip(b))
     return tr.bins
@@ -572,8 +730,15 @@ def read(res: dict, renderer: Renderer, prob: Renderer, meta: dict, grain: dict,
     rs, nb, fpb = int(meta.get("ref_start", 0)), int(meta["n_bins"]), int(meta["frames_per_bin"])
     w = weights(p)
     drift = drift_per_bin(res, rs, nb)
-    bins = candidates(renderer, prob, det, meta, grain, drift, int(p.tiptraj_half))
-    choice, L = viterbi(bins, rs, nb, w, det_scale if w.get("det_norm") else 1.0)
+    half = int(p.tiptraj_half)
+    scale = det_scale if w.get("det_norm") else 1.0
+    bins = candidates(renderer, prob, det, meta, grain, drift, half)
+    choice, L = viterbi(bins, rs, nb, w, scale)
+    if getattr(p, "tiptraj_guided", False) and (choice >= 0).any():
+        # second pass: the first reading's tube followed along the map (its tip, points beyond it, its corridor)
+        guide = {rs + i: bins[rs + i]["bodies"][k] for i, k in enumerate(choice) if k >= 0}
+        bins = candidates(renderer, prob, det, meta, grain, drift, half, guide)
+        choice, L = viterbi(bins, rs, nb, w, scale)
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
     out = {k: v for k, v in res.items() if k not in ("path_by_bin", "bend", "tip", "exit_xy", "path_length_px",
                                                       "onset_interval", "route_centred_px", "drawn_on_tube")}
@@ -584,6 +749,15 @@ def read(res: dict, renderer: Renderer, prob: Renderer, meta: dict, grain: dict,
                    length={"frames": frames, "px": [0.0] * len(frames)}, path=[], final_length_px=0.0)
         return out
     t0 = int(germ[0])
+    if getattr(p, "tiptraj_mid", False):  # lengths along the middle of the tube (mid_correction), chosen readings
+        last = 0.0
+        for i, k in enumerate(choice):
+            if k >= 0:
+                b = rs + i
+                P = np.asarray(prob.bins[b], np.float32) / P_SCALE_MAP
+                last = mid_correction(bins[b]["bodies"][k] + drift[b], P)
+            if k != -1:
+                L[i] += last
     if w.get("iso", True):
         L[t0:] = _isotonic(L[t0:])
     tips, last = [], None

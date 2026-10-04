@@ -24,6 +24,8 @@ LABELS = {m: REPO / f"benchmark/labels/{m}_v1.json" for m in MOVIES}
 FOLD = {"ld": "tip2_m2m1.pt", "m2": "tip2_ldm1.pt", "m1": "tip2_ldm2.pt"}
 DET_DIR = DATA / "runs/research/tip_detector"
 PROB = "prob_tubes_bn_real_ld_m2"  # the shipped tube maps (0.8.0 on)
+# version 3 tip detector maps (prototypes/tip_detector, version 3), each movie's held-out fold
+DET3 = {"ld": DET_DIR / "det3/tip3_m2m1/ld", "m2": DET_DIR / "det3/tip3_ldm1/m2", "m1": DET_DIR / "det3/tip3_ldm2/m1"}
 
 
 def cache_dir(movie: str) -> Path:
