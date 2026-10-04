@@ -186,6 +186,13 @@ def cmd_analyze(args) -> None:
     analyze(args.cache, args.out, grains_path=args.grains, only=only, video=args.video)
 
 
+def cmd_selftrain(args) -> None:
+    """Adapt the tube network to one movie on its own confident readings (label-free; research step)."""
+    from .selftrain import selftrain
+    selftrain(args.cache, args.out, predictions=args.predictions, start=args.start, replay=args.replay,
+              steps=args.steps, seed=args.seed, runs=args.runs, work=args.work)
+
+
 def cmd_eval(args) -> None:
     from .evaluate import load, markdown, score
     labels, preds = load(args.labels), [load(p) for p in args.pred]
@@ -316,6 +323,21 @@ def main(argv=None) -> None:
     r = sub.add_parser("retest", help="the annotator's blind repeats against their first answers")
     r.add_argument("labels")
     r.set_defaults(func=cmd_retest)
+    t = sub.add_parser("selftrain", help="adapt the tube network to a movie on its own confident readings (no labels; "
+                                         "research step: use the result as the analysis' model)")
+    t.add_argument("cache")
+    t.add_argument("--out", required=True, help="the adapted network (.pt); its record beside it (.json)")
+    t.add_argument("--predictions", help="SparseTrack's default readings of every census grain with the starting "
+                                         "network (read first if not given)")
+    t.add_argument("--start", help="starting network (default: the shipped one)")
+    t.add_argument("--replay", nargs="+", help="training shards of the starting network's own training data "
+                                               "(default, for the shipped network: its trace and synthetic shards "
+                                               "under runs/)")
+    t.add_argument("--steps", type=int, default=1500)
+    t.add_argument("--seed", type=int, default=0)
+    t.add_argument("--runs", type=int, default=1, help="fine-tunes averaged into one network (seeds SEED, SEED+1, ...)")
+    t.add_argument("--work", help="folder for the readings (default: beside --out)")
+    t.set_defaults(func=cmd_selftrain)
     e = sub.add_parser("eval", help="score predictions against benchmark labels")
     e.add_argument("--labels", required=True)
     e.add_argument("--pred", required=True, nargs="+")

@@ -10,6 +10,12 @@ end to end the gains are small and not significant (lengths +2..+6 of 50, onsets
 training noise alone moves lengths by 3); a second round adds nothing and starts to drift; movie 2 shows the same
 pattern. Not worth building in as a default yet.** Details in "Results".
 
+**Update, 4 Oct: the step.** Made movie-agnostic as `sparsetrack/selftrain.py` (`python -m sparsetrack selftrain`;
+the cache's own census, no labels) and judged under the tip-trajectory reader: movie 1 28/50 lengths with either of
+two seeds (27/50 on the shipped maps; onsets 15-17/28 vs 12/28); movie 2, from a network that never saw it, 24, 31
+and 31/54 with seeds 0-2 (28/54 on that network's own maps). Frozen as a second blind candidate, one run, seed 0.
+See "The step" at the end.
+
 ## Method
 
 - **Pseudo-labels** (`select.py`) from 0.8.8's m1 readings of all 30 census grains (the analysis census is the
@@ -101,3 +107,122 @@ adapted maps, then judged on a held-out movie with sa and sb fixed beforehand.
 Cost per movie on the laptop: one extra read (~8 min), selection (~1 min with maps in memory), crops (~1 min), a
 fine-tune of 2.5-6 min. Shards were deleted (the disk is full); rebuild them from the kept pseudo-labels with
 `python -m prototypes.self_train.pcrops runs/research/self_train/pseudo/<name>.json --movie <m1|m2> --prop`.
+
+## The step: `sparsetrack/selftrain.py` (4 Oct 2026)
+
+**What it is.** The prototype as one label-free step that runs on any movie from its cache alone:
+`python -m sparsetrack selftrain CACHE --out NET.pt [--predictions PRED.json] [--start NET0.pt] [--replay SHARD...]
+[--steps 1500] [--seed 0]`. It (1) reads every grain of the cache's own census (`grains.json`) with SparseTrack's
+defaults and the starting network, unless given those readings; (2) selects pseudo-traces with `select.py`'s rules
+(unchanged: confident bins, drawn tube on the map, centred on its band, every 3rd, at most 40 per grain; clean
+never-germinated grains as background; no negatives before the tracker's onset); (3) builds the traced and the
+propagated crops in memory (no shards on disk); (4) fine-tunes once from the starting network (1500 steps, batch 32,
+lr 5e-4 one-cycle, BatchNorm statistics frozen; each batch a quarter pseudo-traced, a quarter propagated, a quarter
+replayed trace crops and a quarter replayed synthetic crops of the starting network's own training data). It writes
+the network and a record beside it (`NET.json`: settings, sha1s of the starting network, the replay shards and the
+readings, pseudo-label and crop counts, timings); with nothing confident to learn from it keeps the starting network.
+The adapted network is then the movie's `Params.model` (the hybrid's flood, the route centring and the
+tip-trajectory reader all read its maps).
+
+**Differences from the prototype.** The census is the cache's `grains.json` (no labels file: neither the human
+sample nor the human exclusions), and every census grain is read, not only the labelled sample; nothing else
+changed. Port check on the prototype's own input (0.8.8's readings of m1's 30 labelled grains, shipped maps): the
+same 359 pseudo-traces (every route identical) and the same crops (2495 traced, 985 propagated, counts by kind
+identical).
+
+**Variant, fixed before the step was run: sb (propagated crops on).** Evidence from the record above (no new run was
+used to choose): its maps mark more of the traced tubes than sa's on m1 (90% vs 79%) and on m2 (sb only: 90 -> 96%);
+the one test of the tip-trajectory reader on self-trained maps (m1, 32/50) used sb; sa's end-to-end lead under
+0.8.8's flood (+1 to +4 lengths) is within the seed noise (3), and the reader leans on map support along a body
+(its weight at the top of its range), so the maps that mark more of the tubes are its better input. sa was not re-run.
+
+**Judged** (`stepeval.py`): the tip-trajectory reader as the 0.9.0 candidate runs it (`tiptraj="flood"`,
+`weights_ld_v3.json`, `tiptraj_mid`), with each movie's held-out detector fold, read end to end on the movie's scored
+grains as `scripts/score_heldout.sh` reads a new movie (census = the labels file), only `Params.model` changed;
+scored on all labelled grains, paired 95% bootstrap intervals over grains (onsets; lengths in tolerance; length and
+tip). The self-trained networks never saw a label: they are judged on the grains whose readings trained them
+(transductive, as on a new movie). The reader on the shipped maps, re-run with this code, gives the same 30
+length series as the round-3 bench run it is compared with (prototypes/tip_trajectory, 27/50).
+
+**Movie 1** (30 grains, 50 FULL traces; starting network the shipped one, which never saw m1; detector fold
+`tip3_ldm2`; pseudo-labels from all 69 census grains: 35 used, 1375 confident bins -> 471 pseudo-traces -> 3277
+traced + 1319 propagated crops):
+
+| reading | onsets | lengths | length and tip | vs 0.8.8 | vs the reader on the shipped maps |
+|---|---|---|---|---|---|
+| 0.8.8 | 8/26 | 15/50 | 15 | | -4 [-9, +1]; -12 [-21, -3]; -9 [-17, -1] |
+| reader, shipped maps (0.9.0 candidate) | 12/28 | 27/50 | 24 | +4 [-1, +9]; +12 [+3, +21]; +9 [+1, +17] | |
+| **reader, self-trained maps, seed 0** | **17/28** | **28/50** | **26** | +9 [+3, +14]; +13 [+5, +20]; +11 [+4, +18] | **+5 [0, +11]; +1 [-4, +6]; +2 [-3, +7]** |
+| reader, self-trained maps, seed 1 | 15/28 | 28/50 | 25 | +7 [+2, +12]; +13 [+5, +20]; +10 [+3, +17] | +3 [-3, +9]; +1 [-4, +6]; +1 [-3, +5] |
+| reader, soup of seeds 0-2 (`--runs 3`) | 16/28 | 27/50 | 25 | | +4 [-1, +9]; 0 [-4, +4]; +1 [-2, +5] |
+| reader, the prototype's `m1_r1_sb` (labelled sample's readings) | 15/28 | 31/50 | 28 | | +3 [-3, +9]; +4 [0, +9]; +4 [0, +9] |
+| reader, the prototype's `m1_r1_sb_s1` | 15/28 | 31/50 | 28 | | +3 [-2, +8]; +4 [0, +8]; +4 [+1, +8] |
+
+- Seed sensitivity (crop jitter and training seed; the selection is deterministic): seed 1 vs seed 0 onsets -2
+  [-5, 0], lengths 0 [-3, +3], length and tip -1 [-4, +2]; 4 grains differ, the length classes not at all (young
+  18/28, mid 5/11, long 5/11 for both; the shipped maps 16, 5, 6).
+- Against the shipped maps the gain is in onsets (7 grains gain one, seed 0) and young tubes (+2); long tubes -1.
+- The prototype's own network (`m1_r1_sb`: pseudo-labels from 0.8.8's readings of the 30 labelled grains, the
+  census and its exclusions from the labels file) reads 31/50 end to end (offline it read 32): integration is not
+  what separates it from the step's 28/50; the pseudo-labels are. Against the step's seed 0: lengths +3 [-1, +7].
+  The step reads the cache's 69 census grains instead (11 unlabelled grains add pseudo-traces, and the labelled
+  grains are read in another context: 25 of 30 read differently, through the obstacles and the speed-cap probe).
+  Its seed-1 network reads 31/50 too, and the step's two seeds 28 and 28: the 3 lengths are the pseudo-labels'
+  source, not training noise (prototype seed 1 vs the step's seed 1: +3 [-1, +7]). The prototype's census was
+  the labelled sample (the "slight label leak": the person's sample and exclusions); on movie 2 the same
+  comparison shows no gap (the prototype's `m2_r1_sb` 28/54, the step's seeds 24-31, mean 28.7). A label-free way
+  to recover it (e.g. reading only the census' isolated grains, as the person sampled) was not tried.
+- Pseudo-label check (human labels used only for this report, `stepdiag.py`): at the 8 human FULL traces on
+  confident bins the readings' lengths are within tolerance 4/8 (median -6 px: they read short), their centred apices
+  8/8; at the other 42, 11/42 lengths - as in the prototype (4/8, 7/8, 11/42).
+
+**Movie 2** (24 grains, 54 FULL traces; nothing here saw movie 2: starting network `runs/tube_net/tn3_ldm1.pt` (ld +
+m1 traces), replay its own training data (ld + m1 trace crops `real3_ld`, `real3_m1`, and the same two synthetic
+shards), detector fold `tip3_ldm1`; pseudo-labels from all 122 census grains: 49 germinated + 7 clean used, 3059
+confident bins -> 937 pseudo-traces -> 6846 traced (301 of them clean-grain background) + 2160 propagated crops):
+
+| reading | onsets | lengths | length and tip | vs the reader on tn3_ldm1's maps |
+|---|---|---|---|---|
+| 0.8.8, tn3_ldm1's maps (context) | 3/18 | 17/54 | 14 | +1 [0, +3]; -11 [-19, -3]; -13 [-21, -5] |
+| reader, tn3_ldm1's maps | 2/18 | 28/54 | 27 | |
+| **reader, self-trained from tn3_ldm1, seed 0** | **3/18** | **24/54** | **23** | **+1 [0, +3]; -4 [-9, +1]; -4 [-9, +1]** |
+| reader, self-trained from tn3_ldm1, seed 1 | 4/18 | 31/54 | 29 | +2 [0, +5]; +3 [-2, +9]; +2 [-3, +8] |
+| reader, self-trained from tn3_ldm1, seed 2 | 2/18 | 31/54 | 31 | 0 [0, 0]; +3 [-5, +12]; +4 [-4, +12] |
+| reader, soup of seeds 0-2 (`--runs 3`) | 2/18 | 28/54 | 27 | 0 [0, 0]; 0 [-7, +8]; 0 [-7, +8] |
+| reader, the prototype's `m2_r1_sb` (labelled sample's readings) | 4/18 | 28/54 | 28 | +2 [0, +5]; 0 [-8, +9]; +1 [-7, +10] |
+| (0.8.8 on the shipped maps, which saw m2's traces) | 7/18 | 27/54 | 23 | |
+
+- The training seed matters on movie 2: seed 1 vs seed 0 lengths +7 [+3, +11], seed 2 vs seed 0 +7 [0, +14]
+  (length and tip +6 [+2, +10], +8 [+2, +15]); seeds 0-2 average 28.7 lengths, 27.7 length and tip, 3 onsets,
+  against 28, 27, 2 on tn3_ldm1's own maps. Seed 0 loses the mid-length tubes (12/18 -> 7/18) and gains long ones
+  (5 -> 7/11); seed 1 gains young (11 -> 15/25) and long (5 -> 7) and loses mid (12 -> 9).
+- Pseudo-label check (reporting only): at the 9 human FULL traces on confident bins lengths 6/9, centred apices 7/9;
+  at the other 45, 11/45 - as in the prototype's movie-2 check (6/9, 7/9, 11/45).
+
+**Seed noise on movie 2, and a soup** (written before the soup's results were seen). Seed 1 against seed 0 on m2:
+lengths +7 [+3, +11], length and tip +6 [+2, +10]: a single frozen run on a blind movie would carry that much luck.
+`--runs K` averages K fine-tunes (seeds S..S+K-1, each on its own crops) into one network (a uniform "model soup":
+same start, same frozen BatchNorm statistics). Rule fixed before its evaluation: the candidate uses `--runs 3` if the
+soup of seeds 0-2 reads at least the mean of the single seeds' lengths on both movies (those read: m1 seeds 0 and
+1, m2 seeds 0-2), else `--runs 1`; the candidate is added if, for that recipe, m1 reads >= 27/50 (the reader on the
+shipped maps) and m2 >= 28/54 (the reader on tn3_ldm1's maps), single-seed recipes judged by their seed mean.
+
+**Soup result and decision.** The soup of seeds 0-2 read 27/50 on m1 (single seeds 28, 28) and 28/54 on m2 (single
+seeds 24, 31, 31; mean 28.7): below the single seeds' mean on both, so by the rule above the candidate keeps one run
+(`--runs 1`, seed 0). Its estimates by the seed means: m1 28/50 >= 27 (the reader on the shipped maps), m2 28.7/54
+>= 28 (the reader on tn3_ldm1's maps): **added to `scripts/score_heldout.sh` as "0.9.0-tiptraj-selftrained"**
+(the selftrain step on the new movie with these settings, the starting network's and replay shards' sha1s checked,
+then the reader with the adapted network as `Params.model`; to be tagged `sparsetrack-0.9.0-selftrained-candidate`).
+What to expect blind: about the reader's lengths on the shipped maps, more onsets on movie 1 (+3 to +5) and movie 2
+(+0 to +2), and a run-to-run spread of up to 7 lengths of 54 on a crowded movie.
+
+**Runtime** (this Mac, MPS; one heavy process): movie 1 (69 census grains) 11.6 min = the census read 551 s (its
+maps were on disk) + selection 3 s + crops 23 s + fine-tune 121 s; movie 2 (122 grains) 21.2 min = the starting
+network's maps 72 s + census read 1046 s + selection 4 s + crops 33 s + fine-tune 119 s. The census read is ~8 s per
+grain, so a crowded census dominates; the adapted network's own maps (~1-2.5 min, ~440 MB) are built by the analysis
+that uses it. Memory: the crops are kept in RAM (m2: ~9000 pseudo crops ~0.65 GB, the replay ~0.5 GB).
+
+Files: `sparsetrack/selftrain.py` (`python -m sparsetrack selftrain`), `tests/test_selftrain.py`; `stepeval.py` (the
+reader end to end on a labelled movie with a given network; tables with paired intervals), `stepdiag.py` (the
+pseudo-label check). Outputs (scratch, not kept): networks `models/{m1,m2}_s{0,1,2}.pt` and soups, their records
+(`.json`), the census readings, the readers' predictions; probability movies deleted after use.
