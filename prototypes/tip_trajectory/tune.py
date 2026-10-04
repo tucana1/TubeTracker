@@ -20,7 +20,7 @@ SPACE = {  # name: (low, high) uniform, or a tuple of choices
     "w_ahead": (0.0, 1.0), "w_tan": (0.0, 2.0), "w_carry": (0.0, 0.3), "w_on": (0.0, 3.0), "l0": (5.0, 30.0),
     "vmax": (3.0, 8.0), "shrink": (0.5, 6.0), "w_shrink": (0.0, 1.0), "w_cons": (0.0, 1.0), "w_share": (0.0, 1.0),
     "cap_tip": (3.0, 15.0), "cap_share": (3.0, 15.0), "iso": (True, False), "w_ext": (0.0, 1.0), "c_end": (-3.0, 3.0), "w_l0": (0.0, 3.0),
-    "w_hold": (0.0, 1.5), "w_reacq": (0.0, 3.0), "cap_reacq": (4.0, 20.0), "det_norm": (0, 0, 2, 2)}
+    "w_hold": (0.0, 1.5), "w_reacq": (0.0, 3.0), "cap_reacq": (4.0, 20.0), "det_norm": (0, 0, 2, 2), "edge_clip": (1.5, 7.0)}
 
 
 def sample(rng, around: dict | None = None, scale: float = 0.15) -> dict:

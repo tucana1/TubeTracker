@@ -81,7 +81,8 @@ def traces(lab: dict, gid: str, contact: bool = False) -> list[tuple[int, float,
 def lengths_of(F: np.ndarray, c, p: dict | None = None) -> np.ndarray:
     """Candidate lengths: arc length from the rim less the visible edge offset and the tip offset; with ``p``: plus
     ``w_ext`` x how far the map's band goes on past the tip, less ``c_end`` more for map-end candidates."""
-    L = F[:, FI["L_arc"]] - F[:, FI["edge"]] - c
+    ec = (p or {}).get("edge_clip", 99.0)
+    L = F[:, FI["L_arc"]] - np.clip(F[:, FI["edge"]], -ec, ec) - c
     if p is not None:
         if "ext" in FI:
             L = L + p.get("w_ext", 0.0) * F[:, FI["ext"]]
@@ -126,7 +127,8 @@ def summarize_oracle(rows: list[dict]) -> str:
 DEFAULT = {"c": 1.5, "theta": 0.35, "w_det": 1.0, "w_sup": 0.6, "w_gap": 0.3, "w_ahead": 0.3, "w_tan": 0.5,
            "w_carry": 0.05, "w_on": 1.0, "l0": 12.0, "vmax": 4.0, "shrink": 3.0, "w_shrink": 0.2, "w_cons": 0.3,
            "w_share": 0.3, "cap_tip": 6.0, "cap_share": 6.0, "iso": True,
-           "w_ext": 0.0, "c_end": 0.0, "w_l0": 1e3, "l0_max": 60.0, "w_hold": 0.3, "w_reacq": 0.5, "cap_reacq": 12.0}
+           "w_ext": 0.0, "c_end": 0.0, "w_l0": 1e3, "l0_max": 60.0, "w_hold": 0.3, "w_reacq": 0.5, "cap_reacq": 12.0,
+           "w_hug": 0.0, "hug_deg": 20.0}
 
 
 def unary(F: np.ndarray, p: dict) -> np.ndarray:
@@ -280,6 +282,30 @@ def isotonic(y: np.ndarray) -> np.ndarray:
     return np.repeat(np.asarray(vals), cnt) if vals else np.zeros(0)
 
 
+def hug_corrected(G: dict, choice: np.ndarray, L: np.ndarray, rs: int, p: dict, n0: int = 3) -> np.ndarray:
+    """Lengths with the arc along the rim added where a reading's body leaves the grain away from where the tube
+    first left it (the exit angle of its first ``n0`` readings): a tube that runs along its grain is measured from
+    where it emerged, as annotators trace it, while the cheapest route from the rim cuts that part off.
+    ``w_hug`` x r x max(0, |angle change| - ``hug_deg``)."""
+    th = np.full(len(choice), np.nan)
+    for i, k in enumerate(choice):
+        if k >= 0:
+            th[i] = G["bins"][rs + i]["F"][k, FI["theta"]]
+    fin = np.flatnonzero(np.isfinite(th))
+    if len(fin) < 1:
+        return L
+    th0 = float(np.angle(np.mean(np.exp(1j * th[fin[:n0]]))))
+    last = np.nan
+    out = L.copy()
+    for i in range(len(choice)):
+        if np.isfinite(th[i]):
+            last = th[i]
+        if choice[i] != -1 and np.isfinite(last):
+            d = abs(float(np.angle(np.exp(1j * (last - th0)))))
+            out[i] = L[i] + p["w_hug"] * G["r"] * max(0.0, d - np.radians(p.get("hug_deg", 20.0)))
+    return out
+
+
 def read_grain(G: dict, rs: int, nb: int, fpb: int, p: dict) -> dict:
     choice, L = viterbi(G, rs, nb, p)
     frames = [b * fpb + fpb // 2 for b in range(rs, nb)]
@@ -289,6 +315,8 @@ def read_grain(G: dict, rs: int, nb: int, fpb: int, p: dict) -> dict:
         out.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None, px=[0.0] * len(frames), tips=None)
         return out
     t0 = int(germ[0])
+    if p.get("w_hug", 0.0) > 0:
+        L = hug_corrected(G, choice, L, rs, p)
     if p.get("iso", True):
         L[t0:] = isotonic(L[t0:])
     tips = []
