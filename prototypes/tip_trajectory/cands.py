@@ -41,6 +41,8 @@ P_LO = 0.2
 DIL = 4
 RIM_ZONE = 25.0
 K_DET = 6
+K_NEAR = 3     # + the strongest detector peaks within NEAR_PX of the rim
+NEAR_PX = 30.0
 DET_MIN = 0.05
 K_END = 6
 W_CARRY = 8
@@ -113,13 +115,19 @@ def process(gs: GrainState, b: int, P: np.ndarray, det: dict | None, H: int, gri
         m = np.where((rg >= r - 2) & (rg <= H - 4), Dt, -1.0).astype(np.float32)
         pk = (m == cv2.dilate(m, np.ones((9, 9), np.uint8))) & (m >= DET_MIN)
         ys, xs = np.nonzero(pk)
-        for o in np.argsort(-m[ys, xs], kind="stable"):
-            q = (float(xs[o]), float(ys[o]))
-            if all(math.hypot(q[0] - a, q[1] - c) >= 4 for a, c in cand):
-                cand.append(q)
-                src.append(1)
-            if len(cand) >= K_DET:
-                break
+        order = np.argsort(-m[ys, xs], kind="stable")
+        near = np.hypot(xs - gx, ys - gy) <= r + NEAR_PX
+        # the strongest peaks near the rim first (a young tip is weak beside a crowded field's grown tips), then
+        # the strongest anywhere
+        for sel, extra in ((order[near[order]], K_NEAR), (order, K_DET)):
+            kmax = len(cand) + extra
+            for o in sel:
+                if len(cand) >= kmax:
+                    break
+                q = (float(xs[o]), float(ys[o]))
+                if all(math.hypot(q[0] - a, q[1] - c) >= 4 for a, c in cand):
+                    cand.append(q)
+                    src.append(1)
     # --- carried (hold): fresh candidates of the last W_CARRY bins, moved with the grain
     carried = [(float(q[0]), float(q[1])) for _, pts, _ in reversed(gs.recent) for q in pts - to_grain]
     carried_src = [4 + sf for _, _, srcs in reversed(gs.recent) for sf in srcs]
@@ -322,7 +330,7 @@ def run(movie: str, only=None, log=print) -> None:
             nc = np.mean([gs.bins[b]["n"] for gs in states])
             log(f"{movie} b{b}: {time.time() - t0:.0f} s, {nc:.1f} candidates per grain", flush=True)
     doc = {"movie": movie, "rs": rs, "nb": nb, "fpb": int(meta["frames_per_bin"]), "feats": FEATS,
-           "params": {"EPS": EPS, "P_LO": P_LO, "DIL": DIL, "RIM_ZONE": RIM_ZONE, "K_DET": K_DET, "DET_MIN": DET_MIN,
+           "params": {"EPS": EPS, "P_LO": P_LO, "DIL": DIL, "RIM_ZONE": RIM_ZONE, "K_DET": K_DET, "K_NEAR": K_NEAR, "NEAR_PX": NEAR_PX, "DET_MIN": DET_MIN,
                       "K_END": K_END, "W_CARRY": W_CARRY, "NMS": NMS, "MAX_C": MAX_C, "PAIR_SHRINK": PAIR_SHRINK, "PAIR_GROW": PAIR_GROW, "HALF": H},
            "grains": {gs.gid: {"x": gs.x, "y": gs.y, "r": gs.r, "drift": gs.drift, "edges": gs.edges, "bins": gs.bins}
                       for gs in states}}

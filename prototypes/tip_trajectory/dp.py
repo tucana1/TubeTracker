@@ -1,15 +1,19 @@
 """The global tip-trajectory reader on stored candidates (cands.py): one Viterbi over all bins per grain.
 
-States per bin: "not germinated" or one of the bin's candidates (a tip with its body). Costs (minimised):
-- unary, candidate k at bin t: theta - S(t, k), S = w_det * detector at the tip + w_sup * map support along the body
-  - w_gap * longest unmarked gap (px / 10) - w_ahead * map ahead of the tip - w_tan * max(0, 0.5 - radial gain over
-  the first 8 px) - w_src_carry (a carried "hold" candidate); "not germinated": 0.
-- transitions: none -> none 0; none -> k: w_on, only if the new tube is at most ``l0`` px; k -> none forbidden;
-  j -> k: the length change dL = L_k - L_j must lie in [-shrink, vmax x bins apart]; cost w_shrink * max(0, -dL) +
-  w_cons * max(0, d_tip - 1.5) + w_share * max(0, d_share - 1.5) (the shorter body's tip / body against the longer
-  body, grain frame: jumping onto another tube is expensive).
-Length = body arc length from the rim - the grain's visible edge offset there (exit_edge) - tip offset c; zero
-before the first germinated bin (onset).
+States per bin: not germinated (N), one of the bin's candidates (a tip with its body), or held (H: the tube keeps its
+last reading; no candidate explains the bin). Costs (minimised):
+- unary, candidate k at bin t: theta - S(t, k), S = w_det x detector at the tip (with ``det_norm`` 2: divided by the
+  movie's detector scale, the 99th percentile of the full-frame map's peaks; 1: of the candidates' 90th percentile) +
+  w_sup x map support along the body - w_gap x longest unmarked gap (px / 10) - w_ahead x map ahead of the tip -
+  w_tan x max(0, 0.5 - radial gain over the first 8 px) - w_carry (a carried "hold" candidate); N: 0; H: w_hold.
+- transitions: N -> N 0; N -> k: w_on + w_l0 x max(0, L - l0) / 10 (at most l0_max); k -> N forbidden;
+  j -> k: the length change dL = L_k - L_j in [-shrink, vmax x bins apart], the shorter body's tip within cap_tip of
+  the longer body and its points within cap_share on average; cost w_shrink x max(0, -dL) + w_cons x max(0, d_tip -
+  1.5) + w_share x max(0, d_share - 1.5) (grain frame: jumping onto another tube is ruled out); k -> H, H -> H:
+  w_hold; H -> k: w_reacq (+ the same length and tip terms, tip within cap_reacq).
+Length = body arc length from the rim - the grain's visible edge offset there (exit_edge) - tip offset c + w_ext x
+the map's band beyond the tip (- c_end for map ends); non-decreasing from the onset with ``iso``; zero before it.
+sparsetrack/tiptraj.py holds a copy of this Viterbi and of cands.py's candidates (checked identical on ld g008).
 
     python -m prototypes.tip_trajectory.dp oracle ld
 """
@@ -48,7 +52,22 @@ def load(movie: str, name: str | None = None) -> dict:
         G["_off"] = off
     det = np.concatenate([G["_F"][:, FI["det"]] for G in doc["grains"].values()])
     doc["det_q90"] = float(np.percentile(det, 90)) if len(det) else 1.0  # the movie's detector scale (label-free)
+    doc["det_frame_q99"] = frame_scale(OUT / "det" / doc["movie"])
     return doc
+
+
+def frame_scale(det_dir, every: int = 10) -> float:
+    """A movie's detector scale without grains or labels: the 99th percentile of the tip map's local maxima (9 x 9,
+    >= 0.05) over the whole frame, every ``every``-th bin."""
+    import cv2
+    from pathlib import Path
+    vals = []
+    for f in sorted(Path(det_dir).glob("b*.npz"))[::every]:
+        t = np.load(f)["tip"].astype(np.float32) / 250.0
+        pk = (t == cv2.dilate(t, np.ones((9, 9), np.uint8))) & (t >= 0.05)
+        vals.append(t[pk])
+    v = np.concatenate(vals) if vals else np.zeros(0)
+    return float(np.percentile(v, 99)) if len(v) else 1.0
 
 
 def traces(lab: dict, gid: str, contact: bool = False) -> list[tuple[int, float, np.ndarray, dict]]:
@@ -306,7 +325,8 @@ def movie_speed(doc: dict, p: dict, loose: float = 8.0, window: int = 10) -> flo
 def with_scale(doc: dict, p: dict) -> dict:
     """``p`` with the detector divided by the movie's 90th percentile of candidate detector values (``det_norm``):
     the detector answers more weakly on some movies (movie 2: 0.36 against the sparse movie's 0.63)."""
-    return {**p, "_det_scale": doc["det_q90"] if p.get("det_norm") else 1.0}
+    norm = int(p.get("det_norm") or 0)
+    return {**p, "_det_scale": {0: 1.0, 1: doc["det_q90"], 2: doc["det_frame_q99"]}[norm]}
 
 
 def with_speed(doc: dict, p: dict) -> dict:
