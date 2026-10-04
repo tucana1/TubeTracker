@@ -33,6 +33,7 @@ sys.path.insert(0, str(REPO / "scripts"))
 from sparsetrack.evaluate import score  # noqa: E402
 
 FI = None  # feature index, set on load
+BACK = None  # backrim.py: {gid: {bin: px}} added to the chosen readings' lengths (a post-pass), or None
 
 
 def load(movie: str, name: str | None = None) -> dict:
@@ -40,6 +41,8 @@ def load(movie: str, name: str | None = None) -> dict:
     with open(OUT / (name or f"cands_{movie}.pkl"), "rb") as fh:
         doc = pickle.load(fh)
     FI = {k: i for i, k in enumerate(doc["feats"])}
+    for gid, G in doc["grains"].items():
+        G["_gid"] = gid
     for G in doc["grains"].values():  # every candidate of the grain in one array: per bin a slice
         Fs, off, n0 = [], {}, 0
         for b in sorted(G["bins"]):
@@ -78,11 +81,63 @@ def traces(lab: dict, gid: str, contact: bool = False) -> list[tuple[int, float,
     return out
 
 
-def lengths_of(F: np.ndarray, c, p: dict | None = None) -> np.ndarray:
+def ray_offsets(G: dict, smooth_deg: float = 15.0, max_px: float = 25.0) -> None:
+    """Per candidate of a grain (in place, ``G["_ray"]`` aligned with ``G["_F"]``): how much to add to its arc length
+    (from the census circle) so that it is measured from the grain's visible edge along the body's own first direction
+    rather than along the radius: back along the first ~4 px of the body until the visible edge (the stored exit_edge
+    radii, circular median over +/- ``smooth_deg``) where the edge lies inside the circle; forward along the body to
+    where it leaves the edge where it lies outside. A tube leaving at a slant from an edge inside the circle gets more
+    than the radial offset (prototype of "where the body starts")."""
+    e = np.asarray(G["edges"], float)
+    h = int(round(smooth_deg / 5.0))
+    ext = np.concatenate([e[-h:], e, e[:h]])
+    es = np.array([np.median(ext[k:k + 2 * h + 1]) for k in range(72)])
+    c = np.array([G["x"], G["y"]])
+    r = G["r"]
+
+    def edge_r(pt):
+        k = int(round(math.degrees(math.atan2(pt[1] - c[1], pt[0] - c[0])) % 360 / 5.0)) % 72
+        return r + es[k]
+
+    out = []
+    for b in sorted(G["bins"]):
+        B = G["bins"][b]
+        if not B["n"]:
+            continue
+        for body in B["bodies"]:
+            q = body / 10.0
+            if len(q) < 2:
+                out.append(0.0)
+                continue
+            d0 = float(np.hypot(*(q[0] - c)))
+            er = edge_r(q[0])
+            if er < d0:  # edge inside: back along the first direction until the edge
+                u = q[min(2, len(q) - 1)] - q[0]
+                nu = float(np.hypot(*u))
+                u = u / nu if nu > 1e-6 else (q[0] - c) / max(d0, 1e-6)
+                t, val = 0.0, d0 - er
+                while t < max_px:
+                    pt = q[0] - (t + 0.25) * u
+                    if np.hypot(*(pt - c)) <= edge_r(pt):
+                        break
+                    t += 0.25
+                out.append(t if t < max_px else d0 - er)
+            else:  # edge outside: the body only counts from where it leaves the edge
+                seg = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(q, axis=0).T))])
+                k = next((i for i in range(len(q)) if np.hypot(*(q[i] - c)) >= edge_r(q[i])), len(q) - 1)
+                out.append(-float(seg[k]))
+    G["_ray"] = np.asarray(out, np.float32)
+
+
+def lengths_of(F: np.ndarray, c, p: dict | None = None, ray: np.ndarray | None = None) -> np.ndarray:
     """Candidate lengths: arc length from the rim less the visible edge offset and the tip offset; with ``p``: plus
     ``w_ext`` x how far the map's band goes on past the tip, less ``c_end`` more for map-end candidates."""
     ec = (p or {}).get("edge_clip", 99.0)
-    L = F[:, FI["L_arc"]] - np.clip(F[:, FI["edge"]], -ec, ec) - c
+    if ray is not None and (p or {}).get("len_mode") == "ray":  # measured from the edge along the body's direction
+        rc = p.get("ray_clip", 99.0)
+        L = F[:, FI["L_arc"]] + np.clip(ray, -rc, rc) - c
+    else:
+        L = F[:, FI["L_arc"]] - np.clip(F[:, FI["edge"]], -ec, ec) - c
     if p is not None:
         if "ext" in FI:
             L = L + p.get("w_ext", 0.0) * F[:, FI["ext"]]
@@ -151,7 +206,9 @@ def viterbi(G: dict, rs: int, nb: int, p: dict) -> tuple[np.ndarray, np.ndarray]
     predecessor (a greedy choice inside an otherwise exact Viterbi)."""
     bins = G["bins"]
     w_hold, w_reacq = p.get("w_hold", 0.3), p.get("w_reacq", 0.5)
-    L_all, U_all = lengths_of(G["_F"], p["c"], p), unary(G["_F"], p)
+    if p.get("len_mode") == "ray" and "_ray" not in G:
+        ray_offsets(G)
+    L_all, U_all = lengths_of(G["_F"], p["c"], p, G.get("_ray")), unary(G["_F"], p)
     S_all = _start_cost(L_all, p)
     off = G["_off"]
     Lof = lambda bb, kk: float(L_all[off[bb][0] + kk])  # noqa: E731
@@ -315,6 +372,13 @@ def read_grain(G: dict, rs: int, nb: int, fpb: int, p: dict) -> dict:
         out.update(status="no_emergence_by_end", onset_frame=None, onset_interval=None, px=[0.0] * len(frames), tips=None)
         return out
     t0 = int(germ[0])
+    if BACK is not None and G.get("_gid") in BACK:  # the rim stretch behind the body's start (backrim.py)
+        back, last = BACK[G["_gid"]], 0.0
+        for i, k in enumerate(choice):
+            if k >= 0:
+                last = back.get(rs + i, 0.0)
+            if k != -1:
+                L[i] += last
     if p.get("w_hug", 0.0) > 0:
         L = hug_corrected(G, choice, L, rs, p)
     if p.get("iso", True):
