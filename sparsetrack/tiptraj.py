@@ -46,6 +46,7 @@ MAX_C = 32
 PAIR_SHRINK, PAIR_GROW = 8.0, 16.0  # pairs of consecutive candidates kept: length change -8 .. +16 px a bin
 DETECTOR_K = 6     # the detector's short interval (bins)
 DET_SCALE = np.array([20.0, 8.0, 20.0], np.float32)
+P_SCALE_MAP = 250.0   # tube maps are uint8 P x this (learned.P_SCALE)
 
 # the Viterbi's settings: tuned on the sparse movie (ld) alone and applied unchanged to movies 2 and 1
 # (prototypes/tip_trajectory, tune_ld_c; override with Params.tiptraj_weights)
@@ -583,6 +584,34 @@ def viterbi(bins: dict[int, dict], rs: int, nb: int, w: dict, det_scale: float =
     return choice, out_L
 
 
+MID_SHIFT, MID_REACH, MID_SMOOTH = 4.0, 8.0, 3
+
+
+def mid_correction(body: np.ndarray, P: np.ndarray) -> float:
+    """How much longer a body (reference coordinates) is along the middle of its tube than as found: the cheapest route
+    hugs the inside of a curving tube, the annotator traces its middle (~half the tube's width x the turn: ~11 px for a
+    U-turn). The body moved onto the middle of the map's band across it (``learned._band_centres``, median-filtered
+    along it, at most ``MID_SHIFT`` px); ``P``: that bin's full-frame map, 0..1, reference coordinates."""
+    from .learned import _band_centres, _running_median
+    q, s = _resample(np.asarray(body, float), 1.0)
+    if len(q) < 4:
+        return 0.0
+    t = np.gradient(q, axis=0)
+    t /= np.maximum(np.hypot(*t.T), 1e-9)[:, None]
+    n = np.stack([-t[:, 1], t[:, 0]], 1)
+    offs = np.arange(-MID_REACH, MID_REACH + 1e-6, 0.5)
+    pts = (q[:, None, :] + offs[None, :, None] * n[:, None, :] - 0.5).astype(np.float32)
+    prof = cv2.remap(P, pts[..., 0], pts[..., 1], cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    c = _band_centres(prof, offs, 0.35, 14.0)
+    ok = np.isfinite(c)
+    if ok.sum() < 3:
+        return 0.0
+    idx = np.arange(len(c))
+    c = np.clip(_running_median(np.interp(idx, idx[ok], c[ok]), MID_SMOOTH), -MID_SHIFT, MID_SHIFT)
+    qc = q + c[:, None] * n
+    return float(np.sum(np.hypot(*np.diff(qc, axis=0).T)) - s[-1])
+
+
 def _isotonic(y: np.ndarray) -> np.ndarray:
     vals, wts, cnt = [], [], []
     for v in np.asarray(y, float):
@@ -661,6 +690,15 @@ def read(res: dict, renderer: Renderer, prob: Renderer, meta: dict, grain: dict,
                    length={"frames": frames, "px": [0.0] * len(frames)}, path=[], final_length_px=0.0)
         return out
     t0 = int(germ[0])
+    if getattr(p, "tiptraj_mid", False):  # lengths along the middle of the tube (mid_correction), chosen readings
+        last = 0.0
+        for i, k in enumerate(choice):
+            if k >= 0:
+                b = rs + i
+                P = np.asarray(prob.bins[b], np.float32) / P_SCALE_MAP
+                last = mid_correction(bins[b]["bodies"][k] + drift[b], P)
+            if k != -1:
+                L[i] += last
     if w.get("iso", True):
         L[t0:] = _isotonic(L[t0:])
     tips, last = [], None

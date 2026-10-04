@@ -83,6 +83,19 @@ def test_guided_second_pass_follows_the_first_reading():
         assert abs(L2[b] - (tip_at(b) - X0 - R)) <= 2.5, (b, L2[b])
 
 
+def test_mid_correction_measures_along_the_middle_of_a_curve():
+    yy, xx = np.mgrid[0:200, 0:200].astype(np.float32) + 0.5
+    rad = np.hypot(xx - 100, yy - 100)
+    P = ((rad >= 26) & (rad <= 34) & (yy <= 100)).astype(np.float32)  # a half ring, 8 px wide, middle at radius 30
+    a = np.linspace(np.pi, 2 * np.pi, 200)
+    inner = np.stack([100 + 27 * np.cos(a), 100 + 27 * np.sin(a)], 1)  # a body hugging the inside of the turn
+    corr = tiptraj.mid_correction(inner, P)
+    assert 6.0 <= corr <= 12.0, corr  # pi x (30 - 27) = 9.4 px longer along the middle
+    straight = np.stack([np.linspace(40, 160, 100), np.full(100, 70.0)], 1)
+    P2 = (np.abs(yy - 70) <= 4).astype(np.float32)
+    assert abs(tiptraj.mid_correction(straight + np.array([0.0, 2.5]), P2)) <= 0.5  # off-centre but straight: ~0
+
+
 def test_extension_follows_the_map_ahead():
     Pc = np.zeros((200, 200), np.float32)
     Pc[98:103, 50:160] = 1.0  # a band along +x; another one going back (behind the tip) must not be taken

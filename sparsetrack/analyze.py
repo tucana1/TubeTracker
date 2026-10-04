@@ -256,6 +256,8 @@ class Params:
     tiptraj_half: int = 300            # crop half-size round each grain (px): the longest tubes to read
     tiptraj_guided: bool = False       # a second pass that follows the first reading's tube along the map (its tip,
                                        # points beyond it, a corridor along its body); twice the reading time
+    tiptraj_mid: bool = False          # lengths along the middle of the tube's band, not the inside of its curves
+                                       # (tiptraj.mid_correction; ld-chosen: ld +2, m2 +1, m1 +1 lengths)
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:

@@ -142,7 +142,63 @@ full-crop array work on 600 px crops), and (3) one more labelled movie confirms 
 leaves the grain (start bodies where the tube emerged instead of anywhere on the rim) and candidates for long tubes on
 moving grains.
 
-Files: `common.py`, `detmaps.py`, `cands.py`, `dp.py`, `tune.py`, `failures.py`, `summary.py`, `bench.py`, `altmaps.py`.
+## Round 2 (4 Oct, after the merge): where the body starts, long tubes on moving grains, movie 1 combination
+
+All measured as round 1: weights tuned on ld (`tune_ld_c`, unchanged unless said), each movie's held-out detector
+fold, paired over grains (95% bootstrap) against 0.8.8 and against the merged reader (round 1, "R1").
+
+### 1. Where the body starts (negative)
+
+"Tip right, length off" misses (ld 16, m2 13-14, m1 9) are mostly short on ld (10 of 16) and m2 (9 of 13). Two parts:
+the start ANGLE (tangential tubes: the annotator starts where the tube emerged, 20-40 deg from where the cheapest
+route leaves the rim; ld g002, g030, m2 g009, g052, g060) and the start RADIUS (the annotator's exit lies 3-11 px
+inside or 4-7 px outside the census circle: ld g004 -7, g011 -8, m2 g038 -11, g085 +6.5; the visible-edge offset is
+clipped at +/-3.3 px). Tried, all with the ld-tuned weights:
+
+| variant | ld lengths / l&t (R1 77 / 75) |
+|---|---|
+| bodies start within +/-25 deg of the reading's emergence angle (circular mean of its first young tips' angles; second pass, `guide.py` + `cands.py --exit-arc 25`) | 74 / 72 (-3); with re-tuned offsets c / edge clip / w_ext still 74 / 72 |
+| plus the map's band along the rim behind the body's start (`backrim.py`, half weight) | 41 / 40 (the band is the tube's own width and rim marks almost everywhere) |
+| lengths measured from the visible edge along the body's own first direction (`dp.py` len_mode "ray") | best 75 / 73 |
+
+The emergence angle from the young tips is the tip's side, not the base's, for tangential tubes (g002: tips at
+9 deg, the annotator's exit at -29 deg). On the radius, no label-free edge estimate transfers: against the
+annotator's exit radius the visible-edge offset (clipped) is better than the census circle on ld (median error 1.03
+vs 1.71 px), equal on m2 (1.65 vs 1.66) and worse on m1 (2.09 vs 1.34); smoothing it round the grain or trusting it
+only where the radial step is strong does not fix m1 under any one rule (`edges.py`, step-strength gate). Left as it
+is.
+
+### 2. Long tubes on moving grains
+
+Why long m1 tubes get no candidate at their apex (`longdiag.py`, 11 traces >= 60 px): ranking (the apex is a map
+piece end or a detector peak but not among the 6 kept: g014 b244 end 42nd of 47, g030 b140 29th of 29), the map
+blind to the tube (g003 b140 0% of 91 px marked, g007 8%), gaps in the map (g028 b244 104 px, g064 b140 30 px). The
+detector's body head marks 19% of these tubes (no help). And one stall with a consistent candidate chain all the way
+(g028 b120-140: the detector's peak at the apex every bin, 0-1 px between bins) that the ld-tuned weights do not take:
+they weigh map support along the body 13 x the detector (w_sup 2.0 vs w_det 0.16), and the chain's body is less
+marked than a stub's on movie 1.
+
+Guided second pass (`guide.py`, `cands.py --ext --corridor`, `Params.tiptraj_guided`): the first reading's chosen
+tip at the latest bin as a candidate, points along the map beyond it (cheapest route ahead within 70 deg, sampled
+at 6-80 px and its far end) and a corridor along its body through gaps in the map:
+
+| movie | R1 (first pass): lengths, l&t, onsets | guided: lengths, l&t, onsets | guided vs R1 (lengths; l&t; onsets) | guided vs 0.8.8 (lengths; l&t) |
+|---|---|---|---|---|
+| ld | 77/104, 75, 16/28 | 76/104, 75, 16/28 | -1 [-3, 0]; 0; 0 | +1 [-9, +11]; +8 [-2, +19] |
+| m2 | 32/54, 31, 8/19 | 33/54, 33, 9/19 | +1 [0, +3]; +2 [0, +5]; +1 [0, +3] | +6 [-2, +14]; +10 [+3, +17] |
+| m1 | 25/50, 22, 10/28 | 25/50, 22, 10/28 | 0; 0; 0 | +10 [+2, +18]; +7 [-1, +15] |
+
+Neutral to slightly positive (m2 one more long tube), at twice the reading time: `Params.tiptraj_guided`, off.
+
+DIS-flow carrying of the guide's tip was not tried: the diagnosis shows the long misses are ranking, map blindness and
+gaps, not tubes moving while held.
+
+### 3. Movie 1 combination
+
+M1_TABLE
+
+Files: `common.py`, `detmaps.py`, `cands.py`, `dp.py`, `tune.py`, `failures.py`, `summary.py`, `bench.py`, `altmaps.py`;
+round 2: `guide.py`, `longdiag.py`, `backrim.py`, `edges.py`, `combo.py`.
 Outputs (scratch, not kept in git): detector maps (~100 MB for the three movies), candidates (`cands_<movie>.pkl`),
 tuning (`tune_ld_c.json`, `tune_m2_c.json`), predictions (`pred_ld_c_<movie>.json`, `pred_m2_c_<movie>.json`).
 Reproduce: `python -m prototypes.tip_trajectory.detmaps ld m2 m1; python -m prototypes.tip_trajectory.cands ld m2 m1;
