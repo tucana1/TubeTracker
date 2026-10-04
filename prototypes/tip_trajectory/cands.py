@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import pickle
 import time
+from pathlib import Path
 
 import cv2
 import numpy as np
@@ -301,7 +303,8 @@ def process(gs: GrainState, b: int, P: np.ndarray, det: dict | None, H: int, gri
 def run(movie: str, only=None, log=print) -> None:
     bins, meta = stack.load(cache_dir(movie))
     R = Renderer(bins, meta)
-    prob = np.load(cache_dir(movie) / PROB / "bins.npy", mmap_mode="r")
+    alt = os.environ.get("TT_GT_PROB")  # another network's maps (altmaps.py): a secondary variant
+    prob = np.load(Path(alt) / "bins.npy" if alt else cache_dir(movie) / PROB / "bins.npy", mmap_mode="r")
     rs, nb = int(meta.get("ref_start", 0)), int(meta["n_bins"])
     H = HALF[movie]
     lab, base = labels(movie), baseline(movie)
@@ -334,7 +337,7 @@ def run(movie: str, only=None, log=print) -> None:
                       "K_END": K_END, "W_CARRY": W_CARRY, "NMS": NMS, "MAX_C": MAX_C, "PAIR_SHRINK": PAIR_SHRINK, "PAIR_GROW": PAIR_GROW, "HALF": H},
            "grains": {gs.gid: {"x": gs.x, "y": gs.y, "r": gs.r, "drift": gs.drift, "edges": gs.edges, "bins": gs.bins}
                       for gs in states}}
-    name = f"cands_{movie}.pkl" if not only else f"cands_{movie}_{'_'.join(only)}.pkl"
+    name = f"cands_{movie}{os.environ.get('TT_GT_TAG', '')}.pkl" if not only else f"cands_{movie}_{'_'.join(only)}.pkl"
     with open(OUT / name, "wb") as fh:
         pickle.dump(doc, fh, protocol=pickle.HIGHEST_PROTOCOL)
     log(f"{movie}: {len(states)} grains in {time.time() - t0:.0f} s -> {OUT / name}", flush=True)
