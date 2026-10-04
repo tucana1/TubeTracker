@@ -112,4 +112,15 @@ MPS, ~40 MB compressed for 351 bins), `tiptraj_det` (precomputed maps), `tiptraj
 Tests: `tests/test_tiptraj.py`. Reading costs ~20-30 s per grain over 351 bins (crop operations on 600 px crops and the
 minimal-path search), on top of the existing readers.
 
-E2E_PENDING
+End to end (`bench.py`: SparseTrack 0.8.8 defaults + `tiptraj=flood` with the default (ld-tuned) weights and each
+movie's held-out detector maps, reading the scored grains only - every grain is read independently and the speed-cap
+probe still samples the whole census, so these are the readings a whole-movie run gives; paired against the 0.8.8
+baseline over grains):
+
+| movie | onsets | lengths | length+tip |
+|---|---|---|---|
+| ld (`tiptraj_half=200`) | 15/26 (15/26) +0 | 77/104 (75) +2 [0, +5] | 70 (67) +3 [0, +8] |
+| m2 | 7/18 (7/18) +0 [-4, +4] | 30/54 (27) +3 [-4, +11] | 29 (23) +6 [-1, +14] |
+| m1 | 10/28 (8/26) +2 [-2, +6] | 25/50 (15) +10 [+2, +18] | 22 (15) +7 [-1, +15] |
+
+They equal the offline "flood grains" rows exactly on all three movies (movie 1: every scored grain is flooded).
