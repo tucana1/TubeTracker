@@ -830,7 +830,8 @@ def centre_route(res: dict, prob: Renderer, meta: dict, p) -> None:
 
     # the change reader's tips are points of its route and move with it; the flood's are its farthest tube pixel,
     # already on the tube (m2: 1-3 px from the annotator's apex, 5-7 px when moved with the route)
-    tips = (res.get("tip") or {}).get("xy") if "reader:flood" not in res.get("flags", []) else None
+    tips = ((res.get("tip") or {}).get("xy") if not {"reader:flood", "reader:tiptraj"} & set(res.get("flags", []))
+            else None)
     if tips and len(tips) == len(frames):
         res["tip"]["xy"] = [t if t is None or t[0] is None else
                             np.round(np.asarray(t, float) + moved(i, t, pts, shift)[1], 2).tolist()
