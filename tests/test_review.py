@@ -398,7 +398,8 @@ def test_an_ungerminated_grain_lost_partway_is_censored_where_it_was_lost(review
     doc_pred["grains"][1]["observed_until_frame"] = 20 * FPB + FPB // 2  # the model lost g002 at bin 20
     doc_pred["grains"][1]["flags"] = ["grain_lost_after:6150"]
     pred.write_text(json.dumps(doc_pred))
-    prefill(cache, pred, out, log=lambda *a: None)
+    still = {gid: np.zeros((N_BINS, 2)) for gid in ("g001", "g002")}  # following is not what this is about
+    prefill(cache, pred, out, log=lambda *a: None, follow=still)
     doc = json.loads(out.read_text())
     assert doc["prefill"]["observed_until"] == {"g002": 20 * FPB + FPB // 2}
     iv = dict(zip(["g001", "g002"], onset_intervals(population_input(doc))))

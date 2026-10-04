@@ -346,3 +346,9 @@ Full tables are in `docs/assessment-2026-09-24.md`, section 5. All numbers come 
     excluded in the review file as "not a grain" (the model's call) and listed to check first. The export names
     them; include one again in the tool if it is a grain.
 
+
+## Tests (4 Oct 2026)
+
+This pipeline is a research record (not used by SparseTrack or the app). Its 17 test files were removed from the
+suite on 4 Oct 2026 to keep it focused on the product; they are at git tag `research/learned-evidence-tests`
+(`git checkout research/learned-evidence-tests -- tests/`).
