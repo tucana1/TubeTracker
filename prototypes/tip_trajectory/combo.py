@@ -91,10 +91,13 @@ def main(argv=None) -> None:
     ap.add_argument("movie")
     ap.add_argument("--cands", nargs="+", required=True)
     ap.add_argument("--setting", default="tune_ld_c.json")
+    ap.add_argument("--settings", nargs="+", help="one setting per candidates file instead (e.g. each re-tuned on ld)")
     ap.add_argument("--young", action="store_true")
     ap.add_argument("--onset", default="off")
     ap.add_argument("--mid", action="store_true", help="also with lengths along the middle of the tube (centred.py)")
     ap.add_argument("--prob", help="tube maps the candidates were built on (for --mid; default the shipped ones)")
+    ap.add_argument("--oracle", action="store_true", help="also the candidates' ceiling (dp.oracle) by length class")
+    ap.add_argument("--drop-src", type=int, nargs="*", help="also rows without candidates of these sources")
     ap.add_argument("--only-flood", action="store_true", help="re-read only the grains 0.8.8 read with the flood "
                     "(as Params.tiptraj='flood' does end to end)")
     a = ap.parse_args(argv)
@@ -102,14 +105,23 @@ def main(argv=None) -> None:
     lab, base = labels(m), baseline(m)
     b_rep = dp.score(lab, base)
     pg_b, cl_b = dp.per_grain(b_rep), by_class(b_rep)
-    p = {**dp.DEFAULT, **json.loads((OUT / a.setting).read_text())["best"]}
+    settings = a.settings or [a.setting] * len(a.cands)
+    assert len(settings) == len(a.cands), "--settings: one per candidates file"
+    p = {**dp.DEFAULT, **json.loads((OUT / settings[0]).read_text())["best"]}
     tp = Params(tipdet_young=True, tipdet_onset=a.onset)
     ref = None
-    for name in a.cands:
+    for name, st in zip(a.cands, settings):
+        p = {**dp.DEFAULT, **json.loads((OUT / st).read_text())["best"]}
         doc = dp.load(m, name)
         dp.BACK = None
         ev = dp.evaluate(m, doc, p, a.only_flood)
         variants = [("reader", ev["pred"])]
+        if a.oracle:
+            print(f"{m} {name} oracle (candidate at the apex / any with the length / both):\n  "
+                  + dp.summarize_oracle(dp.oracle(doc, lab, p["c"])).replace("\n", "\n  "), flush=True)
+        if a.drop_src and any(int(s) in a.drop_src for G in doc["grains"].values() for s in np.unique(G["_F"][:, dp.FI["src"]])):
+            ev_d = dp.evaluate(m, doc, {**p, "drop_src": set(a.drop_src)}, a.only_flood)
+            variants.append((f"reader without src {a.drop_src}", ev_d["pred"]))
         if a.young:
             variants.append((f"reader + tipdet_young (onset {a.onset})", with_young(m, ev["pred"], list(doc["grains"]), tp)))
         if a.mid:
@@ -132,7 +144,7 @@ def main(argv=None) -> None:
             cl = by_class(rep)
             cls = " ".join(f"{c} {cl.get(c, (0, 0))[1]}/{cl.get(c, (0, 0))[0]} (0.8.8 {cl_b.get(c, (0, 0))[1]})"
                            for c in ("young", "mid", "long"))
-            print(f"{m} {name} {label}: onsets {rep['onset']['hits']}/{rep['onset']['n_timed']} lengths "
+            print(f"{m} {name}{' [' + st + ']' if a.settings else ''} {label}: onsets {rep['onset']['hits']}/{rep['onset']['n_timed']} lengths "
                   f"{rep['length_full']['within_tolerance']}/{rep['length_full']['n']} l&t {rep['tips']['length_and_tip']} | "
                   f"vs 0.8.8 on {f(pb[0])} len {f(pb[1])} l&t {f(pb[2])} | vs first row on {f(pr[0])} len {f(pr[1])} "
                   f"l&t {f(pr[2])} | {cls}", flush=True)

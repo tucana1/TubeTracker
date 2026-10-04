@@ -55,7 +55,7 @@ def load(movie: str, name: str | None = None) -> dict:
         G["_off"] = off
     det = np.concatenate([G["_F"][:, FI["det"]] for G in doc["grains"].values()])
     doc["det_q90"] = float(np.percentile(det, 90)) if len(det) else 1.0  # the movie's detector scale (label-free)
-    doc["det_frame_q99"] = frame_scale(OUT / "det" / doc["movie"])
+    doc["det_frame_q99"] = frame_scale(doc.get("params", {}).get("det_dir") or OUT / "det" / doc["movie"])
     return doc
 
 
@@ -190,6 +190,8 @@ def unary(F: np.ndarray, p: dict) -> np.ndarray:
     S = (p["w_det"] * np.minimum(F[:, FI["det"]] / p.get("_det_scale", 1.0), 1.5) + p["w_sup"] * F[:, FI["sup"]] - p["w_gap"] * F[:, FI["gap"]] / 10.0
          - p["w_ahead"] * F[:, FI["ahead"]] - p["w_tan"] * np.maximum(0.0, 0.5 - F[:, FI["radial"]])
          - p["w_carry"] * (F[:, FI["src"]] >= 4))
+    if p.get("drop_src"):  # leave out candidates of these sources (e.g. 3, 13: the frame edge)
+        S = np.where(np.isin(F[:, FI["src"]], list(p["drop_src"])), -1e6, S)
     return p["theta"] - S
 
 
