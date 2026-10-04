@@ -63,8 +63,17 @@ def test_holds_through_a_gap_in_the_maps():
     assert abs(L[30] - (tip_at(30) - X0 - R)) <= 2.5  # and read again after it
 
 
-def test_off_by_default():
-    assert Params().tiptraj == "off" and Params().tiptraj_guided is False and Params().tiptraj_mid is False
+def test_on_by_default_as_frozen():
+    """0.9.0's defaults are the frozen candidate (tag sparsetrack-0.9.0-candidate): its detector, its weights file's
+    settings, lengths along the middle of the band."""
+    import json
+    from pathlib import Path
+    p = Params()
+    assert p.tiptraj == "flood" and p.tiptraj_mid is True and p.tiptraj_guided is False
+    assert p.tiptraj_model is None and tiptraj.MODEL.name == "tips_v3_all.pt" and tiptraj.MODEL.exists()
+    frozen = Path(__file__).parents[1] / "prototypes" / "tip_trajectory" / "weights_ld_v3.json"
+    best = json.loads(frozen.read_text())["best"]
+    assert tiptraj.weights(p) == {k: best[k] for k in tiptraj.WEIGHTS}
 
 
 def test_guided_second_pass_follows_the_first_reading():

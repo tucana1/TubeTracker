@@ -1,4 +1,4 @@
-"""The global tip-trajectory reader (research option, off by default; prototypes/tip_trajectory/README.md).
+"""The global tip-trajectory reader (on from 0.9.0, for the grains the hybrid floods; prototypes/tip_trajectory).
 
 Per grain, the tube's tip at every bin is chosen in one Viterbi over the whole movie instead of grown bin by bin:
 
@@ -56,13 +56,20 @@ DET_CLIP3 = 127.0 / 24.0
 DET_CTX = {2: 64, 3: 96}   # context round each of the 2 x 2 tiles the frame is run in (version 3: as maps3.py)
 P_SCALE_MAP = 250.0   # tube maps are uint8 P x this (learned.P_SCALE)
 
-# the Viterbi's settings: tuned on the sparse movie (ld) alone and applied unchanged to movies 2 and 1
-# (prototypes/tip_trajectory, tune_ld_c; override with Params.tiptraj_weights)
-WEIGHTS = {"c": -1.0001, "theta": 0.443, "w_det": 0.1571, "w_sup": 2.0, "w_gap": 0.5081, "w_ahead": 0.2608,
-           "w_tan": 1.0459, "w_carry": 0.2216, "w_on": 2.0348, "l0": 5.0, "w_l0": 0.0, "l0_max": 60.0, "vmax": 4.4387,
-           "shrink": 4.1388, "w_shrink": 0.6467, "w_cons": 0.8198, "w_share": 0.4721, "cap_tip": 5.1802,
-           "cap_share": 6.2131, "iso": True, "w_ext": 0.5007, "c_end": -1.4142, "w_hold": 0.0051, "w_reacq": 2.7783,
-           "cap_reacq": 8.3469, "det_norm": 2, "edge_clip": 3.3209}
+# the tip detector the reader uses by default: version 3, trained on the human traces of ld, m2 and m1
+# (prototypes/tip_detector; the frozen candidate's, sha1 87fcc28f)
+MODEL = Path(__file__).parent / "models" / "tips_v3_all.pt"
+
+# the Viterbi's settings: tuned on the sparse movie (ld) alone on the version 3 detector's candidates and applied
+# unchanged to movies 2 and 1 (prototypes/tip_trajectory/weights_ld_v3.json, as frozen; override with
+# Params.tiptraj_weights)
+WEIGHTS = {"c": -0.9074574764710969, "theta": 0.736691642185413, "w_det": 1.4182122105484356, "w_sup": 2.0,
+           "w_gap": 1.0, "w_ahead": 0.0, "w_tan": 0.97897023134764, "w_carry": 0.22712972411278362,
+           "w_on": 1.3403321498887995, "l0": 13.25151396335956, "w_l0": 0.3351376665852666, "l0_max": 60.0,
+           "vmax": 3.0, "shrink": 3.586444775675603, "w_shrink": 0.7244624796470904, "w_cons": 0.5949749221117048,
+           "w_share": 0.4703420832504472, "cap_tip": 5.696838011735897, "cap_share": 3.7136648709039246, "iso": True,
+           "w_ext": 0.6776644208864129, "c_end": -0.83278514914298, "w_hold": 0.0, "w_reacq": 1.5928368907604624,
+           "cap_reacq": 19.357470322412595, "det_norm": 2, "edge_clip": 4.663651297851072}
 
 
 # ----------------------------------------------------------------------------- the detector's maps
@@ -143,12 +150,13 @@ def _tiles(net, x: np.ndarray, n: int = 2, ctx: int = 64) -> np.ndarray:
     return out
 
 
-def det_cache(cache_dir: str | Path, model: str | Path, log=print, out: str | Path | None = None) -> Path:
+def det_cache(cache_dir: str | Path, model: str | Path, log=print, out: str | Path | None = None,
+              progress=None) -> Path:
     """The tip detector's map of every bin on the whole registered frame (inputs as prototypes/tip_detector: version 2
     the 3-bin mean, its change over ``DETECTOR_K`` bins and from the first bins, each less its ~60 px local median;
     version 3 also the changes over 12 and 24 bins, ``_inputs3``), stored as uint8 P x 250 (below 3 set to 0),
     compressed, one file per bin: ``<cache>/det_<model stem>/b<bin>.npz`` (or ``out``). Bins without inputs (the
-    first 7 after the reference start, the last) are not written."""
+    first 7 after the reference start, the last) are not written. ``progress(done, total)`` after each bin."""
     from . import stack
     cache_dir = Path(cache_dir)
     out = Path(out) if out else cache_dir / f"det_{Path(model).stem}"
@@ -175,20 +183,23 @@ def det_cache(cache_dir: str | Path, model: str | Path, log=print, out: str | Pa
         return mean[b]
 
     started = time.time()
+    todo = range(rs + DETECTOR_K + 1, nb - 1)
     if getattr(net, "version", 2) == 3:
-        for b in range(rs + DETECTOR_K + 1, nb - 1):
+        for i, b in enumerate(todo, 1):
             for k in [k for k in reg if k < b - 30 and k > rs + 2]:
                 del reg[k]
             x = _inputs3(R, rs, nb, b, net.channels)
             q = np.clip(np.round(_tiles(net, x, ctx=DET_CTX[3]) * 250.0), 0, 250).astype(np.uint8)
             q[q < 3] = 0
             np.savez_compressed(out / f"b{b:03d}.npz", tip=q)
+            if progress:
+                progress(i, len(todo))
         (out / "meta.json").write_text(json.dumps({"model": str(model), "n_bins": nb, "version": 3,
                                                    "channels": list(net.channels)}))
         log(f"tip detector maps ({Path(model).name}, version 3): {nb} bins in {time.time() - started:.0f} s -> {out}")
         return out
     E = np.mean([R(k) for k in range(rs, rs + 3)], axis=0)
-    for b in range(rs + DETECTOR_K + 1, nb - 1):
+    for i, b in enumerate(todo, 1):
         for k in [k for k in reg if k < b - DETECTOR_K - 2]:
             del reg[k]
         for k in [k for k in mean if k < b - DETECTOR_K - 1]:
@@ -200,6 +211,8 @@ def det_cache(cache_dir: str | Path, model: str | Path, log=print, out: str | Pa
         q = np.clip(np.round(_tiles(net, x, ctx=DET_CTX[2]) * 250.0), 0, 250).astype(np.uint8)
         q[q < 3] = 0
         np.savez_compressed(out / f"b{b:03d}.npz", tip=q)
+        if progress:
+            progress(i, len(todo))
     (out / "meta.json").write_text(json.dumps({"model": str(model), "n_bins": nb}))
     log(f"tip detector maps ({Path(model).name}): {nb} bins in {time.time() - started:.0f} s -> {out}")
     return out

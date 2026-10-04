@@ -91,13 +91,19 @@ def run(root: Path, movie: Path | None, flatfield: bool = False) -> None:
     n = sum(1 for g in census if not g.get("excluded"))
     if n == 0:
         raise RuntimeError("no grains were found in this movie (SparseTrack looks for grains 9-18 px in radius)")
-    try:  # the tube maps first, so their progress shows (analyze would build them itself)
-        from sparsetrack import learned
+    try:  # the tube and tip maps first, so their progress shows (analyze would build them itself)
+        from sparsetrack import learned, tiptraj
+        from sparsetrack.analyze import Params
         out = cache / f"prob_{Path(learned.MODEL).stem}"
         label = "Building the tube maps (first time only, about 2 minutes)"
         if not (out / "meta.json").exists():
             emit(phase="maps", label=label, k=0, n=0)
         learned.prob_cache(cache, learned.MODEL, log, progress=Throttle("maps", label))
+        if Params().tiptraj != "off":
+            label = "Building the tip maps (first time only, a few minutes)"
+            if not (cache / f"det_{tiptraj.MODEL.stem}" / "meta.json").exists():
+                emit(phase="maps", label=label, k=0, n=0)
+            tiptraj.det_cache(cache, tiptraj.MODEL, log, progress=Throttle("maps", label))
     except ImportError:
         log("torch is not installed: every grain is read from change evidence (reader=change)")
         emit(phase="maps", label="Tube maps skipped (torch is not installed)", skip=True)

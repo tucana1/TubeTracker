@@ -7,8 +7,9 @@ The tube network was trained on other movies; a new movie differs in illuminatio
 grains move. This step adapts the network to one movie with no labels, on the tracker's own confident readings of
 that movie (pseudo-labels), once (study: prototypes/self_train/README.md, made movie-agnostic here):
 
-1. **readings**: SparseTrack's defaults with the starting network (``Params(model=start)``) on every grain of the
-   cache's own census (``grains.json``: no labels file, no human exclusions), or ``predictions`` made that way;
+1. **readings**: SparseTrack's defaults with the starting network and without the tip-trajectory reader, as the
+   step was measured (``Params(model=start, tiptraj="off")``), on every grain of the cache's own census
+   (``grains.json``: no labels file, no human exclusions), or ``predictions`` made that way;
 2. **pseudo-traces** (``select``): grains with no flag saying the reading is unsafe (``UNSAFE``; a grain lost partway
    only up to ``lost_margin`` bins before it was lost); a bin is a confident reading where the length is >=
    ``min_len`` px, ``review.trace_confidence`` >= ``min_conf`` (the tube grew within the last few bins and is long
@@ -863,8 +864,8 @@ def selftrain(cache_dir: str | Path, out: str | Path, predictions: str | Path | 
     # 1. readings of every census grain with the starting network
     if predictions is None:
         from .analyze import Params, analyze
-        log(f"reading {len(census)} census grains with {start.name} (SparseTrack's defaults)")
-        pred = analyze(cache_dir, work / "readings", params=Params(model=str(start)), log=log)
+        log(f"reading {len(census)} census grains with {start.name} (SparseTrack's defaults, no tip-trajectory reader)")
+        pred = analyze(cache_dir, work / "readings", params=Params(model=str(start), tiptraj="off"), log=log)
         pred_path = work / "readings" / "predictions.json"
     else:
         pred_path = Path(predictions)

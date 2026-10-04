@@ -245,18 +245,19 @@ class Params:
     tipdet_young_k: float = 2.0  # length = tip's distance from the grain's visible edge + this
     tipdet_young_min: float = 0.2  # weakest peak taken as a tip
     tipdet_half: int = 64        # half-size of the detector's maps round each grain (px)
-    # global tip-trajectory reader (sparsetrack/tiptraj.py; research option, prototypes/tip_trajectory): per grain the
+    # global tip-trajectory reader (sparsetrack/tiptraj.py, prototypes/tip_trajectory; on from 0.9.0): per grain the
     # tip at every bin chosen in one Viterbi over the movie, among the learned tip detector's peaks and the tube map's
-    # piece ends, each with its body on the map, jumps onto other tubes ruled out. "off"; "flood" (it re-reads the grains
-    # the hybrid floods, keeping their drift); "all" (every grain)
-    tiptraj: str = "off"
-    tiptraj_model: str | None = None   # the tip detector (prototypes/tip_detector checkpoint); needed when on
+    # piece ends, each with its body on the map, jumps onto other tubes ruled out. "flood" (it re-reads the grains the
+    # hybrid floods, keeping their drift; leave one movie out against 0.8.8: lengths ld 75 -> 77/104, m2 27 -> 37/54,
+    # m1 15 -> 27/50; ~20-30 s a grain); "all" (every grain); "off" (0.8.8's readings)
+    tiptraj: str = "flood"
+    tiptraj_model: str | None = None   # the tip detector checkpoint (default tiptraj.MODEL)
     tiptraj_det: str | None = None     # a directory of detector maps (tiptraj.det_cache) to use instead of building them
     tiptraj_weights: str | None = None  # the Viterbi's settings (JSON, or a tune_*.json file) over tiptraj.WEIGHTS
     tiptraj_half: int = 300            # crop half-size round each grain (px): the longest tubes to read
     tiptraj_guided: bool = False       # a second pass that follows the first reading's tube along the map (its tip,
                                        # points beyond it, a corridor along its body); twice the reading time
-    tiptraj_mid: bool = False          # lengths along the middle of the tube's band, not the inside of its curves
+    tiptraj_mid: bool = True           # lengths along the middle of the tube's band, not the inside of its curves
                                        # (tiptraj.mid_correction; ld-chosen: ld +2, m2 +1, m1 +1 lengths)
 
 
@@ -1684,15 +1685,13 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
             log("torch is not installed: reading every grain from change evidence (reader=change)")
             p = replace(p, reader="change")
     det = det_scale = None
-    if p.tiptraj != "off":
+    if p.tiptraj not in ("off", "flood", "all"):
+        raise ValueError(f"unknown tiptraj {p.tiptraj!r}: off, flood or all")
+    if p.tiptraj == "all" or (p.tiptraj == "flood" and p.reader != "change"):  # reader=change floods no grain
         from . import learned, tiptraj
-        if p.tiptraj not in ("flood", "all"):
-            raise ValueError(f"unknown tiptraj {p.tiptraj!r}: off, flood or all")
-        if not (p.tiptraj_det or p.tiptraj_model):
-            raise ValueError("tiptraj needs a tip detector (tiptraj_model) or its maps (tiptraj_det)")
         if prob is None:
             prob = Renderer(*stack.load(learned.prob_cache(cache_dir, p.model or learned.MODEL, log)))
-        det = tiptraj.DetMaps(p.tiptraj_det or tiptraj.det_cache(cache_dir, p.tiptraj_model, log))
+        det = tiptraj.DetMaps(p.tiptraj_det or tiptraj.det_cache(cache_dir, p.tiptraj_model or tiptraj.MODEL, log))
         det_scale = det.scale()
     results = []
     for g in grains:
