@@ -13,7 +13,8 @@ EMERGED = ("emerged_within", "emerged_at_start")
 MIN_TUBE_PX = 2.0  # shorter is no tube: not drawn, not measured, and confirmed as none (corrections.confirm)
 NEAR_BINS = 20     # a person's traced route is drawn at the bins this close to one they traced; elsewhere the model's
 JOIN_PX = 10.0     # the model's route is carried on along a person's longer route if its end lies this close to it
-EXTEND_PX = 5.0    # a route is carried on straight past its end by at most this to a tube's length (to_length)
+EXTEND_PX = 5.0    # a route is carried on straight past its end by at most this to a tube's length (to_length)...
+EXT_BACK_PX = 10.0  # ...along its direction over about this many px (sparsetrack.routes.EXT_BACK_PX)
 
 
 def path_length(pts) -> float:
@@ -36,7 +37,7 @@ def to_length(pts, length: float, max_extend: float = 5.0) -> list:
         p, q = pts[i - 1], pts[i]
         return pts[:i] + [[p[0] + a * (q[0] - p[0]), p[1] + a * (q[1] - p[1])]]
     last = pts[-1]
-    back = next((q for q in reversed(pts[:-1]) if math.hypot(last[0] - q[0], last[1] - q[1]) >= 3.0), pts[0])
+    back = next((q for q in reversed(pts[:-1]) if math.hypot(last[0] - q[0], last[1] - q[1]) >= EXT_BACK_PX), pts[0])
     d = math.hypot(last[0] - back[0], last[1] - back[1]) or 1.0
     e = min(length - s[-1], max_extend)
     return pts + [[last[0] + (last[0] - back[0]) / d * e, last[1] + (last[1] - back[1]) / d * e]]
@@ -99,9 +100,11 @@ def bent_at(g: dict, b: int) -> list:
 
 
 def model_route(g: dict, b: int) -> list:
-    """The model's route as the tube lay at bin ``b`` (bent, or the flood's own route then), turned to ``b``."""
+    """The model's route as the tube lay at bin ``b`` (bent, or a reader's own route then; without a loop near its
+    end, ``sparsetrack.routes.tidy``), turned to ``b``."""
+    from sparsetrack.routes import tidy
     rot = g.get("rot")
-    return turned(bent_at(g, b), rot[b] if rot else 0.0, g.get("pivot"))
+    return turned(tidy(bent_at(g, b)).tolist(), rot[b] if rot else 0.0, g.get("pivot"))
 
 
 def route_at(g: dict, b: int) -> tuple[list, bool]:

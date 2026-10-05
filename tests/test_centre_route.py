@@ -195,3 +195,40 @@ def test_only_routes_that_leave_the_final_one_are_kept_per_bin():
     exit_len = np.array([0.0, 20.0, 29.0, 0.0, 41.0])
     out = learned._routes_by_bin(lines, exit_len, final, to_ref, 2.5)
     assert out["index"] == [-1, -1, 0, 0, -1] and len(out["routes"]) == 1
+
+
+def test_a_curl_at_a_route_s_end_is_not_drawn_and_the_app_draws_the_same():
+    from tubetracker.app.overlay import model_route, to_length
+    straight = [(10.0 + i, 50.0) for i in range(40)]
+    curled = straight + [(50.0, 51.0), (51.0, 52.0), (50.0, 53.0), (49.0, 52.0), (49.0, 50.6)]  # back onto itself
+    t = routes.tidy(curled)
+    assert np.all(np.abs(t[:, 1] - 50.0) <= 1.0) and t[-1][0] <= 49.5   # the curl is cut out
+    drawn = routes.cut(t, 45.0)
+    assert np.all(np.abs(drawn[:, 1] - 50.0) <= 1.0) and drawn[-1][0] > 50.0  # and the tube drawn straight on
+    res = {"path": curled}
+    assert np.allclose(routes.route_at(res, 0), t)
+    rec = {"path": [list(q) for q in curled]}
+    assert np.allclose(model_route(rec, 0), t)
+    assert np.allclose(routes.cut(model_route(rec, 0), 45.0), to_length(model_route(rec, 0), 45.0))
+
+
+def test_a_tube_that_turns_back_or_a_long_way_round_is_drawn_as_it_is():
+    out = [(10.0 + i, 50.0) for i in range(30)]
+    a = np.linspace(-np.pi / 2, np.pi / 2, 13)
+    turn = [(39.0 + 4.0 * np.cos(t), 54.0 + 4.0 * np.sin(t)) for t in a]  # radius 4: back 8 px from itself
+    back = [(39.0 - i, 58.0) for i in range(1, 25)]
+    u = out + turn + back
+    assert np.allclose(routes.tidy(u), u)
+    ring = [(30.0 + 12.0 * np.cos(t), 50.0 + 12.0 * np.sin(t)) for t in np.linspace(0, 2 * np.pi, 80)]
+    assert np.allclose(routes.tidy(ring), ring)  # a loop longer than LOOP_END_PX is a tube going round
+
+
+def test_routes_that_extend_one_another_are_kept_once():
+    a = np.array([[float(x), 60.0] for x in range(0, 20)])
+    b = np.array([[float(x), 60.3] for x in range(0, 30)])   # carries a on
+    c = np.array([[0.0, 60.0 + y] for y in range(0, 25)])    # another way
+    out = routes.keep_once([None, a, b, a, c, None], base={"routes": [[[5.0, 5.0], [6.0, 6.0]]], "index": [0] * 6})
+    assert out["index"] == [0, 1, 1, 1, 2, 0] and len(out["routes"]) == 3
+    assert len(out["routes"][1]) >= 14 and out["routes"][1][-1][0] >= 28.0  # the longest stands for the run
+    assert routes.keep_once([None, None]) is None
+    assert np.allclose(routes.dist_to([[5.0, 3.0], [-4.0, 0.0]], [[0.0, 0.0], [10.0, 0.0]]), [3.0, 4.0])

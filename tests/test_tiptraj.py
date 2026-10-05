@@ -222,3 +222,13 @@ def test_version2_detectors_still_load_and_bad_inputs_are_refused(tmp_path, monk
     _checkpoint(tmp_path / "bad.pt", ["A", "C", "D6"], 3)  # not in the version 3 order
     with pytest.raises(ValueError):
         tiptraj.load_detector(tmp_path / "bad.pt")
+
+
+def test_the_reader_keeps_the_bodies_it_read_where_the_tube_lay_elsewhere():
+    final = np.array([[100.0 + x, 100.0] for x in range(0, 60)])
+    down = np.array([[100.0, 100.0 + y] for y in range(0, 30)])   # bins 1-2: the tube read along another way
+    bins = {1: {"bodies": [down[:20]]}, 2: {"bodies": [down]}, 4: {"bodies": [final]}}  # bin 0 none, bin 3 held
+    out = tiptraj.bodies_by_bin(bins, np.array([-1, 0, 0, -2, 0]), 0, final, 2.5)
+    assert out["index"] == [-1, 0, 0, 0, -1] and len(out["routes"]) == 1   # held bin 3 keeps bin 2's body
+    assert out["routes"][0][-1][1] >= 128.0
+    assert tiptraj.bodies_by_bin({0: {"bodies": [final]}}, np.array([0]), 0, final, 2.5) is None

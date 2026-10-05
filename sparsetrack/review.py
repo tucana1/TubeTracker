@@ -27,6 +27,8 @@ from pathlib import Path
 
 import numpy as np
 
+from . import routes
+
 REVIEW_HINTS = ("touches:", "shared_change_split", "reader:flood", "drift_rejected", "rotates:", "grain_lost_after",
                 "onset_at_focus_change")
 CORRECTION_BINS = 20  # a checked length corrects the model's curve over this many bins either side of it
@@ -43,7 +45,7 @@ def to_length(pts: np.ndarray, length: float, max_extend: float = 5.0) -> np.nda
         i = max(1, int(np.searchsorted(s, length, side="left")))
         a = (length - s[i - 1]) / max(s[i] - s[i - 1], 1e-9)
         return np.vstack([pts[:i], pts[i - 1] + a * (pts[i] - pts[i - 1])])
-    back = next((q for q in pts[-2::-1] if np.hypot(*(pts[-1] - q)) >= 3.0), pts[0])
+    back = next((q for q in pts[-2::-1] if np.hypot(*(pts[-1] - q)) >= routes.EXT_BACK_PX), pts[0])
     d = pts[-1] - back
     d = d / max(float(np.hypot(*d)), 1e-9)
     return np.vstack([pts, pts[-1] + d * min(length - s[-1], max_extend)])

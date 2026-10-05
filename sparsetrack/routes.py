@@ -56,9 +56,14 @@ def bent(path, bend: dict | None, i: int) -> np.ndarray:
     return p + offsets_along(arc(p), rows[i], float(bend["step_px"]))[:, None] * normals(p)
 
 
+EXT_BACK_PX = 10.0   # a route is carried on past its end along its direction over about this many px (was 3: a
+                     # last curl carried on drew a hook)
+LOOP_END_PX = 20.0   # a loop a model route closes within its last this many px is not drawn (tidy)
+
+
 def cut(path, length: float, max_extend: float = 5.0) -> np.ndarray:
-    """The route cut to ``length`` px of arc, or carried on along its last direction by at most ``max_extend`` px
-    (``tubetracker.app.overlay.to_length``)."""
+    """The route cut to ``length`` px of arc, or carried on along its direction over its last ``EXT_BACK_PX`` px by
+    at most ``max_extend`` px (``tubetracker.app.overlay.to_length``)."""
     p = np.asarray(path, float).reshape(-1, 2)
     if len(p) < 2:
         return p
@@ -67,17 +72,78 @@ def cut(path, length: float, max_extend: float = 5.0) -> np.ndarray:
         i = max(1, int(np.searchsorted(s, length)))
         a = (length - s[i - 1]) / max(s[i] - s[i - 1], 1e-9)
         return np.vstack([p[:i], p[i - 1] + a * (p[i] - p[i - 1])])
-    back = next((q for q in p[-2::-1] if np.hypot(*(p[-1] - q)) >= 3.0), p[0])
+    back = next((q for q in p[-2::-1] if np.hypot(*(p[-1] - q)) >= EXT_BACK_PX), p[0])
     d = p[-1] - back
     n = float(np.hypot(*d)) or 1.0
     return np.vstack([p, p[-1] + d / n * min(length - s[-1], max_extend)])
 
 
+def tidy(path) -> np.ndarray:
+    """A model route without a curl at its end (the drawing only): where a point of its last ``LOOP_END_PX`` px
+    comes back within 1 px of the route 4 to ``LOOP_END_PX`` px of arc before it, the loop between is cut out. Such
+    loops are a route's end curling back over its own tube (a tip continuation that turned the wrong way); the tube
+    is drawn straight on instead (``cut``). A tube that turns back runs a tube's width from itself, or meets its
+    route farther back (left as it is)."""
+    p = np.asarray(path, float).reshape(-1, 2)
+    if len(p) < 4:
+        return p
+    q, s = resample(p, 1.0)
+    for k in range(len(q) - 1, int(np.searchsorted(s, s[-1] - LOOP_END_PX)) - 1, -1):
+        j = np.flatnonzero((np.hypot(*(q[:k] - q[k]).T) <= 1.0) & (s[k] - s[:k] > 4.0) & (s[k] - s[:k] <= LOOP_END_PX))
+        if len(j):
+            return np.vstack([q[:j[0] + 1], q[k + 1:]])
+    return p
+
+
+def dist_to(pts, line) -> np.ndarray:
+    """Each point's distance to the polyline ``line``."""
+    p = np.asarray(pts, float).reshape(-1, 2)
+    q = np.asarray(line, float).reshape(-1, 2)
+    if len(q) < 2:
+        return np.hypot(*(p - q[0]).T) if len(q) else np.full(len(p), np.inf)
+    a, d = q[:-1], np.diff(q, axis=0)
+    t = np.clip(((p[:, None] - a[None]) * d[None]).sum(-1) / np.maximum((d * d).sum(-1), 1e-9)[None], 0.0, 1.0)
+    return np.min(np.hypot(*(p[:, None] - a[None] - t[..., None] * d[None]).transpose(2, 0, 1)), axis=1)
+
+
+def extends(old, new, mean_px: float = 1.5, max_px: float = 3.0) -> bool:
+    """Whether route ``new`` carries route ``old`` on: every point of ``old`` within ``max_px`` of it, ``mean_px`` on
+    average (``learned._extends``)."""
+    d = dist_to(old, new)
+    return bool(len(d)) and float(d.mean()) <= mean_px and float(d.max()) <= max_px
+
+
+def keep_once(per_bin: list, base: dict | None = None, step: float = 2.0) -> dict | None:
+    """Routes drawn per bin as ``path_by_bin`` (``{"routes": [...], "index": [per bin]}``): ``per_bin[i]`` a route,
+    or None where bin ``i`` keeps ``base``'s route (or the stored one); a run of routes that extend one another is
+    kept once, as its longest (each bin cuts it to its length); routes every ``step`` px. None if no bin has one."""
+    kept = [list(r) for r in (base or {}).get("routes") or []]
+    old = list((base or {}).get("index") or [])
+    index, group = [], None
+    for i, r in enumerate(per_bin):
+        if r is None:
+            index.append(old[i] if i < len(old) else -1)
+            group = None
+            continue
+        q = np.round(resample(r, step)[0], 1)
+        if group is not None and extends(np.asarray(kept[group], float), q):
+            kept[group] = q.tolist()  # the longer route carries the group's on: it stands for them all
+        elif group is None or not extends(q, np.asarray(kept[group], float)):
+            kept.append(q.tolist())
+            group = len(kept) - 1
+        index.append(group)
+    used = sorted({k for k in index if k >= 0})
+    if not used:
+        return None
+    new = {k: j for j, k in enumerate(used)}
+    return {"routes": [kept[k] for k in used], "index": [new.get(k, -1) for k in index]}
+
+
 def route_at(res: dict, i: int) -> np.ndarray:
-    """The route a reading draws at bin index ``i``: its own route for that bin where the flood read the tube along
-    another one then (``path_by_bin``), else the stored route bent as the tube lay then."""
+    """The route a reading draws at bin index ``i``: its own route for that bin where a reader read the tube along
+    another one then (``path_by_bin``), else the stored route bent as the tube lay then; ``tidy``."""
     by_bin = res.get("path_by_bin") or {}
     index = by_bin.get("index") or []
     if 0 <= i < len(index) and index[i] >= 0:
-        return np.asarray(by_bin["routes"][index[i]], float).reshape(-1, 2)
-    return bent(res.get("path") or [], res.get("bend"), i)
+        return tidy(by_bin["routes"][index[i]])
+    return tidy(bent(res.get("path") or [], res.get("bend"), i))

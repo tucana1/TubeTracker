@@ -789,4 +789,28 @@ def read(res: dict, renderer: Renderer, prob: Renderer, meta: dict, grain: dict,
                exit_xy=[round(float(route[0][0]), 2), round(float(route[0][1]), 2)],
                final_length_px=round(float(L[-1]), 2),
                path_length_px=round(float(np.sum(np.hypot(*np.diff(route, axis=0).T))) if len(route) > 1 else 0.0, 2))
+    by_bin = bodies_by_bin(bins, choice, rs, route, float(getattr(p, "flood_route_off_px", 2.5)))
+    if by_bin:
+        out["path_by_bin"] = by_bin
     return out
+
+
+def bodies_by_bin(bins: dict, choice: np.ndarray, rs: int, final, off_px: float) -> dict | None:
+    """The body drawn at each bin where it is not the final route, as the flood keeps its own routes
+    (``learned._routes_by_bin``): the chosen candidate's body (a held bin: the last one chosen), kept where its
+    points beyond its first few px lie on average more than ``off_px`` from the final route; ``routes.keep_once``
+    over the reading's bins (``rs`` on), routes in the grain's frame."""
+    from . import routes
+    fin = np.asarray(final, float)
+    per_bin, last = [], None
+    for i, k in enumerate(choice):
+        if k >= 0:
+            last = bins[rs + i]["bodies"][k]
+        r = None
+        if k != -1 and last is not None and len(last) >= 3 and len(fin) >= 2:
+            q, _ = routes.resample(np.asarray(last, float), 2.0)
+            far = q[3:] if len(q) > 5 else q
+            if float(routes.dist_to(far, fin).mean()) > off_px:
+                r = q
+        per_bin.append(r)
+    return routes.keep_once(per_bin)
