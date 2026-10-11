@@ -102,3 +102,18 @@ def test_the_analysis_flags_likely_not_grains_and_leaves_them_out_of_the_populat
     # still read and shown, but with the clumped / edge grains, not in the isolated population
     html = (tmp_path / "on" / "index.html").read_text()
     assert html.index(f"id='{blob}'") > html.index("Clumped / edge grains") > html.index(f"id='{grain}'")
+
+
+def test_grains_read_in_worker_processes_come_out_as_read_in_this_one(tmp_path):
+    from sparsetrack.analyze import Params, analyze
+    (tmp_path / "c").mkdir()
+    cache, _ = _cache(tmp_path / "c")
+    p = dict(reader="change", half=60, vmax_auto=False)
+    one = analyze(cache, tmp_path / "one", params=Params(workers=1, **p), log=lambda *a: None)
+    lines = []
+    two = analyze(cache, tmp_path / "two", params=Params(workers=2, **p), log=lines.append)
+    assert [g["id"] for g in two["grains"]] == [g["id"] for g in one["grains"]]  # census order
+    assert json.dumps(two["grains"]) == json.dumps(one["grains"])
+    assert sorted(ln.split(":")[0] for ln in lines if ln.startswith("g")) == sorted(g["id"] for g in one["grains"])
+    assert sorted(f.name for f in (tmp_path / "two" / "diagnostics").iterdir()) == \
+        sorted(f.name for f in (tmp_path / "one" / "diagnostics").iterdir())

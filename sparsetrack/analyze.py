@@ -259,6 +259,10 @@ class Params:
                                        # points beyond it, a corridor along its body); twice the reading time
     tiptraj_mid: bool = True           # lengths along the middle of the tube's band, not the inside of its curves
                                        # (tiptraj.mid_correction; ld-chosen: ld +2, m2 +1, m1 +1 lengths)
+    # grains read at once in worker processes (each grain is read on its own: the same results); 0: up to 3 (half
+    # the cores). Worker processes import the calling script: a module, or a script whose work is under
+    # `if __name__ == "__main__"` (the app and `sparsetrack analyze` use 0)
+    workers: int = 1
 
 
 def _highpass(img: np.ndarray, sigma: float = 6.0) -> np.ndarray:
@@ -1649,55 +1653,16 @@ def focus_changes(bins: np.ndarray, meta: dict, window: int = 10, factor: float 
     return out
 
 
-def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path | None = None,
-            params: Params | None = None, only: list[str] | None = None, video: bool = False, log=print,
-            units: tuple[float, float] | None = None) -> dict:
-    p = params or Params()
-    bins, meta = stack.load(cache_dir)
-    renderer = Renderer(bins, meta)
-    out_dir = Path(out_dir)
-    (out_dir / "diagnostics").mkdir(parents=True, exist_ok=True)
-    src = Path(grains_path) if grains_path else Path(cache_dir) / "grains.json"
-    doc = json.loads(src.read_text())
-    census = list(doc["grains"].values()) if isinstance(doc["grains"], dict) else doc["grains"]
-    grains = [g for g in census if not g.get("excluded")]
-    # grains excluded from scoring (clump members, edge grains) are still grains: they stay
-    # obstacles and ownership rivals for their neighbours; only "not a grain" is dropped
-    physical = [g for g in census if g.get("exclude_reason") != "not_a_grain"]
-    started = time.time()
-    if p.vmax_auto:
-        from dataclasses import replace
-        scale = growth_scale(renderer, meta, grains, p, log, physical)
-        if scale is not None:
-            vmax = float(np.clip(p.vmax_factor * scale, p.vmax_px, p.vmax_cap))
-            log(f"growth scale {scale:.2f} px/bin (90th pct, median of isolated grains): front speed cap "
-                f"{vmax:.1f} px/bin")
-            p = replace(p, vmax_px=vmax)
-    if p.reader not in ("change", "flood", "hybrid"):
-        raise ValueError(f"unknown reader {p.reader!r}: change, flood or hybrid")
-    prob = None
-    if p.reader != "change":
-        from dataclasses import replace
-        from . import learned
-        try:
-            prob = Renderer(*stack.load(learned.prob_cache(cache_dir, p.model or learned.MODEL, log)))
-        except ImportError:  # building the probability movie needs torch (pip install .[cnn])
-            log("torch is not installed: reading every grain from change evidence (reader=change)")
-            p = replace(p, reader="change")
-    det = det_scale = None
-    if p.tiptraj not in ("off", "flood", "all"):
-        raise ValueError(f"unknown tiptraj {p.tiptraj!r}: off, flood or all")
-    if p.tiptraj == "all" or (p.tiptraj == "flood" and p.reader != "change"):  # reader=change floods no grain
-        from . import learned, tiptraj
-        if prob is None:
-            prob = Renderer(*stack.load(learned.prob_cache(cache_dir, p.model or learned.MODEL, log)))
-        det = tiptraj.DetMaps(p.tiptraj_det or tiptraj.det_cache(cache_dir, p.tiptraj_model or tiptraj.MODEL, log))
-        det_scale = det.scale()
-    results = []
-    for g in grains:
-        if only and g["id"] not in only:
-            continue
-        others = [o for o in physical if o["id"] != g["id"]]
+class _GrainReader:
+    """One grain read end to end, as ``analyze`` reads each: the change reader and the flood (hybrid dispatch), the
+    tip-trajectory reader, centring, the tip detector, the drawn-tube check, its diagnostic image written."""
+
+    def __init__(self, renderer: Renderer, meta: dict, p: Params, prob, det, det_scale, out_dir: Path):
+        self.renderer, self.meta, self.p, self.prob, self.det, self.det_scale = renderer, meta, p, prob, det, det_scale
+        self.out_dir = Path(out_dir)
+
+    def read(self, g: dict, others: list[dict]) -> tuple[dict, str]:
+        renderer, meta, p, prob, det, det_scale = self.renderer, self.meta, self.p, self.prob, self.det, self.det_scale
         res = analyze_grain(renderer, meta, g, others, p) if p.reader != "flood" else None
         crowded = res is not None and any(f.startswith(("touches:", "shared_change_split")) for f in res["flags"])
         noisy = res is not None and res.get("map_threshold", 0.0) > p.map_floor  # background change above the floor
@@ -1728,11 +1693,103 @@ def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path 
         if prob is not None:
             from . import learned
             learned.drawn_check(res, prob, meta, p)
-        cv2.imwrite(str(out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
+        cv2.imwrite(str(self.out_dir / "diagnostics" / f"{g['id']}.png"), _diagnostic(res, meta["frames_per_bin"]))
         res.pop("_diag", None)
-        results.append(res)
-        log(f"{g['id']}: {res['status']:<20} onset {str(res.get('onset_frame')):>6}  "
-            f"final {res.get('final_length_px', 0):6.1f} px  {' '.join(res['flags'])}")
+        return res, (f"{g['id']}: {res['status']:<20} onset {str(res.get('onset_frame')):>6}  "
+                     f"final {res.get('final_length_px', 0):6.1f} px  {' '.join(res['flags'])}")
+
+
+_READER: _GrainReader | None = None  # a worker process's own reader (Params.workers)
+
+
+def _reader_init(cache_dir: str, prob_dir: str | None, det_dir: str | None, det_scale, p: Params, out_dir: str) -> None:
+    global _READER
+    from . import tiptraj
+    bins, meta = stack.load(cache_dir)
+    prob = Renderer(*stack.load(prob_dir)) if prob_dir else None
+    det = tiptraj.DetMaps(det_dir) if det_dir else None
+    _READER = _GrainReader(Renderer(bins, meta), meta, p, prob, det, det_scale, Path(out_dir))
+
+
+def _reader_read(k: int, g: dict, others: list[dict]) -> tuple[int, dict, str]:
+    res, line = _READER.read(g, others)
+    return k, res, line
+
+
+def _auto_workers() -> int:
+    """Worker processes for a whole movie: half the cores, at most 3 (each holds its crops and maps; 8 GB laptops)."""
+    import os
+    return min(3, max(1, (os.cpu_count() or 2) // 2))
+
+
+def analyze(cache_dir: str | Path, out_dir: str | Path, grains_path: str | Path | None = None,
+            params: Params | None = None, only: list[str] | None = None, video: bool = False, log=print,
+            units: tuple[float, float] | None = None) -> dict:
+    p = params or Params()
+    bins, meta = stack.load(cache_dir)
+    renderer = Renderer(bins, meta)
+    out_dir = Path(out_dir)
+    (out_dir / "diagnostics").mkdir(parents=True, exist_ok=True)
+    src = Path(grains_path) if grains_path else Path(cache_dir) / "grains.json"
+    doc = json.loads(src.read_text())
+    census = list(doc["grains"].values()) if isinstance(doc["grains"], dict) else doc["grains"]
+    grains = [g for g in census if not g.get("excluded")]
+    # grains excluded from scoring (clump members, edge grains) are still grains: they stay
+    # obstacles and ownership rivals for their neighbours; only "not a grain" is dropped
+    physical = [g for g in census if g.get("exclude_reason") != "not_a_grain"]
+    started = time.time()
+    if p.vmax_auto:
+        from dataclasses import replace
+        scale = growth_scale(renderer, meta, grains, p, log, physical)
+        if scale is not None:
+            vmax = float(np.clip(p.vmax_factor * scale, p.vmax_px, p.vmax_cap))
+            log(f"growth scale {scale:.2f} px/bin (90th pct, median of isolated grains): front speed cap "
+                f"{vmax:.1f} px/bin")
+            p = replace(p, vmax_px=vmax)
+    if p.reader not in ("change", "flood", "hybrid"):
+        raise ValueError(f"unknown reader {p.reader!r}: change, flood or hybrid")
+    prob = prob_dir = None
+    if p.reader != "change":
+        from dataclasses import replace
+        from . import learned
+        try:
+            prob_dir = str(learned.prob_cache(cache_dir, p.model or learned.MODEL, log))
+            prob = Renderer(*stack.load(prob_dir))
+        except ImportError:  # building the probability movie needs torch (pip install .[cnn])
+            log("torch is not installed: reading every grain from change evidence (reader=change)")
+            p = replace(p, reader="change")
+    det = det_scale = det_dir = None
+    if p.tiptraj not in ("off", "flood", "all"):
+        raise ValueError(f"unknown tiptraj {p.tiptraj!r}: off, flood or all")
+    if p.tiptraj == "all" or (p.tiptraj == "flood" and p.reader != "change"):  # reader=change floods no grain
+        from . import learned, tiptraj
+        if prob is None:
+            prob_dir = str(learned.prob_cache(cache_dir, p.model or learned.MODEL, log))
+            prob = Renderer(*stack.load(prob_dir))
+        det_dir = str(p.tiptraj_det or tiptraj.det_cache(cache_dir, p.tiptraj_model or tiptraj.MODEL, log))
+        det = tiptraj.DetMaps(det_dir)
+        det_scale = det.scale()
+    todo = [(k, g, [o for o in physical if o["id"] != g["id"]]) for k, g in enumerate(grains)
+            if not only or g["id"] in only]
+    n_workers = 1 if len(todo) < 4 else min(p.workers or _auto_workers(), len(todo))
+    results = []
+    if n_workers <= 1:
+        reader = _GrainReader(renderer, meta, p, prob, det, det_scale, out_dir)
+        for _, g, others in todo:
+            res, line = reader.read(g, others)
+            results.append(res)
+            log(line)
+    else:  # each grain is read on its own: in worker processes, kept in census order
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        done = {}
+        with ProcessPoolExecutor(n_workers, mp_context=multiprocessing.get_context("spawn"), initializer=_reader_init,
+                                 initargs=(str(cache_dir), prob_dir, det_dir, det_scale, p, str(out_dir))) as ex:
+            for f in as_completed([ex.submit(_reader_read, k, g, others) for k, g, others in todo]):
+                k, res, line = f.result()
+                done[k] = res
+                log(line)
+        results = [done[k] for k in sorted(done)]
     focus = focus_changes(bins, meta)
     fpb = int(meta["frames_per_bin"])
     for res in results:  # an onset at a refocus says "visible by", not "emerged at"

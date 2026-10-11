@@ -107,7 +107,7 @@ def run(root: Path, movie: Path | None, flatfield: bool = True) -> None:
     except ImportError:
         log("torch is not installed: every grain is read from change evidence (reader=change)")
         emit(phase="maps", label="Tube maps skipped (torch is not installed)", skip=True)
-    from sparsetrack.analyze import analyze
+    from sparsetrack.analyze import Params, analyze
 
     setup = folder.load_setup()
     units = Units.from_setup(setup, folder.n_frames()).pair()
@@ -126,7 +126,7 @@ def run(root: Path, movie: Path | None, flatfield: bool = True) -> None:
         if m:
             done["k"] += 1
             emit(phase="grains", label="Reading the grains", k=done["k"], n=n, gid=m.group(1))
-    analyze(cache, running, log=grain_log, units=units)
+    analyze(cache, running, params=Params(workers=0), log=grain_log, units=units)
     emit(phase="finish", label="Saving the results and the check list")
     kept = keep_earlier(folder.root)
     if kept:

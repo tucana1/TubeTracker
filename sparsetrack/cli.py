@@ -181,9 +181,10 @@ def cmd_bench(args) -> None:
 
 
 def cmd_analyze(args) -> None:
-    from .analyze import analyze
+    from .analyze import Params, analyze
     only = [g.strip() for g in args.only.split(",")] if args.only else None
-    analyze(args.cache, args.out, grains_path=args.grains, only=only, video=args.video)
+    analyze(args.cache, args.out, grains_path=args.grains, only=only, video=args.video,
+            params=Params(workers=args.workers))
 
 
 def cmd_selftrain(args) -> None:
@@ -273,6 +274,7 @@ def main(argv=None) -> None:
     a.add_argument("--grains", help="grain list: a benchmark labels file (human census) or grains.json")
     a.add_argument("--only", help="comma-separated grain ids")
     a.add_argument("--video", action="store_true", help="also render field_overlay.mp4 (model tubes on the field)")
+    a.add_argument("--workers", type=int, default=0, help="grains read at once (0: up to 3, half the cores)")
     a.set_defaults(func=cmd_analyze)
     y = sub.add_parser("synth", help="synthetic movie with exact truth from a prepared cache's real field")
     y.add_argument("cache")
