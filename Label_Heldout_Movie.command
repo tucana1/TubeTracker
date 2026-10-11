@@ -15,7 +15,7 @@ echo "Labels: $LABELS"
 if [ ! -f "$CACHE/meta.json" ]; then
   echo "Preparing the movie (a few minutes, first time only)..."
   FLAT=""
-  [ -n "$TT_FLATFIELD" ] && FLAT="--flatfield"   # TT_FLATFIELD=1 for uneven illumination (as movie 1)
+  [ -n "$TT_NO_FLATFIELD" ] && FLAT="--no-flatfield"   # grains found on the evened-out field unless TT_NO_FLATFIELD=1
   .venv/bin/python -m sparsetrack prepare "$MOVIE" --out "$CACHE" $FLAT || { echo "Preparation failed."; read; exit 1; }
 fi
 .venv/bin/python -m sparsetrack bench "$CACHE" --labels "$LABELS" --annotator investigator --port 8768 --sample 30

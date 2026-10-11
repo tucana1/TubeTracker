@@ -460,7 +460,7 @@ class MainFrame(wx.Frame):
             return self.error(f"The movie is not at {movie} any more. Open it from where it is now.")
         setup = f.load_setup()
         self.jobs.submit(str(f.root), str(movie) if movie and movie.exists() else None, f.movie_name(),
-                         bool(setup.get("flatfield")))
+                         bool(setup.get("flatfield", True)))
         if self.data is None:
             self.show_analysis()
 

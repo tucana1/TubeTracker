@@ -29,7 +29,7 @@ PHASE_LABELS = {"probe": "Read the movie", "prepare": "Read its keyframes", "reg
 class Job:
     _ids = itertools.count(1)
 
-    def __init__(self, folder: str, movie: str | None, name: str, flatfield: bool = False):
+    def __init__(self, folder: str, movie: str | None, name: str, flatfield: bool = True):
         self.id = next(self._ids)
         self.folder, self.movie, self.name, self.flatfield = folder, movie, name, flatfield
         self.state = "queued"
@@ -95,11 +95,10 @@ class JobManager:
         cmd = [sys.executable, "-u", "-m", "tubetracker.app.worker", "--run", job.folder]
         if job.movie:
             cmd += ["--movie", job.movie]
-        if job.flatfield:
-            cmd.append("--flatfield")
+        cmd.append("--flatfield" if job.flatfield else "--no-flatfield")
         return cmd
 
-    def submit(self, folder: str, movie: str | None, name: str, flatfield: bool = False) -> Job:
+    def submit(self, folder: str, movie: str | None, name: str, flatfield: bool = True) -> Job:
         with self.lock:
             for j in self.jobs:
                 if j.folder == folder and j.state in ("queued", "running"):

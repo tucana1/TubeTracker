@@ -98,7 +98,7 @@ class SetupDialog(wx.Dialog):
         ps.Add(r2, 0)
         self.flat = wx.CheckBox(pane, label="Even out uneven illumination before finding grains" +
                                 ("" if not prepared else " (only before the first analysis)"))
-        self.flat.SetValue(bool(setup.get("flatfield")))
+        self.flat.SetValue(bool(setup.get("flatfield", True)))
         self.flat.Enable(not prepared)
         ps.Add(wx.StaticText(pane, label=""), 0)
         ps.Add(self.flat, 0)

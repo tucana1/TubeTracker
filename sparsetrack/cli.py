@@ -117,7 +117,7 @@ def run_folder(movie: str | Path, out: str | Path | None = None) -> Path:
     return Path("runs/sparsetrack") / re.sub(r"[^A-Za-z0-9_.-]+", "_", movie.stem).strip("_.")
 
 
-def prepared(movie: Path, out: Path, frames_per_bin: int | None = None, flatfield: bool = False) -> Path:
+def prepared(movie: Path, out: Path, frames_per_bin: int | None = None, flatfield: bool = True) -> Path:
     """The movie's cache in its run folder, built the first time."""
     cache = out / "cache"
     if not ((cache / "meta.json").exists() and (cache / "grains.json").exists()):
@@ -247,13 +247,15 @@ def main(argv=None) -> None:
     p.add_argument("--ref-start", default="auto",
                    help="first reference bin, or 'auto' = first bin after the field has settled")
     p.add_argument("--force", action="store_true")
-    p.add_argument("--flatfield", action="store_true", help="correct vignetting before grain detection")
+    p.add_argument("--flatfield", action=argparse.BooleanOptionalAction, default=True,
+                   help="even out uneven illumination before grain detection")
     p.set_defaults(func=cmd_prepare)
     c = sub.add_parser("census", help="re-run grain detection on an existing cache (renumbers grains: "
                                       "do this before labelling starts)")
     c.add_argument("cache")
     c.add_argument("--ref-bins", type=int, default=3)
-    c.add_argument("--flatfield", action="store_true")
+    c.add_argument("--flatfield", action=argparse.BooleanOptionalAction, default=True,
+                   help="even out uneven illumination before grain detection")
     c.set_defaults(func=cmd_census)
     b = sub.add_parser("bench", help="open the benchmark labelling tool")
     b.add_argument("cache")
@@ -286,7 +288,8 @@ def main(argv=None) -> None:
     r.add_argument("movie")
     r.add_argument("--out", help="output folder (default runs/sparsetrack/<movie name>)")
     r.add_argument("--frames-per-bin", type=int, help="default: whole keyframe groups, about 175 bins per movie")
-    r.add_argument("--flatfield", action="store_true", help="correct vignetting before grain detection")
+    r.add_argument("--flatfield", action=argparse.BooleanOptionalAction, default=True,
+                   help="even out uneven illumination before grain detection")
     r.add_argument("--video", action="store_true", help="also render field_overlay.mp4")
     r.add_argument("--um-per-px", type=float, help="pixel size: lengths and growth in um in the tables")
     r.add_argument("--s-per-frame", type=float, help="frame interval: onsets in minutes, growth in um/min")

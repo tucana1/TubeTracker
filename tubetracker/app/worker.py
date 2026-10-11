@@ -1,7 +1,7 @@
 """The analysis of one movie, run by the app as its own process (so the window never waits on it, and it can be
 stopped at any point)::
 
-    python -m tubetracker.app.worker --run RUN_FOLDER [--movie MOVIE] [--flatfield]
+    python -m tubetracker.app.worker --run RUN_FOLDER [--movie MOVIE] [--no-flatfield]
 
 Steps, each skipped when already done: read the movie's keyframes into the cache (first time only), find the
 grains, build the tube-probability maps (first time only; needs torch), then SparseTrack's analysis grain by grain,
@@ -60,7 +60,7 @@ def keep_earlier(root: Path) -> Path | None:
     return dest
 
 
-def run(root: Path, movie: Path | None, flatfield: bool = False) -> None:
+def run(root: Path, movie: Path | None, flatfield: bool = True) -> None:
     from sparsetrack import cli, stack
 
     from .runfolder import RunFolder
@@ -145,7 +145,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="python -m tubetracker.app.worker")
     ap.add_argument("--run", required=True, help="the movie's run folder")
     ap.add_argument("--movie", help="the movie (needed the first time, to prepare it)")
-    ap.add_argument("--flatfield", action="store_true", help="correct vignetting before finding grains")
+    ap.add_argument("--flatfield", action=argparse.BooleanOptionalAction, default=True,
+                    help="even out uneven illumination before finding grains (default)")
     args = ap.parse_args(argv)
     try:
         run(Path(args.run), Path(args.movie).expanduser() if args.movie else None, args.flatfield)
