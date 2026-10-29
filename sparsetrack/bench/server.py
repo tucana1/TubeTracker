@@ -45,7 +45,9 @@ SCHEMA = "sparsetrack.bench.v1"
 VERDICTS = ("emerged_at_start", "emerged_within", "no_emergence_by_end", "unobservable")
 # "burst": the tube has burst by this time and there is nothing left to trace (the old engine's
 # is_bursted/burst_frame, here bracketed by the trace times); the grain's later trace times drop out
-TRACE_STATES = ("full", "partial", "no_tube", "unsure", "burst")
+# "centre": a tube emerging from the grain's centre, growing toward the camera: there, but with no length to trace
+# in the image yet (recorded, not scored for length, never an absence)
+TRACE_STATES = ("full", "partial", "no_tube", "unsure", "burst", "centre")
 EXCLUDE_REASONS = ("not_a_grain", "clump", "edge", "out_of_focus", "other", "not_sampled")
 STATIC = Path(__file__).with_name("static")
 
@@ -266,7 +268,7 @@ class Bench:
         pts = [[round(float(x), 2), round(float(y), 2)] for x, y in body.get("points", [])]
         if state in ("full", "partial") and len(pts) < 2:
             raise ValueError("a traced tube needs at least an exit and an apex point")
-        if state in ("no_tube", "unsure", "burst"):
+        if state in ("no_tube", "unsure", "burst", "centre"):
             pts = pts if state == "unsure" else []
         dx, dy = self.meta["shifts"][b]
         fx, fy = (float(v) for v in self.follow(gid)[b])  # clicked in the grain-following view
@@ -280,7 +282,7 @@ class Bench:
             "path_complete": state == "full",
             "direct_state": {"full": "direct_visible", "partial": "direct_visible",
                              "no_tube": "no_tube_visible", "unsure": "not_directly_visible",
-                             "burst": "not_directly_visible"}[state],
+                             "burst": "not_directly_visible", "centre": "toward_camera"}[state],
             "length_px": round(length, 2),
             "contact": bool(body.get("contact", False)),
             "view": body.get("view", "near"),

@@ -207,7 +207,7 @@ def score(labels: dict, pred: dict, onset_tol: float = 600.0, len_abs: float = 2
             if tr["state"] == "burst":  # burst by this time: nothing left to measure (recorded, not scored)
                 burst_n.append(1)
                 continue
-            if tr["state"] == "unsure" or p is None:
+            if tr["state"] in ("unsure", "centre") or p is None:  # centre: a tube toward the camera, no length yet
                 continue
             if tr.get("contact"):  # touching another tube/grain: scored apart from the sparse metric
                 contact_n.append(1)

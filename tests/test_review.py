@@ -435,3 +435,19 @@ def test_prepare_reports_its_progress_keyframe_by_keyframe():
     seen = []
     assert list(_counted(iter("abc"), 3, lambda d, n: seen.append((d, n)))) == ["a", "b", "c"]
     assert seen == [(1, 3), (2, 3), (3, 3)]
+
+
+def test_a_tube_emerging_from_the_centre_is_recorded_but_not_scored(tmp_path):
+    """A tube growing from the grain's centre toward the camera ("centre"): saved without points, not a length to
+    score and never an absence (a model reading a tube there is not wrong)."""
+    from sparsetrack.evaluate import score
+    cache = tmp_path / "cache"
+    _cache(cache, [{"id": "g001", "x": 60.0, "y": 60.0, "r": 10.0, "isolated": True}])
+    out = tmp_path / "labels.json"
+    bench = Bench(cache, out)
+    bench.set_onset("g001", {"verdict": "emerged_within", "last_absent_bin": 9, "first_visible_bin": 10})
+    rec = bench.set_trace("g001", {"bin": 14, "state": "centre", "points": [[60.0, 60.0], [61.0, 61.0]]})
+    assert rec["state"] == "centre" and rec["path_xy_ref"] == [] and rec["length_px"] == 0.0
+    rep = score(json.loads(out.read_text()), _pred())
+    row = next(r for r in rep["rows"] if r["grain"] == "g001")
+    assert not row.get("full") and not row.get("absences") and rep["length_full"]["n"] == 0

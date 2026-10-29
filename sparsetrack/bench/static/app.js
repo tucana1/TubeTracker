@@ -488,10 +488,11 @@ function renderTrace() {
     <kbd>F</kbd> full tube · <kbd>P</kbd> partial (part hidden/out of view) · <kbd>0</kbd> no tube ·
     <kbd>U</kbd> unsure · <kbd>⌫</kbd> undo point · <kbd>T</kbd> touching another tube/grain ·
     ${canBurst() ? "<kbd>B</kbd> burst (nothing left to trace; its later times are skipped) · " : ""}
+    ${canCentre() ? "<kbd>E</kbd> emerging from the centre (growing toward the camera: no length to trace yet) · " : ""}
     <kbd>W</kbd> wide/near · ${S.st.layout.trace.far ? "<kbd>X</kbd> extra wide · " : ""}<kbd>H</kbd> hide marks ·
     <kbd>C</kbd> contrast · <kbd>A</kbd> smoother ·
     <kbd>←</kbd>/<kbd>→</kbd> trace time.`);
-  const mark = (t) => !t ? "" : isModel(t) ? " ? model" : t.state === "burst" ? " ✓ burst" : " ✓";
+  const mark = (t) => !t ? "" : isModel(t) ? " ? model" : t.state === "burst" ? " ✓ burst" : t.state === "centre" ? " ✓ centre" : " ✓";
   const chips = p.map((bb, i) => `<span data-i="${i}" class="${tr[String(bb)] && !isModel(tr[String(bb)]) ? "done" : ""} ${i === S.traceIdx ? "cur" : ""}">f${bb * S.st.frames_per_bin + S.st.frames_per_bin / 2}${mark(tr[String(bb)])}</span>`).join("");
   const saved = tr[String(b)];
   const canPlace = S.st.follow_mode !== "review";
@@ -512,7 +513,8 @@ function renderTrace() {
     <p>${S.pts.length} point(s), ${traceLen().toFixed(1)} px ${saved ? `<br><span class="muted">saved: ${saved.state}, ${saved.length_px} px</span>` : ""}</p>
     <button class="act primary" id="sF">F · full tube</button><button class="act" id="sP">P · partial</button><br>
     <button class="act" id="s0">0 · no tube</button><button class="act" id="sU">U · unsure</button>
-    ${canBurst() ? `<button class="act" id="sB">B · burst</button>` : ""}<br>
+    ${canBurst() ? `<button class="act" id="sB">B · burst</button>` : ""}
+    ${canCentre() ? `<button class="act" id="sE" title="the tube is there but grows from the grain's centre toward the camera: no length to trace yet">E · emerging from centre</button>` : ""}<br>
     <button class="act" id="undo">⌫ undo</button><button class="act" id="clr">clear</button><br>
     <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
     <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
@@ -558,6 +560,7 @@ function wireTraceControls(save) {
   $("#s0").onclick = () => save("no_tube");
   $("#sU").onclick = () => save("unsure");
   if ($("#sB")) $("#sB").onclick = () => save("burst");
+  if ($("#sE")) $("#sE").onclick = () => save("centre");
   $("#undo").onclick = () => { S.pts.pop(); S.touched = true; drawTrace(); updateCount(); };
   $("#clr").onclick = () => { S.pts = []; S.touched = true; drawTrace(); updateCount(); };
   $("#tT").onclick = () => { S.contact = !S.contact; render(); };
@@ -577,6 +580,7 @@ function viewCentre(V) {  // a "fit" view slides inward at the movie's edges; im
   return [slide(g.x, m.width), slide(g.y, m.height)];
 }
 function canBurst() { return S.st.trace_states.includes("burst"); }  // an older server would refuse it
+function canCentre() { return S.st.trace_states.includes("centre"); }
 function toggleWide() { S.traceView = S.traceView === "wide" ? "near" : "wide"; render(); }
 // the zoom bar: the field of view from +-512 px (the whole frame's height, left) to +-64 px (the near view, right),
 // drawn as large as the preset views; it takes over from W/X once moved
@@ -798,7 +802,7 @@ document.addEventListener("keydown", (e) => {
     const save = lr ? saveRetestTrace : saveTrace;
     if (!lr && k === "ArrowLeft" && !e.shiftKey) { S.traceIdx = Math.max(0, S.traceIdx - 1); loadTrace(); return render(); }
     if (!lr && k === "ArrowRight" && !e.shiftKey) { S.traceIdx = Math.min(plan().length - 1, S.traceIdx + 1); loadTrace(); return render(); }
-    const map = { f: "full", p: "partial", 0: "no_tube", u: "unsure" };
+    const map = { f: "full", p: "partial", 0: "no_tube", u: "unsure", ...(canCentre() ? { e: "centre" } : {}) };
     if (map[k.toLowerCase()]) return save(map[k.toLowerCase()]);
     if (k === "Backspace") { e.preventDefault(); S.pts.pop(); S.touched = true; drawTrace(); return updateCount(); }
     if (k === "t") { S.contact = !S.contact; return render(); }
