@@ -57,6 +57,7 @@ FINE = {"n_tiles": 18, "half": 24, "zoom": 4.0, "cols": 6, "header": 16, "gap": 
 TRACE_VIEWS = {"near": {"half": 64, "zoom": 5.0}, "wide": {"half": 128, "zoom": 2.5},
                "far": {"half": 256, "zoom": 1.25, "fit": True}}
 ZOOM = {"half": 56, "zoom": 4.5}  # census close-up of the grain in focus
+ZOOM_BAR = (32, 640)  # the trace views' zoom bar: field of view +-half px, drawn as large as the preset views
 RETEST_SIZE = 8
 TRACE_RETEST_SIZE = 15
 FOLLOW_HALF = 60        # crop used to measure a grain's own drift
@@ -537,11 +538,16 @@ class Bench:
                                        FINE["cols"], mode, FINE["header"], FINE["gap"], self.follow(gid), True))
 
     def frame_png(self, gid: str, b: int, view: str, mode: str, smooth: int,
-                  cx: float | str | None = None, cy: float | str | None = None) -> bytes:
+                  cx: float | str | None = None, cy: float | str | None = None, half: float | str | None = None) -> bytes:
         """A trace view centred on the grain, or on (cx, cy): the page slides a "fit" view to stay
-        inside the movie and maps clicks back through the same centre."""
+        inside the movie and maps clicks back through the same centre. ``half``: the zoom bar's field of view
+        (+-half px, drawn at the preset views' size) instead of a preset view."""
         g = self.grain(gid)
-        v = TRACE_VIEWS[view]
+        if half is not None:
+            h = int(min(max(float(half), ZOOM_BAR[0]), ZOOM_BAR[1]))
+            v = {"half": h, "zoom": TRACE_VIEWS["near"]["half"] * TRACE_VIEWS["near"]["zoom"] / h, "fit": True}
+        else:
+            v = TRACE_VIEWS[view]
         cx = g["x"] if cx is None else float(cx)
         cy = g["y"] if cy is None else float(cy)
         b0, b1 = int(b) - smooth, int(b) + smooth
@@ -616,7 +622,8 @@ def make_handler(bench: Bench):
                         return self._send(200, bench.fine_png(gid, int(q.get("start", 0)), mode), "image/png")
                     if kind == "frame":
                         return self._send(200, bench.frame_png(gid, int(q["bin"]), q.get("view", "near"), mode,
-                                                               int(q.get("smooth", 0)), q.get("cx"), q.get("cy")),
+                                                               int(q.get("smooth", 0)), q.get("cx"), q.get("cy"),
+                                                               q.get("half")),
                                           "image/png")
                 self._json({"error": "not found"}, HTTPStatus.NOT_FOUND)
             except (KeyError, ValueError, IndexError) as exc:

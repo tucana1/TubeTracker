@@ -8,7 +8,7 @@ const CONTRAST_NAMES = { n: "normal", h: "high contrast", g: "growth" };
 const S = {
   st: null, view: "census", gid: null,
   step: "coarse", fineStart: 0, fv: null, la: null, coarseTile: null, consulted: new Set(),
-  contrast: "n", traceIdx: 0, pts: [], traceView: "near", overlay: true, marker: true,
+  contrast: "n", traceIdx: 0, pts: [], traceView: "near", zoomHalf: 256, overlay: true, marker: true,
   contact: false, smooth: 0, fieldWhich: "early",
   timers: {}, openedAt: Date.now(), retest: null, retestIdx: 0, lretest: null, lretestIdx: 0, peek: 0,
   follow: {}, refindArm: false,
@@ -480,7 +480,7 @@ function renderTrace() {
     if (!on) $("#go").onclick = () => { S.view = "onset"; render(); };
     return;
   }
-  const b = p[S.traceIdx]; const V = S.st.layout.trace[S.traceView];
+  const b = p[S.traceIdx]; const V = traceV();
   const size = Math.round(2 * V.half * V.zoom);
   const tr = label().traces || {};
   help(`Trace the <b>whole visible tube of the centre grain</b>: click its exit from the grain first,
@@ -517,6 +517,7 @@ function renderTrace() {
     <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
     <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
     ${S.st.layout.trace.far ? `<button class="act ${S.traceView === "far" ? "on" : ""}" id="tX">X · extra wide</button>` : ""}
+    ${zoomBar()}
     <button class="act ${S.contrast !== "n" ? "on" : ""}" id="tC" title="normal, high contrast, or growth: this bin minus 6 bins earlier (a growing tip stands out)">C · ${CONTRAST_NAMES[S.contrast]}</button>
     <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button>
     ${canPlace ? `<br><button class="act ${S.refindArm ? "on" : ""}" id="tG" title="then click the grain's centre: the views follow it from this time">G · the grain is here…</button>` : ""}
@@ -539,10 +540,11 @@ async function placeGrain(b, x, y, clear = false) {
   render();
 }
 function mountTraceCanvas(b, clickable = true) {  // bin b in the current view; clicks add points in movie coordinates
-  const V = S.st.layout.trace[S.traceView], [cx, cy] = viewCentre(V);
+  const V = traceV(), [cx, cy] = viewCentre(V);
   const cv = $("#tc"), img = new Image();
   img.onload = () => { S._img = img; drawTrace(); };
-  img.src = `/api/img/frame/${S.gid}?bin=${b}&view=${S.traceView}&contrast=${S.contrast}&smooth=${S.smooth}&cx=${cx}&cy=${cy}`;
+  img.src = `/api/img/frame/${S.gid}?bin=${b}&view=${S.traceView}&contrast=${S.contrast}&smooth=${S.smooth}&cx=${cx}&cy=${cy}` +
+    (S.traceView === "zoom" ? `&half=${S.zoomHalf}` : "");
   cv.onclick = (e) => {
     if (!clickable) { flash("Viewing another time: go back to the trace frame to click.", true); return; }
     const x = cx - V.half + e.offsetX / V.zoom, y = cy - V.half + e.offsetY / V.zoom;
@@ -561,6 +563,9 @@ function wireTraceControls(save) {
   $("#tT").onclick = () => { S.contact = !S.contact; render(); };
   $("#tW").onclick = toggleWide;
   if ($("#tX")) $("#tX").onclick = toggleFar;
+  if ($("#tZ")) $("#tZ").onchange = (e) => {
+    S.zoomHalf = Math.round(ZOOM_OUT * Math.pow(ZOOM_IN / ZOOM_OUT, +e.target.value / 100)); S.traceView = "zoom"; render();
+  };
   $("#tC").onclick = () => { S.contrast = NEXT_CONTRAST[S.contrast] || "n"; render(); };
   $("#tA").onclick = () => { S.smooth = S.smooth ? 0 : 1; render(); };
 }
@@ -573,6 +578,19 @@ function viewCentre(V) {  // a "fit" view slides inward at the movie's edges; im
 }
 function canBurst() { return S.st.trace_states.includes("burst"); }  // an older server would refuse it
 function toggleWide() { S.traceView = S.traceView === "wide" ? "near" : "wide"; render(); }
+// the zoom bar: the field of view from +-512 px (the whole frame's height, left) to +-64 px (the near view, right),
+// drawn as large as the preset views; it takes over from W/X once moved
+const ZOOM_OUT = 512, ZOOM_IN = 64;
+function traceV() {
+  if (S.traceView !== "zoom") return S.st.layout.trace[S.traceView];
+  const near = S.st.layout.trace.near;
+  return { half: S.zoomHalf, zoom: near.half * near.zoom / S.zoomHalf, fit: true };
+}
+function zoomBar() {
+  const s = Math.round(100 * Math.log(ZOOM_OUT / traceV().half) / Math.log(ZOOM_OUT / ZOOM_IN));
+  return `<span class="zoombar" title="zoom: left shows more of the field (up to the whole frame's height)">−
+    <input type="range" id="tZ" min="0" max="100" value="${Math.min(Math.max(s, 0), 100)}"> +</span>`;
+}
 function toggleFar() { if (S.st.layout.trace.far) { S.traceView = S.traceView === "far" ? "wide" : "far"; render(); } }
 function traceLen() {
   let L = 0; for (let i = 1; i < S.pts.length; i++) L += Math.hypot(S.pts[i][0] - S.pts[i - 1][0], S.pts[i][1] - S.pts[i - 1][1]);
@@ -602,7 +620,7 @@ function updateCount() {
 }
 function drawTrace() {
   const cv = $("#tc"); if (!cv || !S._img) return;
-  const ctx = cv.getContext("2d"), g = grain(), V = S.st.layout.trace[S.traceView], [cx, cy] = viewCentre(V);
+  const ctx = cv.getContext("2d"), g = grain(), V = traceV(), [cx, cy] = viewCentre(V);
   ctx.drawImage(S._img, 0, 0);
   if (!S.overlay) return;
   const toC = (x, y) => [(x - cx + V.half) * V.zoom, (y - cy + V.half) * V.zoom];
@@ -631,7 +649,7 @@ async function saveTrace(state) {
     alert("Click at least the exit point and the apex before saving a traced tube."); return;
   }
   await post(`/api/trace/${S.gid}`, { bin: b, state, points: S.pts, contact: S.contact,
-                                      view: S.traceView, time_spent_s: spent() });
+                                      view: S.traceView === "zoom" ? `zoom ±${S.zoomHalf}` : S.traceView, time_spent_s: spent() });
   await refresh();
   const tr = label().traces || {};
   const nextIdx = plan().findIndex((bb) => !tr[String(bb)] || isModel(tr[String(bb)]));
@@ -709,7 +727,7 @@ async function renderLengthRetest() {
   }
   const item = S.lretest[S.lretestIdx];
   if (S.lretestKey !== `${item.grain}:${item.bin}`) return openLengthRetest();
-  const V = S.st.layout.trace[S.traceView], size = Math.round(2 * V.half * V.zoom);
+  const V = traceV(), size = Math.round(2 * V.half * V.zoom);
   const last = S.st.n_bins - 2, shown = Math.min(Math.max(item.bin + S.peek, 0), last);
   const frameOf = (bb) => bb * S.st.frames_per_bin + S.st.frames_per_bin / 2;
   help(`Length retest: trace this tube again, from scratch, exactly as you would the first time: its exit from
@@ -733,6 +751,7 @@ async function renderLengthRetest() {
     <button class="act ${S.contact ? "on" : ""}" id="tT">T · touching other tube/grain</button><br>
     <button class="act ${S.traceView === "wide" ? "on" : ""}" id="tW">W · wide view</button>
     ${S.st.layout.trace.far ? `<button class="act ${S.traceView === "far" ? "on" : ""}" id="tX">X · extra wide</button>` : ""}
+    ${zoomBar()}
     <button class="act ${S.contrast !== "n" ? "on" : ""}" id="tC" title="normal, high contrast, or growth: this bin minus 6 bins earlier (a growing tip stands out)">C · ${CONTRAST_NAMES[S.contrast]}</button>
     <button class="act ${S.smooth ? "on" : ""}" id="tA">A · smoother (3 bins)</button></div></div>`;
   S._img = null;
@@ -764,7 +783,7 @@ async function saveRetestTrace(state) {
   }
   const item = S.lretest[S.lretestIdx];
   await post(`/api/trace_retest/${item.grain}`, { bin: item.bin, state, points: S.pts, contact: S.contact,
-                                                   view: S.traceView, time_spent_s: spent() });
+                                                   view: S.traceView === "zoom" ? `zoom ±${S.zoomHalf}` : S.traceView, time_spent_s: spent() });
   await refresh();
   S.lretestIdx += 1;
   openLengthRetest();

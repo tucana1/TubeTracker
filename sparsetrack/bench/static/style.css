@@ -57,3 +57,5 @@ tr.click:hover { background: #eff6ff; cursor: pointer; }
 .legend { margin-left: 14px; font-size: 13px; color: #374151; white-space: nowrap; }
 .legend i { display: inline-block; width: 12px; height: 12px; border: 3px solid; border-radius: 50%;
   vertical-align: -2px; margin-right: 5px; box-shadow: 0 0 0 1.5px rgba(0, 0, 0, 0.7), inset 0 0 0 1.5px rgba(0, 0, 0, 0.7); }
+.zoombar { white-space: nowrap; margin: 0 6px 6px 0; display: inline-block; }
+.zoombar input { width: 120px; vertical-align: middle; }
