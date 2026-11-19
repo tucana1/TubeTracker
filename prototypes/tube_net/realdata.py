@@ -49,7 +49,8 @@ from prototypes.learned_flood.data import CacheView, tip_heatmap
 REPO = Path(__file__).resolve().parents[2]
 REAL = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
         "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json"),
-        "m1": ("runs/sparsetrack/m1", "benchmark/labels/m1_v1.json")}  # read only: nothing is written to the cache
+        "m1": ("runs/sparsetrack/m1", "benchmark/labels/m1_v1.json"),  # read only: nothing is written to the cache
+        "wt": ("runs/sparsetrack/heldout_WT-HZ-10-7-26", "benchmark/labels/heldout_WT-HZ-10-7-26_v1.json")}
 BODY, GAP, BAND = 3.0, 6.0, 14.0
 
 

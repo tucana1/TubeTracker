@@ -27,7 +27,9 @@ OUT = REPO / "runs/research/tip_detector"
 OUT.mkdir(parents=True, exist_ok=True)
 MOVIES = {"ld": ("runs/sparsetrack/ld", "benchmark/labels/ld_v1.json"),
           "m2": ("runs/sparsetrack/m2", "benchmark/labels/m2_v1.json"),
-          "m1": ("runs/sparsetrack/m1", "benchmark/labels/m1_v1.json")}
+          "m1": ("runs/sparsetrack/m1", "benchmark/labels/m1_v1.json"),
+          # the wild type (11 Oct): its blind labels, used here only to train (never to score its own readings)
+          "wt": ("runs/sparsetrack/heldout_WT-HZ-10-7-26", "benchmark/labels/heldout_WT-HZ-10-7-26_v1.json")}
 K = 6          # short interval (bins)
 MARGIN = 32    # extra px round a crop for the local median
 F_BG, K_BG = 4, 15  # local median: 1/4 grid, 15 cells (~60 px)
